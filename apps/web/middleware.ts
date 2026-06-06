@@ -31,14 +31,17 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
+  const protectedRoutes = ["/chat", "/documents", "/settings"];
+  const isProtected = protectedRoutes.some((r) => pathname.startsWith(r));
+
   // Redirect unauthenticated users away from protected routes
-  if (!user && pathname.startsWith("/dashboard")) {
+  if (!user && isProtected) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
   // Redirect authenticated users away from auth pages
   if (user && (pathname === "/login" || pathname === "/signup")) {
-    return NextResponse.redirect(new URL("/dashboard/chat", request.url));
+    return NextResponse.redirect(new URL("/chat", request.url));
   }
 
   return supabaseResponse;
