@@ -1,13 +1,18 @@
 import asyncio
+import logging
 import uuid
 from typing import Any
 
+import inngest
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from app.auth import verify_jwt
 from app.config import get_settings
 from app.database import get_service_client, get_user_client
+from app.inngest import get_inngest_client
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -150,10 +155,10 @@ async def complete_upload(
 
     svc = get_service_client()
 
-    # Verify ownership and fetch the storage path for the Inngest event
+    # Verify ownership and fetch the storage path + type for the Inngest event
     result = await asyncio.to_thread(
         lambda: svc.table("documents")
-        .select("file_path")
+        .select("file_path, file_type")
         .eq("id", body.doc_id)
         .eq("org_id", org_id)
         .maybe_single()
@@ -163,7 +168,9 @@ async def complete_upload(
     if not result.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
 
-    await _trigger_processing(body.doc_id, org_id, result.data["file_path"])
+    await _trigger_processing(
+        body.doc_id, org_id, result.data["file_path"], result.data["file_type"]
+    )
 
     return {"doc_id": body.doc_id, "status": "pending"}
 
@@ -186,6 +193,48 @@ async def list_documents(
         .execute()
     )
     return {"documents": result.data or []}
+
+
+# ── Reprocess ─────────────────────────────────────────────────────────────────
+
+@router.post("/{doc_id}/reprocess", status_code=status.HTTP_202_ACCEPTED)
+async def reprocess_document(
+    doc_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Re-run the ingestion pipeline on an already-uploaded document.
+
+    Use for: failed documents, chunker/embedder config changes, or pipeline bugs.
+    The pipeline is idempotent — prior chunks/embeddings are replaced.
+    """
+    org_id: str | None = current_user["org_id"]
+    if not org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No organization found.")
+
+    svc = get_service_client()
+    result = await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .select("file_path, file_type, status")
+        .eq("id", doc_id)
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+
+    await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .update({"status": "pending", "chunk_count": None})
+        .eq("id", doc_id)
+        .execute()
+    )
+
+    await _trigger_processing(
+        doc_id, org_id, result.data["file_path"], result.data["file_type"]
+    )
+    return {"doc_id": doc_id, "status": "pending"}
 
 
 # ── Delete ────────────────────────────────────────────────────────────────────
@@ -227,21 +276,31 @@ async def delete_document(
         pass
 
 
-# ── Inngest trigger (stub until Day 8) ───────────────────────────────────────
+# ── Inngest trigger ───────────────────────────────────────────────────────────
 
-async def _trigger_processing(doc_id: str, org_id: str, file_path: str) -> None:
-    settings = get_settings()
-    if not settings.inngest_event_key:
-        return
+async def _trigger_processing(doc_id: str, org_id: str, file_path: str, file_type: str) -> None:
+    """Emit the doc/uploaded event. Inngest's process-document function picks it up.
+
+    Uses idempotency_key on the event so a duplicate user click doesn't kick off
+    a second pipeline run (Inngest deduplicates within a 24h window).
+    """
+    client = get_inngest_client()
     try:
-        import inngest  # type: ignore[import-untyped]
-
-        client = inngest.Inngest(app_id="company-brain", event_key=settings.inngest_event_key)
         await client.send(
             inngest.Event(
                 name="doc/uploaded",
-                data={"doc_id": doc_id, "org_id": org_id, "file_path": file_path},
+                data={
+                    "doc_id": doc_id,
+                    "org_id": org_id,
+                    "file_path": file_path,
+                    "file_type": file_type,
+                },
+                id=f"doc-uploaded-{doc_id}",
             )
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        log.error("Failed to send doc/uploaded event for %s: %s", doc_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to queue document for processing. Please try again.",
+        ) from exc
