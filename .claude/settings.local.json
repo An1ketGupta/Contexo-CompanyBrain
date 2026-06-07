@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(uv *)",
+      "PowerShell(uv *)",
+      "PowerShell(New-Item *)",
+      "PowerShell(uv add *)",
+      "PowerShell(pnpm add *)",
+      "Bash(pnpm tsc *)",
+      "PowerShell(pnpm tsc *)"
+    ]
+  }
+}
