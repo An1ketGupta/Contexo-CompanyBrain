@@ -8,7 +8,10 @@
       "PowerShell(uv add *)",
       "PowerShell(pnpm add *)",
       "Bash(pnpm tsc *)",
-      "PowerShell(pnpm tsc *)"
+      "PowerShell(pnpm tsc *)",
+      "Bash(git push *)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\My_Folder\\\\Harkirat_Master\\\\WebDev\\\\Projects\\\\SaaS\\\\NirnayaIQ\\\\Product\\\\apps\\\\api\" -Force | ForEach-Object { $_.Name })",
+      "Bash(Test-Path *)"
     ]
   }
 }

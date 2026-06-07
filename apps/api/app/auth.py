@@ -1,34 +1,46 @@
-import jwt
+import asyncio
+from functools import lru_cache
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from supabase import Client, create_client
+
 from app.config import get_settings
 
 bearer_scheme = HTTPBearer()
 
 
-def verify_jwt(
+@lru_cache(maxsize=1)
+def _auth_client() -> Client:
+    """Anon-keyed client used only to validate access tokens against /auth/v1/user."""
+    settings = get_settings()
+    return create_client(settings.supabase_url, settings.supabase_anon_key)
+
+
+async def verify_jwt(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ) -> dict:
-    """FastAPI dependency — verifies Supabase JWT and returns the decoded payload."""
+    """Validates the Supabase access token by calling `auth.get_user(token)`.
+
+    Supabase does the signature/expiry check server-side, so this works with any
+    JWT signing algorithm (HS256, ES256, RS256) and survives Supabase's ongoing
+    migration to asymmetric keys without us having to manage JWT_SECRET or JWKS.
+    """
     token = credentials.credentials
-    settings = get_settings()
+    client = _auth_client()
 
     try:
-        payload = jwt.decode(
-            token,
-            settings.supabase_jwt_secret,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except jwt.InvalidTokenError:
+        response = await asyncio.to_thread(lambda: client.auth.get_user(token))
+    except Exception as e:
+        print(f"[auth] Token validation failed ({type(e).__name__}): {e}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    user_id: str | None = payload.get("sub")
-    org_id: str | None = payload.get("org_id") or (payload.get("app_metadata") or {}).get("org_id")
-
+    user = getattr(response, "user", None)
+    user_id = getattr(user, "id", None) if user else None
     if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token claims")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    app_metadata = getattr(user, "app_metadata", None) or {}
+    org_id: str | None = app_metadata.get("org_id")
 
     return {"user_id": user_id, "org_id": org_id, "token": token}

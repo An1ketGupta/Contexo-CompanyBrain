@@ -68,7 +68,8 @@ export async function POST(request: NextRequest) {
     .insert({ id: user_id, org_id: orgId, display_name: full_name, role: "admin" });
 
   if (userError) {
-    return NextResponse.json({ error: "Failed to create user profile" }, { status: 500 });
+    console.error("[complete-signup] users insert failed:", userError);
+    return NextResponse.json({ error: "Failed to create user profile", detail: userError.message }, { status: 500 });
   }
 
   // Embed org_id into the JWT via app_metadata so FastAPI can read it

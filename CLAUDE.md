@@ -156,7 +156,6 @@ EMBEDDING_DIMENSIONS=768            # 768 for Google, 1536 for OpenAI
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=          # backend only, never expose to browser
-SUPABASE_JWT_SECRET=                # for JWT verification in FastAPI
 
 # Next.js public vars (safe for browser)
 NEXT_PUBLIC_SUPABASE_URL=
