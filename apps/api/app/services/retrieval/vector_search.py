@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import dataclass, replace
+from typing import Any, Protocol
 
 from supabase import Client
 
@@ -20,7 +20,15 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SearchHit:
-    """A single search result. Shape mirrors the SQL function's return columns."""
+    """A single search result. Shape mirrors the SQL function's return columns.
+
+    `similarity` is the canonical primary score and is always populated:
+        • vector branch → cosine similarity in [0, 1]
+        • FTS branch    → ts_rank_cd normalized to [0, 1)
+        • hybrid branch → RRF score (small, unbounded above, ordering-only)
+    Branch-specific fields below stay None on paths that don't fill them, so
+    downstream code can treat a SearchHit uniformly regardless of source.
+    """
 
     chunk_id: str
     content: str
@@ -30,6 +38,17 @@ class SearchHit:
     page_number: int | None
     section_heading: str | None
     similarity: float
+    # FTS-only: highlighted excerpt from ts_headline (consumed by the citations UI).
+    snippet: str | None = None
+    # Hybrid-only: which branches contributed, plus per-branch ranks for debugging.
+    match_sources: tuple[str, ...] = ()
+    vector_rank: int | None = None
+    fts_rank: int | None = None
+    rrf_score: float | None = None
+
+    def with_overrides(self, **changes: Any) -> "SearchHit":
+        """Return a copy with selected fields replaced — used by hybrid fusion."""
+        return replace(self, **changes)
 
 
 class Retriever(Protocol):

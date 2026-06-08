@@ -35,8 +35,9 @@ log = logging.getLogger(__name__)
 _inngest_client = get_inngest_client()
 
 
-async def _on_failure(ctx: inngest.Context, step: inngest.Step) -> None:
+async def _on_failure(ctx: inngest.Context) -> None:
     """Fires after Inngest exhausts retries on the main function."""
+    step = ctx.step
     data = ctx.event.data
     doc_id = data.get("doc_id")
     error = str(getattr(ctx, "error", None) or "ingestion exhausted retries")
@@ -60,7 +61,8 @@ async def _on_failure(ctx: inngest.Context, step: inngest.Step) -> None:
     ],
     on_failure=_on_failure,
 )
-async def process_document(ctx: inngest.Context, step: inngest.Step) -> dict[str, Any]:
+async def process_document(ctx: inngest.Context) -> dict[str, Any]:
+    step = ctx.step
     data = ctx.event.data
     doc_id: str = data["doc_id"]
     org_id: str = data["org_id"]

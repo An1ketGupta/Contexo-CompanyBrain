@@ -33,6 +33,19 @@ class Settings(BaseSettings):
     embedding_provider: str = "google"    # google | openai
     embedding_dimensions: int = 768       # 768 for google, 1536 for openai
 
+    # LLM behavior
+    llm_model: str = "gemini-2.5-flash"
+    llm_temperature: float = 0.3
+    llm_timeout_seconds: float = 30.0
+
+    # Tool-use guardrails (defense in depth — caps the worst case)
+    chat_max_tool_rounds: int = 4         # max round-trips through the LLM in one task
+    chat_max_searches: int = 8            # max distinct search tool calls per task
+    chat_max_context_chunks: int = 20     # cap chunks passed to LLM after dedup
+    chat_history_turns: int = 6           # how many prior messages we include
+    chat_max_message_chars: int = 16_000  # input length guard
+    chat_search_k: int = 8                # k per individual search tool call
+
     # Storage
     storage_provider: str = "supabase"   # supabase | r2
     r2_account_id: str = ""

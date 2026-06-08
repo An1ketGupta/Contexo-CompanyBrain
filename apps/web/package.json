@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "inngest:dev": "npx inngest-cli@latest dev -u http://localhost:8000/api/inngest"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",
