@@ -1,56 +1,96 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback } from "react";
+import useSWR from "swr";
 import type { Document } from "@/lib/types";
 
-interface UseDocumentsReturn {
+interface DocumentsResponse {
   documents: Document[];
-  loading: boolean;
-  error: string | null;
-  refresh: () => void;
-  deleteDocument: (id: string) => Promise<void>;
 }
 
-export function useDocuments(): UseDocumentsReturn {
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
+const fetcher = async (url: string): Promise<DocumentsResponse> => {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to load documents (${res.status})`);
+  return res.json();
+};
 
-  const refresh = useCallback(() => setTick((t) => t + 1), []);
+export function useDocuments() {
+  const { data, error, isLoading, mutate } = useSWR<DocumentsResponse>(
+    "/api/documents",
+    fetcher,
+    {
+      revalidateOnFocus: true,
+      // Realtime hook owns push-updates; SWR is the source of truth for the
+      // initial fetch + cache. No interval polling — Realtime handles deltas.
+    },
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
+  const documents = data?.documents ?? [];
 
-    fetch("/api/documents")
-      .then((res) => {
-        if (!res.ok) throw new Error(`Failed to load documents (${res.status})`);
-        return res.json();
-      })
-      .then(({ documents: docs }: { documents: Document[] }) => {
-        if (!cancelled) setDocuments(docs);
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [tick]);
+  const refresh = useCallback(() => mutate(), [mutate]);
 
   const deleteDocument = useCallback(
     async (id: string): Promise<void> => {
-      await fetch(`/api/documents/${id}`, { method: "DELETE" });
-      setDocuments((prev) => prev.filter((d) => d.id !== id));
+      // Optimistic removal — revert if the server rejects.
+      const previous = data;
+      await mutate(
+        previous
+          ? { documents: previous.documents.filter((d) => d.id !== id) }
+          : previous,
+        { revalidate: false },
+      );
+
+      const res = await fetch(`/api/documents/${id}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 204) {
+        await mutate(previous, { revalidate: false });
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail ?? body.error ?? `Delete failed (${res.status})`);
+      }
+
+      // Sync with server-side truth after the fact.
+      await mutate();
     },
-    [],
+    [data, mutate],
   );
 
-  return { documents, loading, error, refresh, deleteDocument };
+  /** Merge a single document update (typically from Realtime) into the cache. */
+  const upsertDocument = useCallback(
+    (doc: Document) => {
+      mutate(
+        (current) => {
+          const list = current?.documents ?? [];
+          const idx = list.findIndex((d) => d.id === doc.id);
+          if (idx === -1) return { documents: [doc, ...list] };
+          const next = [...list];
+          next[idx] = { ...next[idx], ...doc };
+          return { documents: next };
+        },
+        { revalidate: false },
+      );
+    },
+    [mutate],
+  );
+
+  const removeDocument = useCallback(
+    (id: string) => {
+      mutate(
+        (current) =>
+          current
+            ? { documents: current.documents.filter((d) => d.id !== id) }
+            : current,
+        { revalidate: false },
+      );
+    },
+    [mutate],
+  );
+
+  return {
+    documents,
+    loading: isLoading,
+    error: error ? (error as Error).message : null,
+    refresh,
+    deleteDocument,
+    upsertDocument,
+    removeDocument,
+  };
 }

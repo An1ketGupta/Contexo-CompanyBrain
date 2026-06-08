@@ -3,7 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface FormState {
   fullName: string;
@@ -20,7 +25,6 @@ export default function SignupPage() {
     email: "",
     password: "",
   });
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   function setField(field: keyof FormState, value: string) {
@@ -29,7 +33,6 @@ export default function SignupPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
     setLoading(true);
 
     const supabase = createClient();
@@ -40,7 +43,7 @@ export default function SignupPage() {
     });
 
     if (signUpError || !data.user) {
-      setError(signUpError?.message ?? "Signup failed. Please try again.");
+      toast.error(signUpError?.message ?? "Signup failed. Please try again.");
       setLoading(false);
       return;
     }
@@ -57,13 +60,14 @@ export default function SignupPage() {
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      setError(body.error ?? "Failed to create workspace. Please try again.");
+      toast.error(body.error ?? "Failed to create workspace. Please try again.");
       setLoading(false);
       return;
     }
 
     // Refresh session so the new JWT includes org_id from app_metadata
     await supabase.auth.refreshSession();
+    toast.success(`Workspace "${form.companyName}" created.`);
 
     router.push("/chat");
     router.refresh();
@@ -81,20 +85,9 @@ export default function SignupPage() {
 
         <div className="rounded-lg border border-border bg-background p-8 shadow-sm">
           <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-destructive border border-red-200">
-                {error}
-              </div>
-            )}
-
-            <div>
-              <label
-                htmlFor="fullName"
-                className="block text-sm font-medium text-foreground mb-1"
-              >
-                Full name
-              </label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="fullName">Full name</Label>
+              <Input
                 id="fullName"
                 type="text"
                 value={form.fullName}
@@ -102,36 +95,24 @@ export default function SignupPage() {
                 required
                 autoComplete="name"
                 placeholder="Aniket Gupta"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
 
-            <div>
-              <label
-                htmlFor="companyName"
-                className="block text-sm font-medium text-foreground mb-1"
-              >
-                Company name
-              </label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="companyName">Company name</Label>
+              <Input
                 id="companyName"
                 type="text"
                 value={form.companyName}
                 onChange={(e) => setField("companyName", e.target.value)}
                 required
                 placeholder="Acme Corp"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
 
-            <div>
-              <label
-                htmlFor="email"
-                className="block text-sm font-medium text-foreground mb-1"
-              >
-                Email
-              </label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="email">Email</Label>
+              <Input
                 id="email"
                 type="email"
                 value={form.email}
@@ -139,18 +120,12 @@ export default function SignupPage() {
                 required
                 autoComplete="email"
                 placeholder="you@company.com"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
 
-            <div>
-              <label
-                htmlFor="password"
-                className="block text-sm font-medium text-foreground mb-1"
-              >
-                Password
-              </label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="password">Password</Label>
+              <Input
                 id="password"
                 type="password"
                 value={form.password}
@@ -159,17 +134,13 @@ export default function SignupPage() {
                 minLength={8}
                 autoComplete="new-password"
                 placeholder="Min 8 characters"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
-            >
+            <Button type="submit" disabled={loading} className="w-full">
+              {loading && <Loader2 className="animate-spin" />}
               {loading ? "Creating workspace…" : "Create workspace"}
-            </button>
+            </Button>
           </form>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">

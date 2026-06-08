@@ -11,7 +11,13 @@
       "PowerShell(pnpm tsc *)",
       "Bash(git push *)",
       "PowerShell(Get-ChildItem -Path \"C:\\\\My_Folder\\\\Harkirat_Master\\\\WebDev\\\\Projects\\\\SaaS\\\\NirnayaIQ\\\\Product\\\\apps\\\\api\" -Force | ForEach-Object { $_.Name })",
-      "Bash(Test-Path *)"
+      "Bash(Test-Path *)",
+      "Bash(pnpm view *)",
+      "Bash(pnpm add *)",
+      "Bash(pnpm build *)",
+      "Bash(supabase db *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

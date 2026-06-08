@@ -3,28 +3,39 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
     setLoading(true);
 
     const supabase = createClient();
-    const { error: authError } = await supabase.auth.signInWithPassword({
+    const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
-    if (authError) {
-      setError(authError.message);
+    if (error) {
+      // Friendly messages for the two common cases. Fall back to provider text.
+      const msg = error.message.toLowerCase();
+      if (msg.includes("invalid login")) {
+        toast.error("Wrong email or password.");
+      } else if (msg.includes("email not confirmed")) {
+        toast.error("Please confirm your email before signing in.");
+      } else {
+        toast.error(error.message);
+      }
       setLoading(false);
       return;
     }
@@ -45,20 +56,9 @@ export default function LoginPage() {
 
         <div className="rounded-lg border border-border bg-background p-8 shadow-sm">
           <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-destructive border border-red-200">
-                {error}
-              </div>
-            )}
-
-            <div>
-              <label
-                htmlFor="email"
-                className="block text-sm font-medium text-foreground mb-1"
-              >
-                Email
-              </label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="email">Email</Label>
+              <Input
                 id="email"
                 type="email"
                 value={email}
@@ -66,35 +66,25 @@ export default function LoginPage() {
                 required
                 autoComplete="email"
                 placeholder="you@company.com"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
 
-            <div>
-              <label
-                htmlFor="password"
-                className="block text-sm font-medium text-foreground mb-1"
-              >
-                Password
-              </label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="password">Password</Label>
+              <Input
                 id="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
-            >
+            <Button type="submit" disabled={loading} className="w-full">
+              {loading && <Loader2 className="animate-spin" />}
               {loading ? "Signing in…" : "Sign in"}
-            </button>
+            </Button>
           </form>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">

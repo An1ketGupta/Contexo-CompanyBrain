@@ -1,45 +1,110 @@
 "use client";
 
+import { FileText } from "lucide-react";
 import { UploadDialog } from "@/components/documents/upload-dialog";
+import { DocumentTable } from "@/components/documents/document-table";
 import { useDocuments } from "@/hooks/use-documents";
+import { useDocumentsRealtime } from "@/hooks/use-documents-realtime";
 
 export default function DocumentsPage() {
-  const { documents, loading, refresh } = useDocuments();
+  const {
+    documents,
+    loading,
+    error,
+    refresh,
+    deleteDocument,
+    upsertDocument,
+    removeDocument,
+  } = useDocuments();
+
+  useDocumentsRealtime({
+    onUpsert: upsertDocument,
+    onRemove: removeDocument,
+  });
 
   return (
-    <main className="p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-foreground">Documents</h1>
+    <div className="mx-auto max-w-5xl p-6 md:p-8">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">
+            Documents
+          </h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Everything your AI knows about your company.
+          </p>
+        </div>
         <UploadDialog onUploadComplete={refresh} />
       </div>
 
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <TableSkeleton />
+      ) : error ? (
+        <ErrorState message={error} onRetry={refresh} />
       ) : documents.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No documents yet. Upload your first document to get started.
-        </p>
+        <EmptyState />
       ) : (
-        <div className="space-y-2">
-          {documents.map((doc) => (
-            <div
-              key={doc.id}
-              className="flex items-center justify-between rounded-md border border-border bg-background px-4 py-3"
-            >
-              <div>
-                <p className="text-sm font-medium text-foreground">{doc.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  {doc.file_type.toUpperCase()} ·{" "}
-                  {doc.file_size_bytes
-                    ? `${(doc.file_size_bytes / 1024 / 1024).toFixed(2)} MB · `
-                    : ""}
-                  {doc.status}
-                </p>
-              </div>
-            </div>
-          ))}
-        </div>
+        <DocumentTable documents={documents} onDelete={deleteDocument} />
       )}
-    </main>
+    </div>
+  );
+}
+
+function TableSkeleton() {
+  return (
+    <div className="overflow-hidden rounded-lg border border-border bg-background">
+      <div className="border-b border-border bg-muted/40 px-4 py-2.5">
+        <div className="h-3 w-20 animate-pulse rounded bg-muted" />
+      </div>
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div
+          key={i}
+          className="flex items-center gap-3 border-b border-border px-4 py-3 last:border-b-0"
+        >
+          <div className="h-4 w-4 animate-pulse rounded bg-muted" />
+          <div className="flex-1 space-y-1.5">
+            <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
+            <div className="h-2.5 w-1/4 animate-pulse rounded bg-muted" />
+          </div>
+          <div className="h-5 w-20 animate-pulse rounded-full bg-muted" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="rounded-lg border border-dashed border-border bg-background px-6 py-16 text-center">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-accent-foreground">
+        <FileText className="h-5 w-5" />
+      </div>
+      <h2 className="text-base font-semibold text-foreground">
+        No documents yet
+      </h2>
+      <p className="mx-auto mt-1 max-w-xs text-sm text-muted-foreground">
+        Upload a PDF, DOCX, TXT, or MD file. Once processed, your AI will use it
+        as context for every task.
+      </p>
+    </div>
+  );
+}
+
+function ErrorState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-destructive/30 bg-red-50 px-6 py-8 text-center">
+      <p className="text-sm font-medium text-destructive">{message}</p>
+      <button
+        onClick={onRetry}
+        className="mt-3 text-sm font-medium text-primary hover:underline"
+      >
+        Try again
+      </button>
+    </div>
   );
 }
