@@ -1,8 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import useSWR from "swr";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Loader2,
+  Mail,
+  ThumbsDown,
+  ThumbsUp,
+  Trash2,
+  UserPlus,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,6 +55,10 @@ export default function SettingsPage() {
         canEdit={user?.role === "admin"}
         onSaved={refresh}
       />
+
+      <TeamCard isAdmin={user?.role === "admin"} />
+
+      {user?.role === "admin" && <FeedbackSignalCard />}
 
       <ProfileCard
         displayName={user?.display_name ?? ""}
@@ -260,6 +273,344 @@ function ProfileCard({
         </Button>
       </div>
     </Card>
+  );
+}
+
+// ── Team ────────────────────────────────────────────────────────────────────
+
+interface Member {
+  id: string;
+  role: "admin" | "member";
+  display_name: string | null;
+  email: string | null;
+  created_at: string;
+}
+
+interface PendingInvite {
+  id: string;
+  email: string;
+  role: "admin" | "member";
+  expires_at: string;
+  created_at: string;
+  invited_by: string | null;
+}
+
+function TeamCard({ isAdmin }: { isAdmin: boolean }) {
+  const members = useSWR<{ members: Member[] }>(
+    "/api/organizations/members",
+    jsonFetcher,
+    { revalidateOnFocus: false },
+  );
+  const invites = useSWR<{ invitations: PendingInvite[] }>(
+    "/api/organizations/invitations",
+    jsonFetcher,
+    { revalidateOnFocus: false },
+  );
+
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<"admin" | "member">("member");
+  const [sending, setSending] = useState(false);
+
+  const sendInvite = async () => {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmed)) {
+      toast.error("Enter a valid email address.");
+      return;
+    }
+    setSending(true);
+    try {
+      const res = await fetch("/api/organizations/invitations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimmed, role }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        message?: string;
+        detail?: string;
+      };
+      if (!res.ok) {
+        toast.error(data.message ?? data.detail ?? "Failed to send invite.");
+        return;
+      }
+      toast.success(`Invite sent to ${trimmed}.`);
+      setEmail("");
+      setRole("member");
+      invites.mutate();
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const revokeInvite = async (id: string, inviteEmail: string) => {
+    const res = await fetch(`/api/organizations/invitations/${id}`, {
+      method: "DELETE",
+    });
+    if (!res.ok && res.status !== 204) {
+      toast.error("Failed to revoke invite.");
+      return;
+    }
+    toast.success(`Invite to ${inviteEmail} revoked.`);
+    invites.mutate();
+  };
+
+  return (
+    <Card
+      title="Team"
+      description={
+        isAdmin
+          ? "Invite teammates and manage roles."
+          : "Members of your workspace. Only admins can invite or revoke."
+      }
+    >
+      <div>
+        <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          Members
+        </p>
+        {members.isLoading ? (
+          <MemberRowSkeleton />
+        ) : members.error ? (
+          <p className="text-sm text-destructive">Couldn&apos;t load members.</p>
+        ) : (
+          <ul className="divide-y divide-border rounded-md border border-border">
+            {(members.data?.members ?? []).map((m) => (
+              <li
+                key={m.id}
+                className="flex items-center justify-between gap-3 px-3 py-2.5"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {m.display_name ?? "—"}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {m.email ?? "unknown"}
+                  </p>
+                </div>
+                <RoleBadge role={m.role} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {(invites.data?.invitations ?? []).length > 0 && (
+        <div>
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Pending invites
+          </p>
+          <ul className="divide-y divide-border rounded-md border border-border">
+            {invites.data!.invitations.map((inv) => (
+              <li
+                key={inv.id}
+                className="flex items-center justify-between gap-3 px-3 py-2.5"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-foreground">{inv.email}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Expires {formatDate(inv.expires_at)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RoleBadge role={inv.role} />
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => revokeInvite(inv.id, inv.email)}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
+                      aria-label="Revoke invite"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Revoke
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="space-y-2 rounded-md border border-dashed border-border bg-muted/30 p-3">
+          <Label htmlFor="invite-email" className="flex items-center gap-1.5 text-xs">
+            <Mail className="h-3 w-3" />
+            Invite by email
+          </Label>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              id="invite-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="teammate@company.com"
+              disabled={sending}
+              autoComplete="off"
+              className="flex-1"
+            />
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value as "admin" | "member")}
+              disabled={sending}
+              className="rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+            </select>
+            <Button onClick={sendInvite} disabled={sending || !email}>
+              {sending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <UserPlus className="h-3.5 w-3.5" />
+              )}
+              Send invite
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function RoleBadge({ role }: { role: "admin" | "member" }) {
+  return (
+    <span
+      className={
+        role === "admin"
+          ? "inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+          : "inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+      }
+    >
+      {role}
+    </span>
+  );
+}
+
+function MemberRowSkeleton() {
+  return (
+    <div className="space-y-2">
+      {[0, 1].map((i) => (
+        <div
+          key={i}
+          className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5"
+        >
+          <div className="space-y-1.5">
+            <div className="h-3 w-32 animate-pulse rounded bg-muted" />
+            <div className="h-2 w-40 animate-pulse rounded bg-muted" />
+          </div>
+          <div className="h-4 w-12 animate-pulse rounded bg-muted" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+const jsonFetcher = async <T,>(url: string): Promise<T> => {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.json();
+};
+
+// ── Feedback signal (admin) ─────────────────────────────────────────────────
+
+interface FeedbackStats {
+  positive: number;
+  negative: number;
+  unrated: number;
+  total: number;
+}
+
+function FeedbackSignalCard() {
+  const { data, error, isLoading } = useSWR<FeedbackStats>(
+    "/api/admin/feedback-stats",
+    async (url: string) => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Failed (${res.status})`);
+      return res.json();
+    },
+    { revalidateOnFocus: false },
+  );
+
+  const rated = (data?.positive ?? 0) + (data?.negative ?? 0);
+  const csat =
+    rated > 0 ? Math.round(((data?.positive ?? 0) / rated) * 100) : null;
+
+  return (
+    <Card
+      title="Feedback signal"
+      description="What your team is rating across assistant answers. Admin only."
+    >
+      {isLoading ? (
+        <div className="flex h-16 items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading…
+        </div>
+      ) : error ? (
+        <p className="text-sm text-destructive">
+          Couldn&apos;t load feedback stats. Try again later.
+        </p>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat
+            label="Helpful"
+            value={data?.positive ?? 0}
+            icon={<ThumbsUp className="h-3.5 w-3.5 text-emerald-600" />}
+          />
+          <Stat
+            label="Not helpful"
+            value={data?.negative ?? 0}
+            icon={<ThumbsDown className="h-3.5 w-3.5 text-destructive" />}
+          />
+          <Stat label="Unrated" value={data?.unrated ?? 0} muted />
+          <Stat
+            label="CSAT"
+            value={csat === null ? "—" : `${csat}%`}
+            hint={rated > 0 ? `${rated} rated` : "No ratings yet"}
+          />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  icon,
+  hint,
+  muted,
+}: {
+  label: string;
+  value: number | string;
+  icon?: React.ReactNode;
+  hint?: string;
+  muted?: boolean;
+}) {
+  return (
+    <div className="rounded-md border border-border bg-muted/30 p-3">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {icon}
+        {label}
+      </div>
+      <div
+        className={
+          muted
+            ? "mt-1 text-xl font-semibold text-muted-foreground tabular-nums"
+            : "mt-1 text-xl font-semibold text-foreground tabular-nums"
+        }
+      >
+        {value}
+      </div>
+      {hint && <div className="mt-0.5 text-[11px] text-muted-foreground">{hint}</div>}
+    </div>
   );
 }
 

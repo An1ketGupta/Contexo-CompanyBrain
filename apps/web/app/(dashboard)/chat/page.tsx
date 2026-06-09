@@ -42,7 +42,7 @@ export default function ChatNewPage() {
     [touch, refresh],
   );
 
-  const { messages, isStreaming, send, stop, retry } = useChat({
+  const { messages, isStreaming, send, stop, retry, setFeedback } = useChat({
     conversationId: null,
     onConversationStarted: handleConversationStarted,
     onTurnComplete: handleTurnComplete,
@@ -68,7 +68,7 @@ export default function ChatNewPage() {
             <EmptyState onPick={send} hasDocuments={hasDocuments} />
           </div>
         ) : (
-          <MessageList messages={messages} onRetry={retry} />
+          <MessageList messages={messages} onRetry={retry} onFeedback={setFeedback} />
         )}
         <MessageInput
           onSend={send}

@@ -1,13 +1,14 @@
 "use client";
 
 import useSWR from "swr";
-import type { MessageSource } from "@/lib/types";
+import type { MessageFeedback, MessageSource } from "@/lib/types";
 
 export interface PersistedMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   sources: MessageSource[] | null;
+  feedback?: MessageFeedback | null;
   created_at: string;
 }
 

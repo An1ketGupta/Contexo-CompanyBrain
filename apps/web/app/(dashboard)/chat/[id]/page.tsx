@@ -32,6 +32,7 @@ export default function ChatConversationPage({
         role: m.role,
         content: m.content,
         sources: m.sources,
+        feedback: m.feedback ?? null,
         created_at: m.created_at,
       })),
     [persistedMessages],
@@ -45,7 +46,7 @@ export default function ChatConversationPage({
     [touch, refresh],
   );
 
-  const { messages, isStreaming, send, stop, retry } = useChat({
+  const { messages, isStreaming, send, stop, retry, setFeedback } = useChat({
     conversationId: id,
     initialMessages,
     onTurnComplete: handleTurnComplete,
@@ -79,7 +80,7 @@ export default function ChatConversationPage({
             </p>
           </div>
         ) : (
-          <MessageList messages={messages} onRetry={retry} />
+          <MessageList messages={messages} onRetry={retry} onFeedback={setFeedback} />
         )}
 
         <MessageInput

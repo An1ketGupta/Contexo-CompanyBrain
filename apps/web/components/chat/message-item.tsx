@@ -1,8 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertCircle, Brain, Loader2, RefreshCw } from "lucide-react";
+import {
+  AlertCircle,
+  Brain,
+  Loader2,
+  RefreshCw,
+  ThumbsDown,
+  ThumbsUp,
+} from "lucide-react";
 import type { DisplayMessage, MessageError } from "@/hooks/use-chat";
+import type { MessageFeedback } from "@/lib/types";
 import { Citations } from "./citations";
 import { CopyButton } from "./copy-button";
 import { Markdown } from "./markdown";
@@ -13,9 +21,15 @@ interface MessageItemProps {
   message: DisplayMessage;
   isLast: boolean;
   onRetry?: (assistantLocalId: string) => void;
+  onFeedback?: (assistantLocalId: string, feedback: MessageFeedback) => void;
 }
 
-export function MessageItem({ message, isLast, onRetry }: MessageItemProps) {
+export function MessageItem({
+  message,
+  isLast,
+  onRetry,
+  onFeedback,
+}: MessageItemProps) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end px-1">
@@ -78,13 +92,63 @@ export function MessageItem({ message, isLast, onRetry }: MessageItemProps) {
             className={cn(
               "mt-2 flex items-center gap-1 opacity-0 transition-opacity",
               "group-hover:opacity-100",
-              isLast && "opacity-100",
+              // Always show the action row if the user has already rated —
+              // otherwise the thumb state would silently disappear on mouse-out.
+              (isLast || message.feedback) && "opacity-100",
             )}
           >
             <CopyButton text={message.content} />
+            {onFeedback && message.server_id && (
+              <FeedbackButtons
+                feedback={message.feedback}
+                onSelect={(value) => onFeedback(message.local_id, value)}
+              />
+            )}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Tri-state thumbs. Clicking the same icon twice clears the rating. Disabled
+ * (server_id not yet known) is handled by the parent — we only render once
+ * the assistant turn has persisted.
+ */
+function FeedbackButtons({
+  feedback,
+  onSelect,
+}: {
+  feedback: MessageFeedback | null;
+  onSelect: (value: MessageFeedback) => void;
+}) {
+  return (
+    <div className="ml-1 flex items-center gap-0.5">
+      <button
+        type="button"
+        onClick={() => onSelect("positive")}
+        aria-pressed={feedback === "positive"}
+        aria-label={feedback === "positive" ? "Remove positive rating" : "Mark helpful"}
+        className={cn(
+          "inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+          feedback === "positive" && "bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/15 hover:text-emerald-700",
+        )}
+      >
+        <ThumbsUp className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => onSelect("negative")}
+        aria-pressed={feedback === "negative"}
+        aria-label={feedback === "negative" ? "Remove negative rating" : "Mark not helpful"}
+        className={cn(
+          "inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+          feedback === "negative" && "bg-destructive/10 text-destructive hover:bg-destructive/15",
+        )}
+      >
+        <ThumbsDown className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }

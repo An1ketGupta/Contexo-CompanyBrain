@@ -266,10 +266,41 @@ async def enforce_chat_quota(*, user_id: str, org_id: str) -> None:
     plan = await get_org_plan(org_id)
     budget = monthly_budget_for(plan)
     monthly = await _monthly_check_and_increment(org_id=org_id, limit=budget)
+
+    # Quota emails are fire-and-forget; an enqueue failure must NOT block chat.
+    if monthly.limit is not None:
+        # 80% warning: once per calendar month per user via dedupe_key=YYYY-MM.
+        if monthly.allowed and monthly.used >= int(monthly.limit * 0.8):
+            try:
+                await _enqueue_quota_email(
+                    event_type="quota_warning",
+                    user_id=user_id,
+                    org_id=org_id,
+                    plan=plan,
+                    used=monthly.used,
+                    limit=monthly.limit,
+                    seconds_until_reset=monthly.seconds_until_reset,
+                )
+            except Exception as exc:
+                log.warning("quota_warning_dispatch_failed", error=str(exc))
+
     if not monthly.allowed:
         # 402 with a specific code so the frontend can route to /pricing
         # instead of showing a generic "try again later" toast.
         days_left = max(monthly.seconds_until_reset // 86_400, 1)
+        try:
+            await _enqueue_quota_email(
+                event_type="quota_exceeded",
+                user_id=user_id,
+                org_id=org_id,
+                plan=plan,
+                used=monthly.used,
+                limit=monthly.limit or 0,
+                seconds_until_reset=monthly.seconds_until_reset,
+            )
+        except Exception as exc:
+            log.warning("quota_exceeded_dispatch_failed", error=str(exc))
+
         raise QuotaExceeded(
             message=(
                 f"You've used all {monthly.limit} AI tasks on your {plan} plan "
@@ -284,6 +315,61 @@ async def enforce_chat_quota(*, user_id: str, org_id: str) -> None:
                 "resets_in_seconds": monthly.seconds_until_reset,
             },
         )
+
+
+async def _enqueue_quota_email(
+    *,
+    event_type: str,
+    user_id: str,
+    org_id: str,
+    plan: str,
+    used: int,
+    limit: int,
+    seconds_until_reset: int,
+) -> None:
+    """Best-effort dispatch. Resolves the recipient's email server-side so we
+    don't trust the JWT to be fresh. Dedupes per calendar month."""
+    from datetime import datetime, timezone
+
+    from app.config import get_settings as _gs
+    from app.database import get_service_client as _svc
+    from app.services.email import send_email_event
+
+    settings = _gs()
+    svc = _svc()
+
+    import asyncio as _aio
+
+    try:
+        au = await _aio.to_thread(lambda: svc.auth.admin.get_user_by_id(user_id))
+        email = getattr(getattr(au, "user", None), "email", None)
+    except Exception:
+        email = None
+    if not email:
+        return
+
+    month_key = datetime.now(timezone.utc).strftime("%Y-%m")
+    billing_url = f"{settings.app_url.rstrip('/')}/settings"
+
+    if event_type == "quota_warning":
+        data = {"used": used, "limit": limit, "plan": plan, "billing_url": billing_url}
+    else:  # quota_exceeded
+        days = max(seconds_until_reset // 86_400, 1)
+        data = {
+            "limit": limit,
+            "plan": plan,
+            "billing_url": billing_url,
+            "resets_in_days": days,
+        }
+
+    await send_email_event(
+        event_type=event_type,  # type: ignore[arg-type]
+        to=email,
+        user_id=user_id,
+        org_id=org_id,
+        dedupe_key=month_key,
+        data=data,
+    )
 
 
 # ── Compatibility shim for existing callers ──────────────────────────────────

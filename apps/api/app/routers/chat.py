@@ -1,27 +1,3 @@
-"""Chat endpoints — non-streaming /chat and SSE /chat/stream.
-
-Both routes share `execute_task` from task_chain. The streaming route is what
-the UI uses in production; the non-streaming one is here for tests, scripts,
-and any future use-case that wants a single JSON response (e.g. a cron job
-that auto-drafts emails).
-
-Conversation lifecycle:
-    * If `conversation_id` is omitted, a new conversation is created with a
-      title derived from the first user message.
-    * History is the last N messages on the conversation (configurable via
-      settings.chat_history_turns), ordered oldest → newest.
-    * Each request persists a user row and an assistant row with `sources`.
-    * All DB calls use a user-scoped Supabase client so RLS enforces tenancy.
-
-Resilience:
-    * Optional `client_message_id` on the request lets the browser retry a
-      failed turn without duplicating the user message in the DB. We use it
-      as the row's primary key; if it already exists, we skip the insert.
-    * The SSE stream emits periodic heartbeat comments during the tool-call
-      phase so reverse proxies don't kill an idle connection mid-search.
-    * Error frames on the stream carry { code, message, request_id, retry_after }
-      so the frontend can route to the same UX as for non-stream errors.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -29,7 +5,7 @@ import json
 import logging
 import time
 import uuid
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -80,6 +56,12 @@ class ChatRequest(BaseModel):
 
 class RenameConversationRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=TITLE_MAX_LEN)
+
+
+class FeedbackBody(BaseModel):
+    # Tri-state: 'positive', 'negative', or null to clear an existing rating.
+    # Sent from the thumbs UI; the second click on the same icon nulls it out.
+    feedback: Literal["positive", "negative"] | None
 
 
 class ChatResponse(BaseModel):
@@ -374,7 +356,7 @@ async def get_conversation(
 
     msgs = await asyncio.to_thread(
         lambda: client.table("messages")
-        .select("id, role, content, sources, created_at")
+        .select("id, role, content, sources, feedback, created_at")
         .eq("conversation_id", conversation_id)
         .order("created_at")
         .execute()
@@ -427,6 +409,63 @@ async def delete_conversation(
     )
     if not result.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+
+
+@router.patch("/messages/{message_id}/feedback")
+async def update_message_feedback(
+    message_id: str,
+    body: FeedbackBody,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Record a thumbs-up / thumbs-down on an assistant message.
+
+    Authz model: the `messages` RLS policy is org-wide, but we narrow it here
+    to "only the conversation owner can rate" — otherwise a teammate could
+    rate a message in someone else's chat, which would muddy the training
+    signal. The conversations RLS already filters to user_id = auth.uid(), so
+    a successful lookup of the parent conversation proves ownership.
+    """
+    if not _is_uuid(message_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid message id.")
+
+    _, _, token = _require_org(current_user)
+    client = get_user_client(token)
+
+    msg = await asyncio.to_thread(
+        lambda: client.table("messages")
+        .select("id, role, conversation_id")
+        .eq("id", message_id)
+        .maybe_single()
+        .execute()
+    )
+    if not msg or not msg.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found.")
+    if msg.data.get("role") != "assistant":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only assistant messages can be rated.",
+        )
+
+    convo = await asyncio.to_thread(
+        lambda: client.table("conversations")
+        .select("id")
+        .eq("id", msg.data["conversation_id"])
+        .maybe_single()
+        .execute()
+    )
+    if not convo or not convo.data:
+        # RLS hid the conversation from this user — they don't own it.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your conversation.")
+
+    result = await asyncio.to_thread(
+        lambda: client.table("messages")
+        .update({"feedback": body.feedback})
+        .eq("id", message_id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found.")
+    return {"feedback": body.feedback}
 
 
 # ── DB helpers ───────────────────────────────────────────────────────────────
@@ -534,7 +573,7 @@ async def _save_user_message_idempotent(
             .maybe_single()
             .execute()
         )
-        if existing.data:
+        if getattr(existing, "data", None):
             return client_message_id
         message_id = client_message_id
     else:

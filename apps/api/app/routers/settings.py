@@ -210,6 +210,62 @@ async def delete_account(
         ) from exc
 
 
+# ── Admin: feedback stats ─────────────────────────────────────────────────────
+
+@router.get("/admin/feedback-stats")
+async def admin_feedback_stats(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Aggregated thumbs-up/down counts for the caller's workspace.
+
+    Admin-only. Powers the 'Feedback signal' card on Settings → Workspace.
+    Uses the user-scoped client so RLS keeps org isolation honest; the
+    `count='exact'` flag asks PostgREST for the row count without dragging
+    rows back.
+    """
+    user_id, _org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+
+    me = await asyncio.to_thread(
+        lambda: client.table("users")
+        .select("role")
+        .eq("id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not me or not me.data or me.data.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workspace admins can view feedback analytics.",
+        )
+
+    async def _count(filter_value: str | None) -> int:
+        def _run() -> int:
+            q = (
+                client.table("messages")
+                .select("id", count="exact", head=True)
+                .eq("role", "assistant")
+            )
+            q = q.eq("feedback", filter_value) if filter_value else q.is_("feedback", "null")
+            res = q.execute()
+            return res.count or 0
+
+        return await asyncio.to_thread(_run)
+
+    positive, negative, unrated = await asyncio.gather(
+        _count("positive"),
+        _count("negative"),
+        _count(None),
+    )
+
+    return {
+        "positive": positive,
+        "negative": negative,
+        "unrated": unrated,
+        "total": positive + negative + unrated,
+    }
+
+
 async def _wipe_org_storage(svc, org_id: str) -> None:
     """Best-effort removal of org storage tree. Failures don't block deletion."""
     from app.routers.documents import STORAGE_BUCKET

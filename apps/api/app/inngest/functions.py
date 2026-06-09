@@ -89,6 +89,12 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
             "mark-ready",
             lambda: mark_status(doc_id, "ready", chunk_count=chunk_count),
         )
+        # Notify the uploader. Idempotent via dedupe_key=doc_id so a retried
+        # Inngest run never produces a duplicate email.
+        await step.run(
+            "notify-document-ready",
+            lambda: _notify_document_ready(doc_id=doc_id, chunk_count=chunk_count),
+        )
     else:
         await step.run(
             "mark-failed",
@@ -96,6 +102,51 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
         )
 
     return result
+
+
+async def _notify_document_ready(*, doc_id: str, chunk_count: int) -> None:
+    """Best-effort email to the uploader. Failures here don't fail the run."""
+    from app.config import get_settings
+    from app.database import get_service_client
+    from app.services.email import send_email_event
+    import asyncio as _asyncio
+
+    settings = get_settings()
+    svc = get_service_client()
+
+    try:
+        doc = await _asyncio.to_thread(
+            lambda: svc.table("documents")
+            .select("name, org_id, created_by")
+            .eq("id", doc_id)
+            .maybe_single()
+            .execute()
+        )
+        if not doc or not doc.data or not doc.data.get("created_by"):
+            return
+        uploader_id = doc.data["created_by"]
+
+        au = await _asyncio.to_thread(
+            lambda: svc.auth.admin.get_user_by_id(uploader_id)
+        )
+        email = getattr(getattr(au, "user", None), "email", None)
+        if not email:
+            return
+
+        await send_email_event(
+            event_type="document_ready",
+            to=email,
+            user_id=uploader_id,
+            org_id=doc.data["org_id"],
+            dedupe_key=doc_id,
+            data={
+                "doc_name": doc.data["name"],
+                "chunk_count": chunk_count,
+                "app_url": settings.app_url,
+            },
+        )
+    except Exception as exc:
+        log.warning("[inngest] document_ready notify failed: %s", exc)
 
 
 async def _try_ingest(

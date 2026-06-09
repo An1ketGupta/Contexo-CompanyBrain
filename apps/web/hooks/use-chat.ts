@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { networkError, parseApiError, type ApiError, type ErrorCode } from "@/lib/errors";
 import { newRequestId, REQUEST_ID_HEADER } from "@/lib/request-id";
-import type { ChatStreamEvent, MessageSource } from "@/lib/types";
+import type { ChatStreamEvent, MessageFeedback, MessageSource } from "@/lib/types";
 
 export interface SearchProgress {
   query: string;
@@ -32,6 +32,8 @@ export interface DisplayMessage {
   sources: MessageSource[];
   searches: SearchProgress[];
   status: "streaming" | "complete" | "error" | "aborted";
+  // Tri-state thumb rating. Tracked on the assistant bubble; user bubbles leave it null.
+  feedback: MessageFeedback | null;
   error?: MessageError;
   /**
    * The text we sent to produce this assistant message — kept on the user
@@ -54,6 +56,7 @@ export interface UseChatOptions {
     role: DisplayRole;
     content: string;
     sources: MessageSource[] | null;
+    feedback?: MessageFeedback | null;
     created_at: string;
   }>;
   onConversationStarted?: (id: string) => void;
@@ -89,6 +92,7 @@ function persistedToDisplay(
     sources: m.sources ?? [],
     searches: [],
     status: "complete",
+    feedback: m.feedback ?? null,
     created_at: m.created_at,
   };
 }
@@ -181,6 +185,7 @@ export function useChat({
           sources: [],
           searches: [],
           status: "complete",
+          feedback: null,
           pending_text: trimmed,
           client_message_id: clientMessageId,
           created_at: new Date().toISOString(),
@@ -193,6 +198,7 @@ export function useChat({
           sources: [],
           searches: [],
           status: "streaming",
+          feedback: null,
           pending_text: trimmed,
           client_message_id: clientMessageId,
           created_at: new Date().toISOString(),
@@ -339,6 +345,52 @@ export function useChat({
     [messages, runTurn],
   );
 
+  /**
+   * Optimistic feedback toggle. The bubble flips instantly; the PATCH is
+   * fire-and-forget but rolls back on failure so a 500 doesn't leave the UI
+   * lying about persisted state. Re-clicking the same thumb clears the vote.
+   */
+  const setFeedback = useCallback(
+    async (assistantLocalId: string, next: MessageFeedback) => {
+      let serverId: string | null = null;
+      let previous: MessageFeedback | null = null;
+      let resolved: MessageFeedback | null = null;
+
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.local_id !== assistantLocalId) return m;
+          serverId = m.server_id;
+          previous = m.feedback;
+          resolved = m.feedback === next ? null : next;
+          return { ...m, feedback: resolved };
+        }),
+      );
+
+      if (!serverId) return; // not yet persisted — can't rate
+
+      try {
+        const res = await fetch(
+          `/api/chat/messages/${encodeURIComponent(serverId)}/feedback`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ feedback: resolved }),
+          },
+        );
+        if (!res.ok) throw new Error(`feedback ${res.status}`);
+      } catch {
+        // Roll back. We deliberately don't toast here — the rating is
+        // low-stakes telemetry and a failed PATCH is fine to silently revert.
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.local_id === assistantLocalId ? { ...m, feedback: previous } : m,
+          ),
+        );
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     return () => abortRef.current?.abort();
   }, []);
@@ -350,6 +402,7 @@ export function useChat({
     send,
     stop,
     retry,
+    setFeedback,
   };
 }
 

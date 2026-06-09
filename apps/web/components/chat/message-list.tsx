@@ -2,14 +2,16 @@
 
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { DisplayMessage } from "@/hooks/use-chat";
+import type { MessageFeedback } from "@/lib/types";
 import { MessageItem } from "./message-item";
 
 interface MessageListProps {
   messages: DisplayMessage[];
   onRetry?: (assistantLocalId: string) => void;
+  onFeedback?: (assistantLocalId: string, feedback: MessageFeedback) => void;
 }
 
-export function MessageList({ messages, onRetry }: MessageListProps) {
+export function MessageList({ messages, onRetry, onFeedback }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const lastLengthRef = useRef(0);
@@ -48,6 +50,7 @@ export function MessageList({ messages, onRetry }: MessageListProps) {
             message={m}
             isLast={i === messages.length - 1}
             onRetry={onRetry}
+            onFeedback={onFeedback}
           />
         ))}
       </div>

@@ -8,7 +8,15 @@ from app.inngest import FUNCTIONS as INNGEST_FUNCTIONS
 from app.inngest import get_inngest_client
 from app.middleware.request_context import RequestContextMiddleware
 from app.observability import init_observability
-from app.routers import chat, documents, health, search, settings as settings_router
+from app.routers import (
+    auth as auth_router,
+    chat,
+    documents,
+    health,
+    invitations,
+    search,
+    settings as settings_router,
+)
 
 
 def create_app() -> FastAPI:
@@ -50,6 +58,8 @@ app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(search.router)
 app.include_router(settings_router.router)
+app.include_router(invitations.router)
+app.include_router(auth_router.router)
 
 # Inngest serve endpoint — webhook the Inngest server hits to invoke our functions.
 # Mounts at /api/inngest by default.

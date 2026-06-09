@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
+
+const API_URL = process.env.API_URL ?? "http://localhost:8000";
 
 function slugify(name: string): string {
   return name
@@ -81,5 +84,30 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Failed to update user metadata" }, { status: 500 });
   }
 
+  // Fire the welcome email via FastAPI hook. Best-effort — if this fails the
+  // signup still succeeds; the user just won't get an onboarding email.
+  fireWelcomeEmail(user_id, orgId).catch((err) => {
+    console.warn("[complete-signup] welcome hook failed:", err);
+  });
+
   return NextResponse.json({ org_id: orgId });
+}
+
+async function fireWelcomeEmail(userId: string, orgId: string): Promise<void> {
+  const secret = process.env.INTERNAL_EMAIL_SECRET;
+  if (!secret) return;
+  const body = JSON.stringify({ user_id: userId, org_id: orgId });
+  const signature = crypto
+    .createHmac("sha256", secret)
+    .update(body)
+    .digest("hex");
+  await fetch(`${API_URL}/auth/internal/welcome`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Internal-Signature": signature,
+    },
+    body,
+    cache: "no-store",
+  });
 }

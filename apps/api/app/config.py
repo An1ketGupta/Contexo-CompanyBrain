@@ -62,6 +62,21 @@ class Settings(BaseSettings):
     upstash_redis_rest_url: str = ""
     upstash_redis_rest_token: str = ""
 
+    # ── Email (Resend + React Email via internal Next.js render route) ──────
+    resend_api_key: str = ""
+    email_from: str = "Company Brain <noreply@nirnayaiq.com>"
+    # The Next.js app exposes POST /api/internal/email/render. In dev this is
+    # http://localhost:3000; in prod, set EMAIL_RENDER_URL to the deployed URL.
+    email_render_url: str = "http://localhost:3000/api/internal/email/render"
+    # Shared HMAC secret with the Next.js render route. Same value as
+    # NEXT_PUBLIC NOTHING — env var is INTERNAL_EMAIL_SECRET on both sides.
+    internal_email_secret: str = ""
+    # Public web URL used when building absolute links inside emails.
+    app_url: str = "http://localhost:3000"
+    # If false, the worker pretends Resend succeeded (logs the payload) — used
+    # in local dev when you haven't put a Resend key in your .env yet.
+    email_enabled: bool = False
+
     # ── Observability ───────────────────────────────────────────────────────
     # Sentry — leave SENTRY_DSN empty in dev to disable. Sampling defaults keep
     # the free tier comfortable; bump traces_sample_rate before a launch event.
