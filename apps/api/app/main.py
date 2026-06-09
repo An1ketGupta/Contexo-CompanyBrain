@@ -26,12 +26,25 @@ def create_app() -> FastAPI:
     # try to log. Idempotent: safe to call from tests' app factories.
     init_observability(settings)
 
+    # Touch the Langfuse module so it initializes the singleton at app boot
+    # rather than on the first chat request (lazy init would block the request
+    # by a few hundred ms while resolving DNS to ingest.langfuse.com).
+    from app.services import langfuse as _lf  # noqa: F401
+
     _app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
         docs_url="/docs" if settings.debug else None,
         redoc_url="/redoc" if settings.debug else None,
     )
+
+    @_app.on_event("shutdown")
+    async def _flush_langfuse() -> None:
+        # Drain any queued spans before the worker exits. Safe no-op when
+        # tracing is disabled.
+        from app.services.langfuse import flush
+
+        flush()
 
     # CORS is added first → executed last; RequestContext is added last → first.
     # Order matters: we want request_id bound BEFORE CORS short-circuits an

@@ -1,6 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* next-themes adds class="dark" on <html>. We want Tailwind's `dark:` variant
+   to follow that class — without this the variant is OS-driven only. */
+@custom-variant dark (&:is(.dark, .dark *));
+
 /* ── Design tokens ─────────────────────────────────────────── */
 :root {
   --background: #ffffff;
@@ -23,9 +27,40 @@
 
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
+  /* Tinted background used for soft destructive surfaces (danger zone, etc).
+     Keep it close to bg so layouts don't look noisy. */
+  --destructive-soft: #fef2f2;
 
   --ring: #1e40af;
   --radius: 0.5rem;
+}
+
+/* Dark theme — toggled by next-themes via class="dark" on <html>. Keep
+   semantically the same names; just retune for low-light contrast. */
+.dark {
+  --background: #0b1120;
+  --foreground: #e2e8f0;
+
+  --muted: #111c30;
+  --muted-foreground: #94a3b8;
+
+  --border: #1e293b;
+  --input: #1e293b;
+
+  --primary: #60a5fa;
+  --primary-foreground: #0b1120;
+
+  --secondary: #1e293b;
+  --secondary-foreground: #e2e8f0;
+
+  --accent: #1e3a8a;
+  --accent-foreground: #bfdbfe;
+
+  --destructive: #f87171;
+  --destructive-foreground: #1a0a0a;
+  --destructive-soft: #2a1414;
+
+  --ring: #60a5fa;
 }
 
 @theme inline {
@@ -43,6 +78,7 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-soft: var(--destructive-soft);
   --color-ring: var(--ring);
   --font-sans: var(--font-inter);
   --radius: var(--radius);
@@ -56,4 +92,19 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-inter, system-ui, sans-serif);
+}
+
+/* Indeterminate progress bar — used for document processing rows. The bar
+   slides back and forth so the user sees activity without us lying about
+   completion percentage. */
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
 }

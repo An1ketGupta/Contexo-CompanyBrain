@@ -1,14 +1,20 @@
 "use client";
 
+import { useState } from "react";
+import { Loader2, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 import { formatDistanceToNow } from "@/lib/date";
 import type { Document } from "@/lib/types";
+import { Button } from "@/components/ui/button";
 import { FileIcon } from "./file-icon";
 import { StatusBadge } from "./status-badge";
 import { DeleteDocumentDialog } from "./delete-document-dialog";
+import { ProcessingIndicator } from "./processing-indicator";
 
 interface DocumentTableProps {
   documents: Document[];
   onDelete: (id: string) => Promise<void>;
+  onRetry: (id: string) => Promise<void>;
 }
 
 function formatSize(bytes: number | null): string {
@@ -18,7 +24,11 @@ function formatSize(bytes: number | null): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
-export function DocumentTable({ documents, onDelete }: DocumentTableProps) {
+export function DocumentTable({
+  documents,
+  onDelete,
+  onRetry,
+}: DocumentTableProps) {
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-background">
       <table className="w-full text-sm">
@@ -41,7 +51,7 @@ export function DocumentTable({ documents, onDelete }: DocumentTableProps) {
           {documents.map((doc) => (
             <tr key={doc.id} className="transition-colors hover:bg-muted/40">
               <td className="px-4 py-3">
-                <div className="flex items-center gap-3 min-w-0">
+                <div className="flex min-w-0 items-center gap-3">
                   <FileIcon
                     type={doc.file_type}
                     className="h-4 w-4 shrink-0 text-muted-foreground"
@@ -51,7 +61,8 @@ export function DocumentTable({ documents, onDelete }: DocumentTableProps) {
                       {doc.name}
                     </p>
                     <p className="truncate text-xs text-muted-foreground md:hidden">
-                      {doc.file_type.toUpperCase()} · {formatSize(doc.file_size_bytes)}
+                      {doc.file_type.toUpperCase()} ·{" "}
+                      {formatSize(doc.file_size_bytes)}
                     </p>
                   </div>
                 </div>
@@ -63,15 +74,63 @@ export function DocumentTable({ documents, onDelete }: DocumentTableProps) {
                 {formatDistanceToNow(doc.created_at)}
               </td>
               <td className="px-4 py-3">
-                <StatusBadge status={doc.status} />
+                {doc.status === "processing" ? (
+                  <ProcessingIndicator startedAt={doc.created_at} />
+                ) : (
+                  <StatusBadge status={doc.status} />
+                )}
               </td>
               <td className="px-4 py-3 text-right">
-                <DeleteDocumentDialog document={doc} onConfirm={onDelete} />
+                <div className="flex items-center justify-end gap-1">
+                  {doc.status === "failed" && (
+                    <RetryButton id={doc.id} name={doc.name} onRetry={onRetry} />
+                  )}
+                  <DeleteDocumentDialog document={doc} onConfirm={onDelete} />
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function RetryButton({
+  id,
+  name,
+  onRetry,
+}: {
+  id: string;
+  name: string;
+  onRetry: (id: string) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await onRetry(id);
+          toast.success(`Retrying "${name}"…`);
+        } catch (err) {
+          toast.error(
+            err instanceof Error ? err.message : "Failed to retry.",
+          );
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <RefreshCw className="h-3 w-3" />
+      )}
+      Retry
+    </Button>
   );
 }

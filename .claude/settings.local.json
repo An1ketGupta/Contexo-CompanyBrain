@@ -20,7 +20,9 @@
       "Bash(git commit -m ' *)",
       "Bash(pnpm exec *)",
       "Bash(Get-ChildItem -Path \"C:\\\\My_Folder\\\\Harkirat_Master\\\\WebDev\\\\Projects\\\\SaaS\\\\NirnayaIQ\\\\Product\" -Directory)",
-      "Bash(Select-Object Name)"
+      "Bash(Select-Object Name)",
+      "Bash(npx next *)",
+      "Bash(npx eslint *)"
     ]
   }
 }

@@ -2,11 +2,11 @@
 
 import { use, useCallback, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { ConversationSidebar } from "@/components/chat/conversation-sidebar";
 import { MessageInput } from "@/components/chat/message-input";
 import { MessageList } from "@/components/chat/message-list";
+import { ChatMessagesSkeleton } from "@/components/chat/chat-messages-skeleton";
 import { useChat } from "@/hooks/use-chat";
 import { useConversation } from "@/hooks/use-conversation";
 import { useConversations } from "@/hooks/use-conversations";
@@ -69,9 +69,7 @@ export default function ChatConversationPage({
       <ConversationSidebar activeId={id} />
       <main className="flex h-full min-h-0 flex-1 flex-col">
         {loading && messages.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center">
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          </div>
+          <ChatMessagesSkeleton />
         ) : noContent ? (
           <div className="flex flex-1 items-center justify-center px-6 py-12 text-center">
             <p className="max-w-sm text-sm text-muted-foreground">

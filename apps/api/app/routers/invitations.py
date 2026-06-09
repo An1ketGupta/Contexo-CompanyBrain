@@ -355,6 +355,92 @@ async def revoke_invitation(
         )
 
 
+# ── Remove member ────────────────────────────────────────────────────────────
+
+@router.delete(
+    "/organizations/members/{member_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def remove_member(
+    member_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> None:
+    """Detach a member from this workspace.
+
+    Effects:
+        - Delete the `users` row (cascades to their conversations & messages).
+        - Clear `org_id` from the auth user's app_metadata so any cached JWT
+          starts failing the FastAPI org check on next refresh.
+        - Their uploaded documents survive (created_by FK is ON DELETE SET NULL).
+
+    Guards:
+        - Caller must be admin.
+        - Target must be in the same org.
+        - Caller can't remove themselves (admins shoot themselves in the foot
+          this way; demote a teammate to admin first or delete the workspace).
+        - Can't remove the last admin (workspace would be unmanageable).
+    """
+    caller_id, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+
+    if not await _is_admin(client, caller_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workspace admins can remove members.",
+        )
+    if member_id == caller_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You can't remove yourself. Ask another admin or delete the workspace from the danger zone.",
+        )
+
+    target = await asyncio.to_thread(
+        lambda: client.table("users")
+        .select("id, role, org_id")
+        .eq("id", member_id)
+        .maybe_single()
+        .execute()
+    )
+    if not target or not target.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+    if target.data.get("org_id") != org_id:
+        # RLS should already hide them, but be explicit so we don't accidentally
+        # delete cross-org if the RLS policy regresses.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+
+    if target.data.get("role") == "admin":
+        svc = get_service_client()
+        admin_count = await asyncio.to_thread(
+            lambda: svc.table("users")
+            .select("id", count="exact", head=True)
+            .eq("org_id", org_id)
+            .eq("role", "admin")
+            .execute()
+        )
+        if (admin_count.count or 0) <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Can't remove the last admin. Promote another member first.",
+            )
+
+    svc = get_service_client()
+    await asyncio.to_thread(
+        lambda: svc.table("users").delete().eq("id", member_id).eq("org_id", org_id).execute()
+    )
+
+    # Clear app_metadata.org_id so a cached JWT can't keep accessing the org.
+    # If this fails, the users-row delete already revoked access via RLS — log and move on.
+    try:
+        await asyncio.to_thread(
+            lambda: svc.auth.admin.update_user_by_id(
+                member_id,
+                {"app_metadata": {"org_id": None}},
+            )
+        )
+    except Exception as exc:
+        log.warning("remove_member_metadata_clear_failed", member_id=member_id, error=str(exc))
+
+
 # ── Public: lookup + accept by token ─────────────────────────────────────────
 
 @router.get("/auth/invitations/{token}")

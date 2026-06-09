@@ -29,6 +29,12 @@ from typing import Any, AsyncIterator, Literal
 from supabase import Client
 
 from app.config import get_settings
+from app.services.langfuse import (
+    current_trace_id,
+    observe,
+    start_trace_span,
+    update_current_trace,
+)
 from app.services.retrieval import SearchHit, hybrid_search
 
 from .client import SEARCH_TOOL, SEARCH_TOOL_NAME, LLMClient, LLMError, get_llm_client
@@ -80,6 +86,10 @@ class FinalEvent:
     text: str = ""
     sources: list[dict] = field(default_factory=list)
     tool_calls_made: int = 0
+    # Langfuse trace id for this turn (or None when tracing is disabled).
+    # Persisted on `messages.langfuse_trace_id` so feedback scores can be
+    # attached back to the trace that produced the answer.
+    trace_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -105,11 +115,17 @@ async def execute_task(
     history: list[Message] | None = None,
     llm_client: LLMClient | None = None,
     stream: bool = False,
+    user_id: str | None = None,
+    conversation_id: str | None = None,
 ) -> AsyncIterator[OrchestratorEvent]:
     """Run one user task through the LLM+retrieval loop.
 
     Yields events in order: searching/searched* → sources → (token*) → final.
     On hard failure, yields a single ErrorEvent and stops.
+
+    The `user_id` / `conversation_id` arguments are optional metadata that flow
+    through to Langfuse for dashboard filtering. They have no effect on chat
+    behavior beyond observability.
     """
     settings = get_settings()
     llm = llm_client or get_llm_client()
@@ -135,135 +151,160 @@ async def execute_task(
     started = time.perf_counter()
     final_text = ""
 
-    for round_idx in range(settings.chat_max_tool_rounds + 1):
-        # Last round: force no more tools, just final text.
-        tools_for_this_round = (SEARCH_TOOL,) if round_idx < settings.chat_max_tool_rounds else ()
-
-        try:
-            response: LLMResponse = await llm.complete(
-                messages,
-                tools=tools_for_this_round,
-            )
-        except LLMError as exc:
-            log.exception("LLM call failed in round %d: %s", round_idx, exc)
-            yield ErrorEvent(message=f"AI service error: {exc}")
-            return
-
-        if not response.tool_calls:
-            # In stream mode we deliberately keep final_text empty so the
-            # streaming branch below kicks in (one extra LLM call, but the
-            # user gets real token-by-token output). In non-stream mode we
-            # take this text as the answer.
-            if not stream:
-                final_text = response.text.strip()
-            break
-
-        # Append the assistant turn containing the tool calls.
-        messages.append(
-            Message(role="assistant", content=response.text, tool_calls=response.tool_calls)
+    # One Langfuse trace per turn. Nested @observe-decorated LLM and search
+    # calls attach as child spans via OTel context propagation. When tracing
+    # is disabled the context manager is a no-op.
+    with start_trace_span(
+        name="execute_task",
+        input={"user_message": user_message, "stream": stream},
+    ):
+        update_current_trace(
+            user_id=user_id,
+            session_id=conversation_id,
+            metadata={
+                "org_id": org_id,
+                "history_turns": len(history or []),
+                "stream": stream,
+            },
+            tags=["chat"],
         )
 
-        # Filter out unknown / duplicate / over-budget calls.
-        valid_calls: list[ToolCall] = []
-        for tc in response.tool_calls:
-            if searches_done + len(valid_calls) >= settings.chat_max_searches:
-                break
-            if tc.name != SEARCH_TOOL_NAME:
-                log.warning("Unknown tool from LLM: %r — skipping", tc.name)
-                continue
-            query = _extract_query(tc)
-            if not query:
-                continue
-            key = query.lower()
-            if key in seen_queries:
-                continue
-            seen_queries.add(key)
-            valid_calls.append(tc)
+        for round_idx in range(settings.chat_max_tool_rounds + 1):
+            # Last round: force no more tools, just final text.
+            tools_for_this_round = (SEARCH_TOOL,) if round_idx < settings.chat_max_tool_rounds else ()
 
-        if not valid_calls:
-            # Model insisted on tools but every call was rejected — stop gracefully.
-            log.info("No valid tool calls this round; ending loop with last text.")
-            if not stream:
-                final_text = response.text.strip()
-            break
-
-        # Execute all valid searches in parallel.
-        for tc in valid_calls:
-            yield SearchingEvent(query=tc.args["query"])
-
-        results: list[list[SearchHit] | BaseException] = await asyncio.gather(
-            *[
-                _run_search(tc.args["query"], org_id, db_client, settings.chat_search_k)
-                for tc in valid_calls
-            ],
-            return_exceptions=True,
-        )
-
-        tool_call_total += len(valid_calls)
-        searches_done += len(valid_calls)
-
-        # Feed results back to the LLM as tool messages.
-        for tc, res in zip(valid_calls, results):
-            if isinstance(res, BaseException):
-                log.warning("hybrid_search failed for %r: %s", tc.args["query"], res)
-                hits: list[SearchHit] = []
-            else:
-                hits = res
-            all_hits.extend(hits)
-            yield SearchedEvent(query=tc.args["query"], hit_count=len(hits))
-            messages.append(
-                Message(
-                    role="tool",
-                    tool_result=ToolResult(
-                        call_id=tc.id,
-                        name=tc.name,
-                        content=_format_context(hits),
-                    ),
+            try:
+                response: LLMResponse = await llm.complete(
+                    messages,
+                    tools=tools_for_this_round,
                 )
+            except LLMError as exc:
+                log.exception("LLM call failed in round %d: %s", round_idx, exc)
+                yield ErrorEvent(message=f"AI service error: {exc}")
+                return
+
+            if not response.tool_calls:
+                # In stream mode we deliberately keep final_text empty so the
+                # streaming branch below kicks in (one extra LLM call, but the
+                # user gets real token-by-token output). In non-stream mode we
+                # take this text as the answer.
+                if not stream:
+                    final_text = response.text.strip()
+                break
+
+            # Append the assistant turn containing the tool calls.
+            messages.append(
+                Message(role="assistant", content=response.text, tool_calls=response.tool_calls)
             )
 
-    # End of tool loop — emit sources first, then either final text (non-stream)
-    # or stream the final generation if requested.
-    sources = _dedupe_sources(all_hits, limit=settings.chat_max_context_chunks)
-    yield SourcesEvent(sources=sources)
-
-    if stream and not final_text:
-        # We may have exited the loop because the LLM was about to speak. To
-        # stream the final answer, re-issue the last LLM call WITHOUT tools
-        # and consume it as a stream. (Gemini won't stream a turn that
-        # produced tool_calls; calling again with the now-complete tool-result
-        # history gives us a fresh streamable final turn.)
-        full_text_parts: list[str] = []
-        try:
-            chunk_iter = await llm.stream(messages, tools=())
-            async for chunk in chunk_iter:
-                if chunk.kind == "text" and chunk.text:
-                    full_text_parts.append(chunk.text)
-                    yield TokenEvent(text=chunk.text)
-                elif chunk.kind == "error":
-                    yield ErrorEvent(message=f"Stream error: {chunk.error}")
-                    return
-                elif chunk.kind == "done":
+            # Filter out unknown / duplicate / over-budget calls.
+            valid_calls: list[ToolCall] = []
+            for tc in response.tool_calls:
+                if searches_done + len(valid_calls) >= settings.chat_max_searches:
                     break
-        except LLMError as exc:
-            yield ErrorEvent(message=f"AI service error: {exc}")
-            return
-        final_text = "".join(full_text_parts).strip()
+                if tc.name != SEARCH_TOOL_NAME:
+                    log.warning("Unknown tool from LLM: %r — skipping", tc.name)
+                    continue
+                query = _extract_query(tc)
+                if not query:
+                    continue
+                key = query.lower()
+                if key in seen_queries:
+                    continue
+                seen_queries.add(key)
+                valid_calls.append(tc)
 
-    elapsed = time.perf_counter() - started
-    log.info(
-        "execute_task complete: rounds=%d searches=%d hits=%d elapsed=%.2fs",
-        round_idx + 1,
-        searches_done,
-        len(all_hits),
-        elapsed,
-    )
+            if not valid_calls:
+                # Model insisted on tools but every call was rejected — stop gracefully.
+                log.info("No valid tool calls this round; ending loop with last text.")
+                if not stream:
+                    final_text = response.text.strip()
+                break
 
-    yield FinalEvent(text=final_text, sources=sources, tool_calls_made=tool_call_total)
+            # Execute all valid searches in parallel.
+            for tc in valid_calls:
+                yield SearchingEvent(query=tc.args["query"])
+
+            results: list[list[SearchHit] | BaseException] = await asyncio.gather(
+                *[
+                    _run_search(tc.args["query"], org_id, db_client, settings.chat_search_k)
+                    for tc in valid_calls
+                ],
+                return_exceptions=True,
+            )
+
+            tool_call_total += len(valid_calls)
+            searches_done += len(valid_calls)
+
+            # Feed results back to the LLM as tool messages.
+            for tc, res in zip(valid_calls, results):
+                if isinstance(res, BaseException):
+                    log.warning("hybrid_search failed for %r: %s", tc.args["query"], res)
+                    hits: list[SearchHit] = []
+                else:
+                    hits = res
+                all_hits.extend(hits)
+                yield SearchedEvent(query=tc.args["query"], hit_count=len(hits))
+                messages.append(
+                    Message(
+                        role="tool",
+                        tool_result=ToolResult(
+                            call_id=tc.id,
+                            name=tc.name,
+                            content=_format_context(hits),
+                        ),
+                    )
+                )
+
+        # End of tool loop — emit sources first, then either final text (non-stream)
+        # or stream the final generation if requested.
+        sources = _dedupe_sources(all_hits, limit=settings.chat_max_context_chunks)
+        yield SourcesEvent(sources=sources)
+
+        if stream and not final_text:
+            # We may have exited the loop because the LLM was about to speak. To
+            # stream the final answer, re-issue the last LLM call WITHOUT tools
+            # and consume it as a stream. (Gemini won't stream a turn that
+            # produced tool_calls; calling again with the now-complete tool-result
+            # history gives us a fresh streamable final turn.)
+            full_text_parts: list[str] = []
+            try:
+                chunk_iter = await llm.stream(messages, tools=())
+                async for chunk in chunk_iter:
+                    if chunk.kind == "text" and chunk.text:
+                        full_text_parts.append(chunk.text)
+                        yield TokenEvent(text=chunk.text)
+                    elif chunk.kind == "error":
+                        yield ErrorEvent(message=f"Stream error: {chunk.error}")
+                        return
+                    elif chunk.kind == "done":
+                        break
+            except LLMError as exc:
+                yield ErrorEvent(message=f"AI service error: {exc}")
+                return
+            final_text = "".join(full_text_parts).strip()
+
+        elapsed = time.perf_counter() - started
+        log.info(
+            "execute_task complete: rounds=%d searches=%d hits=%d elapsed=%.2fs",
+            round_idx + 1,
+            searches_done,
+            len(all_hits),
+            elapsed,
+        )
+
+        trace_id = current_trace_id()
+        yield FinalEvent(
+            text=final_text,
+            sources=sources,
+            tool_calls_made=tool_call_total,
+            trace_id=trace_id,
+        )
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+@observe(name="hybrid_search")
 async def _run_search(query: str, org_id: str, client: Client, k: int) -> list[SearchHit]:
     return await hybrid_search(query, org_id, client, k=k)
 

@@ -132,7 +132,7 @@ function FeedbackButtons({
         aria-label={feedback === "positive" ? "Remove positive rating" : "Mark helpful"}
         className={cn(
           "inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-          feedback === "positive" && "bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/15 hover:text-emerald-700",
+          feedback === "positive" && "bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/15 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300",
         )}
       >
         <ThumbsUp className="h-3.5 w-3.5" />
@@ -183,7 +183,7 @@ function ErrorPanel({
   const isQuota = error.code === "quota_exceeded";
 
   return (
-    <div className="space-y-2 rounded-lg border border-destructive/30 bg-red-50 px-3 py-2.5">
+    <div className="space-y-2 rounded-lg border border-destructive/30 bg-destructive-soft/60 px-3 py-2.5">
       <div className="flex items-start gap-2 text-sm text-destructive">
         <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
         <span>{error.message}</span>

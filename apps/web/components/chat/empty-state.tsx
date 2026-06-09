@@ -67,7 +67,7 @@ export function EmptyState({ onPick, hasDocuments }: EmptyStateProps) {
       </p>
 
       {!hasDocuments && (
-        <div className="mt-5 rounded-lg border border-amber-300/40 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div className="mt-5 rounded-lg border border-amber-300/40 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
           The brain has no knowledge yet.{" "}
           <Link
             href="/documents"

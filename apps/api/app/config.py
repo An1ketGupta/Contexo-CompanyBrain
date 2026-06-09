@@ -64,7 +64,7 @@ class Settings(BaseSettings):
 
     # ── Email (Resend + React Email via internal Next.js render route) ──────
     resend_api_key: str = ""
-    email_from: str = "Company Brain <noreply@nirnayaiq.com>"
+    email_from: str = "NirnayaIQ <onboarding@resend.dev>"
     # The Next.js app exposes POST /api/internal/email/render. In dev this is
     # http://localhost:3000; in prod, set EMAIL_RENDER_URL to the deployed URL.
     email_render_url: str = "http://localhost:3000/api/internal/email/render"
@@ -90,6 +90,15 @@ class Settings(BaseSettings):
     # Logging — "json" for prod (Railway log shippers parse it), "console" in dev.
     log_format: str = "console"
     log_level: str = "INFO"
+
+    # ── Langfuse (LLM observability) ────────────────────────────────────────
+    # Leave keys empty in dev to disable — the @observe wrappers become no-ops
+    # via `enabled=False`. In prod we'd set all three.
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"
+    # Sample 1.0 (everything) until we have traffic — drop to 0.1 if cost matters.
+    langfuse_sample_rate: float = 1.0
 
     # ── Rate limits ─────────────────────────────────────────────────────────
     # Per-user/minute on the chat endpoint. The previous per-org cap was lenient

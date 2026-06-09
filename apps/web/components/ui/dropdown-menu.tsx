@@ -43,7 +43,7 @@ const DropdownMenuItem = React.forwardRef<
       "relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors",
       "focus:bg-muted data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       "[&_svg]:size-4 [&_svg]:shrink-0",
-      destructive && "text-destructive focus:bg-red-50 focus:text-destructive",
+      destructive && "text-destructive focus:bg-destructive-soft focus:text-destructive",
       inset && "pl-8",
       className,
     )}

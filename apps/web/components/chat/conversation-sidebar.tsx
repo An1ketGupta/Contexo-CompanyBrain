@@ -24,6 +24,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 import { RenameDialog } from "./rename-dialog";
 
 interface ConversationSidebarProps {
@@ -83,7 +84,7 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
         {loading ? (
           <div className="space-y-1.5 px-1">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-7 animate-pulse rounded-md bg-muted/60" />
+              <Skeleton key={i} className="h-7 bg-muted/60" />
             ))}
           </div>
         ) : error ? (

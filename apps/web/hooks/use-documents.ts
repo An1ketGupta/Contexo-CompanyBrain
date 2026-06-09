@@ -84,6 +84,41 @@ export function useDocuments() {
     [mutate],
   );
 
+  /**
+   * Re-run the ingestion pipeline on a previously-failed document.
+   * Optimistically flips the row to "pending" so the table reacts immediately;
+   * Realtime will push the real "processing" then "ready"/"failed" state.
+   */
+  const retryDocument = useCallback(
+    async (id: string): Promise<void> => {
+      const previous = data;
+      await mutate(
+        previous
+          ? {
+              documents: previous.documents.map((d) =>
+                d.id === id
+                  ? { ...d, status: "pending" as const, chunk_count: null }
+                  : d,
+              ),
+            }
+          : previous,
+        { revalidate: false },
+      );
+
+      const res = await fetch(`/api/documents/${id}/reprocess`, {
+        method: "POST",
+      });
+      if (!res.ok && res.status !== 202) {
+        await mutate(previous, { revalidate: false });
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          body.detail ?? body.message ?? `Retry failed (${res.status})`,
+        );
+      }
+    },
+    [data, mutate],
+  );
+
   return {
     documents,
     loading: isLoading,
@@ -92,5 +127,6 @@ export function useDocuments() {
     deleteDocument,
     upsertDocument,
     removeDocument,
+    retryDocument,
   };
 }

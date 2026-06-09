@@ -7,9 +7,11 @@ import {
   AlertTriangle,
   Loader2,
   Mail,
+  MoreHorizontal,
   ThumbsDown,
   ThumbsUp,
   Trash2,
+  UserMinus,
   UserPlus,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -26,6 +28,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useCurrentUser } from "@/hooks/use-user";
 import { createClient } from "@/lib/supabase/client";
 import { networkError, parseApiError, reportApiError } from "@/lib/errors";
@@ -56,7 +65,7 @@ export default function SettingsPage() {
         onSaved={refresh}
       />
 
-      <TeamCard isAdmin={user?.role === "admin"} />
+      <TeamCard isAdmin={user?.role === "admin"} currentUserId={user?.id ?? null} />
 
       {user?.role === "admin" && <FeedbackSignalCard />}
 
@@ -295,7 +304,13 @@ interface PendingInvite {
   invited_by: string | null;
 }
 
-function TeamCard({ isAdmin }: { isAdmin: boolean }) {
+function TeamCard({
+  isAdmin,
+  currentUserId,
+}: {
+  isAdmin: boolean;
+  currentUserId: string | null;
+}) {
   const members = useSWR<{ members: Member[] }>(
     "/api/organizations/members",
     jsonFetcher,
@@ -310,6 +325,8 @@ function TeamCard({ isAdmin }: { isAdmin: boolean }) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"admin" | "member">("member");
   const [sending, setSending] = useState(false);
+  const [removing, setRemoving] = useState<Member | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
 
   const sendInvite = async () => {
     const trimmed = email.trim().toLowerCase();
@@ -338,6 +355,32 @@ function TeamCard({ isAdmin }: { isAdmin: boolean }) {
       invites.mutate();
     } finally {
       setSending(false);
+    }
+  };
+
+  const confirmRemoveMember = async () => {
+    if (!removing) return;
+    setRemoveBusy(true);
+    try {
+      const res = await fetch(
+        `/api/organizations/members/${removing.id}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok && res.status !== 204) {
+        const data = (await res.json().catch(() => ({}))) as {
+          message?: string;
+          detail?: string;
+        };
+        toast.error(data.message ?? data.detail ?? "Failed to remove member.");
+        return;
+      }
+      toast.success(
+        `Removed ${removing.display_name ?? removing.email ?? "member"} from the workspace.`,
+      );
+      setRemoving(null);
+      members.mutate();
+    } finally {
+      setRemoveBusy(false);
     }
   };
 
@@ -372,22 +415,55 @@ function TeamCard({ isAdmin }: { isAdmin: boolean }) {
           <p className="text-sm text-destructive">Couldn&apos;t load members.</p>
         ) : (
           <ul className="divide-y divide-border rounded-md border border-border">
-            {(members.data?.members ?? []).map((m) => (
-              <li
-                key={m.id}
-                className="flex items-center justify-between gap-3 px-3 py-2.5"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-foreground">
-                    {m.display_name ?? "—"}
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {m.email ?? "unknown"}
-                  </p>
-                </div>
-                <RoleBadge role={m.role} />
-              </li>
-            ))}
+            {(members.data?.members ?? []).map((m) => {
+              const isSelf = m.id === currentUserId;
+              const canRemove = isAdmin && !isSelf;
+              return (
+                <li
+                  key={m.id}
+                  className="flex items-center justify-between gap-3 px-3 py-2.5"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {m.display_name ?? "—"}
+                      {isSelf && (
+                        <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                          (you)
+                        </span>
+                      )}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {m.email ?? "unknown"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <RoleBadge role={m.role} />
+                    {canRemove && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label={`Manage ${m.display_name ?? m.email ?? "member"}`}
+                            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            <MoreHorizontal className="h-3.5 w-3.5" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-44">
+                          <DropdownMenuItem
+                            destructive
+                            onSelect={() => setRemoving(m)}
+                          >
+                            <UserMinus className="h-3.5 w-3.5" />
+                            Remove from workspace
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
@@ -428,6 +504,39 @@ function TeamCard({ isAdmin }: { isAdmin: boolean }) {
           </ul>
         </div>
       )}
+
+      <AlertDialog
+        open={!!removing}
+        onOpenChange={(o) => !o && !removeBusy && setRemoving(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this member?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong className="font-medium text-foreground">
+                {removing?.display_name ?? removing?.email ?? "This person"}
+              </strong>{" "}
+              will lose access to the workspace immediately. Their conversations
+              will be deleted; documents they uploaded stay in the workspace.
+              You can re-invite them later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removeBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                confirmRemoveMember();
+              }}
+              disabled={removeBusy}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {removeBusy && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+              Remove member
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {isAdmin && (
         <div className="space-y-2 rounded-md border border-dashed border-border bg-muted/30 p-3">
@@ -493,10 +602,10 @@ function MemberRowSkeleton() {
           className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5"
         >
           <div className="space-y-1.5">
-            <div className="h-3 w-32 animate-pulse rounded bg-muted" />
-            <div className="h-2 w-40 animate-pulse rounded bg-muted" />
+            <Skeleton className="h-3 w-32" />
+            <Skeleton className="h-2 w-40" />
           </div>
-          <div className="h-4 w-12 animate-pulse rounded bg-muted" />
+          <Skeleton className="h-4 w-12" />
         </div>
       ))}
     </div>
@@ -562,7 +671,7 @@ function FeedbackSignalCard() {
           <Stat
             label="Helpful"
             value={data?.positive ?? 0}
-            icon={<ThumbsUp className="h-3.5 w-3.5 text-emerald-600" />}
+            icon={<ThumbsUp className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />}
           />
           <Stat
             label="Not helpful"
@@ -667,7 +776,7 @@ function DangerZoneCard({ organizationName }: { organizationName: string }) {
       description="Irreversible actions. Make sure you mean it."
       tone="destructive"
     >
-      <div className="flex flex-col gap-3 rounded-md border border-destructive/20 bg-red-50/40 p-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-3 rounded-md border border-destructive/20 bg-destructive-soft/60 p-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex gap-2">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
           <div>

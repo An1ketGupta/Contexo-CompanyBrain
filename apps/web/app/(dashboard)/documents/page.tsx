@@ -3,6 +3,7 @@
 import { FileText } from "lucide-react";
 import { UploadDialog } from "@/components/documents/upload-dialog";
 import { DocumentTable } from "@/components/documents/document-table";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useDocuments } from "@/hooks/use-documents";
 import { useDocumentsRealtime } from "@/hooks/use-documents-realtime";
 
@@ -15,6 +16,7 @@ export default function DocumentsPage() {
     deleteDocument,
     upsertDocument,
     removeDocument,
+    retryDocument,
   } = useDocuments();
 
   useDocumentsRealtime({
@@ -43,7 +45,11 @@ export default function DocumentsPage() {
       ) : documents.length === 0 ? (
         <EmptyState />
       ) : (
-        <DocumentTable documents={documents} onDelete={deleteDocument} />
+        <DocumentTable
+          documents={documents}
+          onDelete={deleteDocument}
+          onRetry={retryDocument}
+        />
       )}
     </div>
   );
@@ -53,19 +59,19 @@ function TableSkeleton() {
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-background">
       <div className="border-b border-border bg-muted/40 px-4 py-2.5">
-        <div className="h-3 w-20 animate-pulse rounded bg-muted" />
+        <Skeleton className="h-3 w-20" />
       </div>
       {Array.from({ length: 4 }).map((_, i) => (
         <div
           key={i}
           className="flex items-center gap-3 border-b border-border px-4 py-3 last:border-b-0"
         >
-          <div className="h-4 w-4 animate-pulse rounded bg-muted" />
+          <Skeleton className="h-4 w-4" />
           <div className="flex-1 space-y-1.5">
-            <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
-            <div className="h-2.5 w-1/4 animate-pulse rounded bg-muted" />
+            <Skeleton className="h-3 w-2/3" />
+            <Skeleton className="h-2.5 w-1/4" />
           </div>
-          <div className="h-5 w-20 animate-pulse rounded-full bg-muted" />
+          <Skeleton className="h-5 w-20 rounded-full" />
         </div>
       ))}
     </div>
@@ -97,7 +103,7 @@ function ErrorState({
   onRetry: () => void;
 }) {
   return (
-    <div className="rounded-lg border border-destructive/30 bg-red-50 px-6 py-8 text-center">
+    <div className="rounded-lg border border-destructive/30 bg-destructive-soft/60 px-6 py-8 text-center">
       <p className="text-sm font-medium text-destructive">{message}</p>
       <button
         onClick={onRetry}

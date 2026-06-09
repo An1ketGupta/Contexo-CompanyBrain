@@ -38,9 +38,13 @@ CREATE INDEX idx_invitations_org_pending
   WHERE accepted_at IS NULL;
 
 -- Prevent duplicate active invites for the same email/org.
+-- Note: expiry isn't in the predicate because now() is STABLE, not IMMUTABLE,
+-- and Postgres rejects non-immutable functions in index predicates. The
+-- application-layer filter (`gt("expires_at", now())`) handles expiry; if an
+-- expired row blocks a fresh invite, the admin revokes it explicitly.
 CREATE UNIQUE INDEX idx_invitations_unique_active
   ON invitations (org_id, lower(email))
-  WHERE accepted_at IS NULL AND expires_at > now();
+  WHERE accepted_at IS NULL;
 
 ALTER TABLE invitations ENABLE ROW LEVEL SECURITY;
 

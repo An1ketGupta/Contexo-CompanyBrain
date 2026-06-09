@@ -24,6 +24,7 @@ from google.genai import errors as genai_errors
 from google.genai import types as gt
 
 from app.config import get_settings
+from app.services.langfuse import observe, update_current_generation
 
 from .types import LLMResponse, Message, StreamChunk, ToolCall
 
@@ -133,6 +134,7 @@ class GeminiClient:
 
     # ── Public API ────────────────────────────────────────────────────────
 
+    @observe(name="llm.complete", as_type="generation")
     async def complete(
         self,
         messages: list[Message],
@@ -163,6 +165,7 @@ class GeminiClient:
             log.warning("Unexpected Gemini failure: %s: %s", type(exc).__name__, exc)
             raise LLMError(_humanize_network_error(exc)) from exc
 
+        _record_generation_metadata(self.model, response)
         return _parse_response(response)
 
     async def stream(
@@ -277,6 +280,29 @@ def _to_genai_contents(messages: list[Message]) -> list[gt.Content]:
 
 
 # ── Response parsing ─────────────────────────────────────────────────────────
+
+def _record_generation_metadata(model: str, response: Any) -> None:
+    """Stamp model + token usage onto the active Langfuse generation span.
+
+    Gemini reports usage in `response.usage_metadata` (prompt_token_count,
+    candidates_token_count, total_token_count). No-op when tracing is off.
+    """
+    usage: dict[str, int] | None = None
+    meta = getattr(response, "usage_metadata", None)
+    if meta is not None:
+        prompt = getattr(meta, "prompt_token_count", None)
+        completion = getattr(meta, "candidates_token_count", None)
+        total = getattr(meta, "total_token_count", None)
+        if any(v is not None for v in (prompt, completion, total)):
+            usage = {}
+            if prompt is not None:
+                usage["input"] = int(prompt)
+            if completion is not None:
+                usage["output"] = int(completion)
+            if total is not None:
+                usage["total"] = int(total)
+    update_current_generation(model=model, usage=usage)
+
 
 def _parse_response(response: Any) -> LLMResponse:
     text_parts: list[str] = []

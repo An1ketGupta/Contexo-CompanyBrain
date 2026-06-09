@@ -102,6 +102,7 @@ async def chat(
     final_text = ""
     final_sources: list[dict] = []
     tool_calls_made = 0
+    trace_id: str | None = None
     error_msg: str | None = None
 
     async for event in execute_task(
@@ -110,11 +111,14 @@ async def chat(
         db_client=client,
         history=history,
         stream=False,
+        user_id=user_id,
+        conversation_id=conversation_id,
     ):
         if isinstance(event, FinalEvent):
             final_text = event.text
             final_sources = event.sources
             tool_calls_made = event.tool_calls_made
+            trace_id = event.trace_id
         elif isinstance(event, ErrorEvent):
             error_msg = event.message
 
@@ -135,6 +139,7 @@ async def chat(
         role="assistant",
         content=final_text,
         sources=final_sources,
+        trace_id=trace_id,
     )
 
     await _touch_conversation(client, conversation_id)
@@ -199,6 +204,8 @@ async def chat_stream(
                     db_client=client,
                     history=history,
                     stream=True,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
                 ):
                     await events_queue.put(ev)
             finally:
@@ -207,6 +214,7 @@ async def chat_stream(
         final_text = ""
         final_sources: list[dict] = []
         tool_calls_made = 0
+        trace_id: str | None = None
         had_error = False
         error_payload: dict | None = None
 
@@ -236,6 +244,7 @@ async def chat_stream(
                     final_text = ev.text
                     final_sources = ev.sources
                     tool_calls_made = ev.tool_calls_made
+                    trace_id = ev.trace_id
                 elif isinstance(ev, ErrorEvent):
                     had_error = True
                     error_payload = {
@@ -275,6 +284,7 @@ async def chat_stream(
                     role="assistant",
                     content=final_text,
                     sources=final_sources,
+                    trace_id=trace_id,
                 )
                 await _touch_conversation(client, conversation_id)
                 yield _sse(
@@ -433,7 +443,7 @@ async def update_message_feedback(
 
     msg = await asyncio.to_thread(
         lambda: client.table("messages")
-        .select("id, role, conversation_id")
+        .select("id, role, conversation_id, langfuse_trace_id")
         .eq("id", message_id)
         .maybe_single()
         .execute()
@@ -465,6 +475,20 @@ async def update_message_feedback(
     )
     if not result.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found.")
+
+    # Forward to Langfuse so we can correlate quality with prompt/retrieval
+    # variants in the dashboard. Skip clears (feedback=None) — Langfuse scores
+    # are append-only; an unset feels weird to model as a score event.
+    trace_id = msg.data.get("langfuse_trace_id")
+    if trace_id and body.feedback is not None:
+        from app.services.langfuse import score_feedback
+
+        score_feedback(
+            trace_id=trace_id,
+            value=1 if body.feedback == "positive" else 0,
+            comment=f"User rated {body.feedback}",
+        )
+
     return {"feedback": body.feedback}
 
 
@@ -604,21 +628,21 @@ async def _save_message(
     role: str,
     content: str,
     sources: list[dict] | None,
+    trace_id: str | None = None,
 ) -> str:
     new_id = str(uuid.uuid4())
+    row: dict[str, Any] = {
+        "id": new_id,
+        "conversation_id": conversation_id,
+        "org_id": org_id,
+        "role": role,
+        "content": content,
+        "sources": sources,
+    }
+    if trace_id:
+        row["langfuse_trace_id"] = trace_id
     await asyncio.to_thread(
-        lambda: client.table("messages")
-        .insert(
-            {
-                "id": new_id,
-                "conversation_id": conversation_id,
-                "org_id": org_id,
-                "role": role,
-                "content": content,
-                "sources": sources,
-            }
-        )
-        .execute()
+        lambda: client.table("messages").insert(row).execute()
     )
     return new_id
 

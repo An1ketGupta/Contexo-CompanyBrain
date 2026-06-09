@@ -94,7 +94,7 @@ function AcceptInviteInner() {
   if (state.kind === "invalid") {
     return (
       <Shell>
-        <div className="rounded-lg border border-destructive/30 bg-red-50 p-4 text-sm">
+        <div className="rounded-lg border border-destructive/30 bg-destructive-soft/60 p-4 text-sm">
           <div className="flex items-start gap-2 text-destructive">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <p>{state.message}</p>

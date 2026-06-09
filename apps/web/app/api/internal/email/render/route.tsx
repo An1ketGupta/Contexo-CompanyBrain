@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
+import React from "react";
 import { render } from "@react-email/render";
 import {
   InviteEmail,

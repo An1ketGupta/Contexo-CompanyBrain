@@ -1,8 +1,17 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { ChevronsUpDown, LogOut, Settings as SettingsIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useTheme } from "next-themes";
+import {
+  Check,
+  ChevronsUpDown,
+  LogOut,
+  Monitor,
+  Moon,
+  Settings as SettingsIcon,
+  Sun,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -33,9 +42,21 @@ function getInitials(name: string | null, email: string | null): string {
   return email?.[0]?.toUpperCase() ?? "U";
 }
 
+const THEME_CHOICES = [
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+  { value: "system", label: "System", icon: Monitor },
+] as const;
+
 export function UserMenu({ user, organization }: UserMenuProps) {
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
+  const { theme, setTheme } = useTheme();
+  // next-themes is SSR-incompatible until mounted; render a stable placeholder
+  // until then so we don't get a hydration mismatch flagging the active item.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const activeTheme = mounted ? theme ?? "system" : "system";
 
   async function handleSignOut() {
     if (signingOut) return;
@@ -90,6 +111,29 @@ export function UserMenu({ user, organization }: UserMenuProps) {
           <SettingsIcon />
           Settings
         </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="font-normal normal-case tracking-normal">
+          <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            Theme
+          </span>
+        </DropdownMenuLabel>
+        {THEME_CHOICES.map(({ value, label, icon: Icon }) => (
+          <DropdownMenuItem
+            key={value}
+            onSelect={(e) => {
+              // Prevent the menu from closing — lets users compare themes
+              // without re-opening the menu.
+              e.preventDefault();
+              setTheme(value);
+            }}
+          >
+            <Icon />
+            {label}
+            {activeTheme === value && (
+              <Check className="ml-auto h-3.5 w-3.5 text-muted-foreground" />
+            )}
+          </DropdownMenuItem>
+        ))}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           destructive
