@@ -19,6 +19,12 @@ class ToolCall:
     id: str               # provider-assigned (or synthesized) call ID
     name: str             # tool function name
     args: dict[str, Any]  # parsed arguments
+    # Opaque provider passthrough. Gemini 2.5+ thinking models attach a
+    # `thought_signature` to each function-call Part and reject subsequent
+    # turns if it isn't echoed back. We keep it as bare `bytes | None` here
+    # so the orchestrator stays provider-agnostic — only the Gemini adapter
+    # reads or writes it. None for non-thinking models or other providers.
+    signature: bytes | None = None
 
 
 @dataclass(frozen=True)

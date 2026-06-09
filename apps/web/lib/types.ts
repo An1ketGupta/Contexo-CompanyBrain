@@ -58,11 +58,15 @@ export interface Conversation {
   updated_at: string;
 }
 
+// Mirrors the dict shape produced by app/services/llm/task_chain.py:_dedupe_sources.
 export interface MessageSource {
   chunk_id: string;
-  doc_name: string;
+  document_id: string | null;
+  document_name: string;
   page_number: number | null;
+  section_heading: string | null;
   excerpt: string;
+  snippet: string | null;
 }
 
 export interface Message {
@@ -76,10 +80,13 @@ export interface Message {
   created_at: string;
 }
 
-// SSE event types emitted by POST /chat/stream
+// SSE event types emitted by POST /chat/stream. Shape mirrors what
+// app/api/routers/chat.py:_event_to_payload sends on the wire.
 export type ChatStreamEvent =
+  | { type: "start"; conversation_id: string }
   | { type: "searching"; query: string }
+  | { type: "searched"; query: string; hit_count: number }
   | { type: "sources"; sources: MessageSource[] }
-  | { type: "token"; token: string }
-  | { type: "done" }
+  | { type: "token"; text: string }
+  | { type: "done"; message_id: string; tool_calls: number }
   | { type: "error"; message: string };

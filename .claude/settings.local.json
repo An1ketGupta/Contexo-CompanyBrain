@@ -17,7 +17,10 @@
       "Bash(pnpm build *)",
       "Bash(supabase db *)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(pnpm exec *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\My_Folder\\\\Harkirat_Master\\\\WebDev\\\\Projects\\\\SaaS\\\\NirnayaIQ\\\\Product\" -Directory)",
+      "Bash(Select-Object Name)"
     ]
   }
 }

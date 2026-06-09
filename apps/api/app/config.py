@@ -27,14 +27,15 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    huggingface_api_key: str = ""         # used as a dev fallback when Gemini quota is exhausted
 
     # Provider selection
     llm_provider: str = "gemini"          # gemini | claude | openai
-    embedding_provider: str = "google"    # google | openai
-    embedding_dimensions: int = 768       # 768 for google, 1536 for openai
+    embedding_provider: str = "google"    # google | huggingface | openai
+    embedding_dimensions: int = 768       # 768 for google/HF mpnet-base, 1536 for openai
 
     # LLM behavior
-    llm_model: str = "gemini-2.5-flash"
+    llm_model: str = "gemini-3.1-flash-lite"
     llm_temperature: float = 0.3
     llm_timeout_seconds: float = 30.0
 
@@ -60,6 +61,30 @@ class Settings(BaseSettings):
     # Upstash Redis
     upstash_redis_rest_url: str = ""
     upstash_redis_rest_token: str = ""
+
+    # ── Observability ───────────────────────────────────────────────────────
+    # Sentry — leave SENTRY_DSN empty in dev to disable. Sampling defaults keep
+    # the free tier comfortable; bump traces_sample_rate before a launch event.
+    sentry_dsn: str = ""
+    sentry_traces_sample_rate: float = 0.1
+    sentry_profiles_sample_rate: float = 0.0
+    # Release tag — set by CI from the git SHA. Empty in dev means "no release"
+    # which Sentry handles gracefully (no source-map matching, just plain stack).
+    release_version: str = ""
+
+    # Logging — "json" for prod (Railway log shippers parse it), "console" in dev.
+    log_format: str = "console"
+    log_level: str = "INFO"
+
+    # ── Rate limits ─────────────────────────────────────────────────────────
+    # Per-user/minute on the chat endpoint. The previous per-org cap was lenient
+    # because we trusted orgs; per-user catches runaway scripts inside a tenant.
+    rate_limit_chat_per_user_per_minute: int = 20
+    # Monthly task budgets per plan. "business" / "free" handled by a None check
+    # in the limiter (unlimited / blocked). Drives both pricing enforcement and
+    # the friendly "you've used X / Y" messaging we'll surface later.
+    rate_limit_chat_monthly_starter: int = 500
+    rate_limit_chat_monthly_growth: int = 2_500
 
 
 @lru_cache

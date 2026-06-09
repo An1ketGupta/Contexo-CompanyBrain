@@ -237,6 +237,69 @@ async def reprocess_document(
     return {"doc_id": doc_id, "status": "pending"}
 
 
+# ── Signed download URL (for citation "Open document" links) ────────────────
+
+@router.get("/{doc_id}/signed-url")
+async def get_signed_url(
+    doc_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Return a short-lived signed Storage URL for in-browser viewing.
+
+    RLS is enforced via the user-scoped Supabase client: the SELECT below only
+    returns the row if the caller's org owns the doc. We then mint a URL with
+    the service-role client because Storage signing needs that key, but we've
+    already authorized the caller through the RLS check.
+    """
+    org_id: str | None = current_user["org_id"]
+    if not org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No organization found.")
+
+    user_client = get_user_client(current_user["token"])
+    owned = await asyncio.to_thread(
+        lambda: user_client.table("documents")
+        .select("file_path, name")
+        .eq("id", doc_id)
+        .maybe_single()
+        .execute()
+    )
+
+    if not owned.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+
+    svc = get_service_client()
+    try:
+        result = await asyncio.to_thread(
+            lambda: svc.storage.from_(STORAGE_BUCKET).create_signed_url(
+                owned.data["file_path"], 600
+            )
+        )
+    except Exception as exc:
+        log.error("Failed to mint signed URL for %s: %s", doc_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not generate document link.",
+        ) from exc
+
+    if isinstance(result, dict):
+        payload = result
+    else:
+        payload = getattr(result, "data", None) or {}
+
+    url = payload.get("signedURL") or payload.get("signed_url") or payload.get("signedUrl")
+    if not url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Storage returned an empty signed URL.",
+        )
+
+    settings = get_settings()
+    if not url.startswith("http"):
+        url = f"{settings.supabase_url}{url}"
+
+    return {"url": url, "name": owned.data["name"], "expires_in": 600}
+
+
 # ── Delete ────────────────────────────────────────────────────────────────────
 
 @router.delete("/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)

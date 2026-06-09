@@ -1,0 +1,296 @@
+"""Two-tier rate limiting against Upstash Redis (REST).
+
+We enforce TWO independent budgets on every chat call:
+
+    1. Per-user sliding window  → DOS protection. Catches runaway scripts.
+       Sliding-window in Redis sorted-set. ~20 req/min/user by default.
+    2. Per-org monthly counter   → enforces pricing plan. INCR + EXPIRE,
+       keyed by calendar month so it resets on the 1st without a cron job.
+
+Why two: a single per-org/min limit was lenient enough that one buggy script
+inside a tenant could burn the whole org's monthly quota in 30 seconds. And
+a single monthly limit means we'd 429 a normal user at the end of the month
+when the actual problem was that their teammate ran a loop yesterday.
+
+Order of checks: per-user first (cheap fail-fast for abuse), then per-org
+(authoritative budget). Both fail-open if Upstash is unreachable — we'd
+rather serve real users than 503 the whole product on an infra blip.
+"""
+from __future__ import annotations
+
+import time
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
+import httpx
+
+from app.config import get_settings
+from app.errors import QuotaExceeded, RateLimited
+from app.observability import get_logger
+
+log = get_logger(__name__)
+
+
+# ── Plan budgets ─────────────────────────────────────────────────────────────
+#
+# Mirrors the pricing tiers from ROADMAP.md. `None` = unlimited.
+# `free` exists for users mid-signup who haven't picked a plan; we treat it
+# the same as starter so a brand-new org isn't locked out on day one.
+_MONTHLY_BUDGETS: dict[str, int | None] = {
+    "free": 50,            # generous trial — converts to a paid plan in onboarding
+    "starter": 500,
+    "growth": 2_500,
+    "business": None,      # unlimited
+}
+
+
+def monthly_budget_for(plan: str | None) -> int | None:
+    if not plan:
+        return _MONTHLY_BUDGETS["free"]
+    settings = get_settings()
+    # Allow overrides from settings for the two paid plans without a redeploy.
+    if plan == "starter":
+        return settings.rate_limit_chat_monthly_starter
+    if plan == "growth":
+        return settings.rate_limit_chat_monthly_growth
+    return _MONTHLY_BUDGETS.get(plan, _MONTHLY_BUDGETS["free"])
+
+
+# ── Upstash REST client ──────────────────────────────────────────────────────
+
+_client: httpx.AsyncClient | None = None
+
+
+async def _upstash() -> httpx.AsyncClient | None:
+    """Lazy singleton HTTP client to Upstash. None if Upstash isn't configured
+    (local dev) — callers must treat that as fail-open."""
+    global _client
+    settings = get_settings()
+    if not settings.upstash_redis_rest_url or not settings.upstash_redis_rest_token:
+        return None
+    if _client is None:
+        _client = httpx.AsyncClient(
+            base_url=settings.upstash_redis_rest_url.rstrip("/"),
+            headers={"Authorization": f"Bearer {settings.upstash_redis_rest_token}"},
+            timeout=httpx.Timeout(3.0, connect=2.0),
+        )
+    return _client
+
+
+# ── Sliding-window per-user limiter (DOS protection) ─────────────────────────
+
+@dataclass(frozen=True)
+class SlidingWindowResult:
+    allowed: bool
+    remaining: int
+    reset_seconds: int
+
+
+async def _sliding_window_check(
+    *, namespace: str, identifier: str, limit: int, window_seconds: int
+) -> SlidingWindowResult:
+    client = await _upstash()
+    if client is None:
+        return SlidingWindowResult(allowed=True, remaining=limit, reset_seconds=0)
+
+    key = f"rl:{namespace}:{identifier}"
+    now_ms = int(time.time() * 1000)
+    window_ms = window_seconds * 1000
+    cutoff = now_ms - window_ms
+    member = f"{now_ms}-{uuid.uuid4().hex[:8]}"
+
+    # Pipelined: GC expired entries → count → reserve our slot → set TTL.
+    # If we end up over-budget we ZREM the slot below so a denied call doesn't
+    # consume window capacity.
+    pipeline = [
+        ["ZREMRANGEBYSCORE", key, "0", str(cutoff)],
+        ["ZCARD", key],
+        ["ZADD", key, str(now_ms), member],
+        ["EXPIRE", key, str(window_seconds)],
+    ]
+
+    try:
+        resp = await client.post("/pipeline", json=pipeline)
+        resp.raise_for_status()
+        results = resp.json()
+    except Exception as exc:
+        log.warning("ratelimit_upstash_unavailable", error=str(exc), tier="per_user")
+        return SlidingWindowResult(allowed=True, remaining=limit, reset_seconds=0)
+
+    try:
+        count_before = int(results[1].get("result", 0))
+    except (KeyError, TypeError, ValueError, IndexError):
+        log.warning("ratelimit_upstash_bad_shape", results=results)
+        return SlidingWindowResult(allowed=True, remaining=limit, reset_seconds=0)
+
+    if count_before >= limit:
+        # Roll back our slot — the call is denied, so it shouldn't shift the window.
+        try:
+            await client.post("/", json=["ZREM", key, member])
+        except Exception:
+            pass
+        return SlidingWindowResult(allowed=False, remaining=0, reset_seconds=window_seconds)
+
+    remaining = max(limit - (count_before + 1), 0)
+    return SlidingWindowResult(allowed=True, remaining=remaining, reset_seconds=window_seconds)
+
+
+# ── Monthly counter per org (plan enforcement) ───────────────────────────────
+
+@dataclass(frozen=True)
+class MonthlyCounterResult:
+    allowed: bool
+    used: int
+    limit: int | None       # None = unlimited
+    seconds_until_reset: int
+
+
+def _month_key(now: datetime | None = None) -> str:
+    n = now or datetime.now(timezone.utc)
+    return f"{n.year}{n.month:02d}"
+
+
+def _seconds_until_next_month(now: datetime | None = None) -> int:
+    n = now or datetime.now(timezone.utc)
+    year, month = (n.year + 1, 1) if n.month == 12 else (n.year, n.month + 1)
+    next_month = datetime(year, month, 1, tzinfo=timezone.utc)
+    return max(int((next_month - n).total_seconds()), 1)
+
+
+async def _monthly_check_and_increment(
+    *, org_id: str, limit: int | None
+) -> MonthlyCounterResult:
+    """INCR a month-scoped key, EXPIRE on first hit. If we exceed the budget,
+    DECR to release the slot so the count we report is accurate."""
+    if limit is None:
+        # Unlimited plan — skip the round-trip entirely.
+        return MonthlyCounterResult(
+            allowed=True, used=0, limit=None, seconds_until_reset=0
+        )
+
+    client = await _upstash()
+    if client is None:
+        # Fail-open: if Upstash is down we can't enforce quotas, so we don't.
+        return MonthlyCounterResult(
+            allowed=True, used=0, limit=limit, seconds_until_reset=0
+        )
+
+    key = f"quota:chat:{org_id}:{_month_key()}"
+    ttl = _seconds_until_next_month()
+
+    try:
+        resp = await client.post(
+            "/pipeline",
+            json=[
+                ["INCR", key],
+                ["EXPIRE", key, str(ttl), "NX"],  # only set TTL on first INCR
+            ],
+        )
+        resp.raise_for_status()
+        results = resp.json()
+        used = int(results[0].get("result", 0))
+    except Exception as exc:
+        log.warning("ratelimit_upstash_unavailable", error=str(exc), tier="monthly")
+        return MonthlyCounterResult(
+            allowed=True, used=0, limit=limit, seconds_until_reset=0
+        )
+
+    if used > limit:
+        # Over budget — give the slot back so `used` reported to other callers
+        # stays accurate, and so the very next millisecond we don't double-decrement.
+        try:
+            await client.post("/", json=["DECR", key])
+        except Exception:
+            pass
+        return MonthlyCounterResult(
+            allowed=False, used=limit, limit=limit, seconds_until_reset=ttl
+        )
+
+    return MonthlyCounterResult(
+        allowed=True, used=used, limit=limit, seconds_until_reset=ttl
+    )
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+async def get_org_plan(org_id: str) -> str:
+    """Read the org's current plan. Service-role lookup since this runs
+    inside the request handler before any RLS-scoped client work."""
+    from app.database import get_service_client
+
+    import asyncio
+    try:
+        result = await asyncio.to_thread(
+            lambda: get_service_client()
+            .table("organizations")
+            .select("plan")
+            .eq("id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        plan = (result.data or {}).get("plan") if result else None
+        return plan or "free"
+    except Exception as exc:
+        log.warning("plan_lookup_failed", org_id=org_id, error=str(exc))
+        # Fail closed-ish: treat as the smallest plan so we don't accidentally
+        # give a free-tier user unlimited quota on a transient lookup error.
+        return "free"
+
+
+async def enforce_chat_quota(*, user_id: str, org_id: str) -> None:
+    """One call to gate /chat and /chat/stream. Raises RateLimited or
+    QuotaExceeded — both carry our error envelope + Retry-After when relevant.
+
+    Caller invariant: both ids are non-empty (verify_jwt guarantees it).
+    """
+    settings = get_settings()
+
+    # Tier 1 — per-user/minute. Cheap and catches the most common foot-gun.
+    user_result = await _sliding_window_check(
+        namespace="chat:user",
+        identifier=user_id,
+        limit=settings.rate_limit_chat_per_user_per_minute,
+        window_seconds=60,
+    )
+    if not user_result.allowed:
+        raise RateLimited(
+            message=(
+                f"You're sending requests too quickly. "
+                f"Wait {user_result.reset_seconds} seconds and try again."
+            ),
+            retry_after=user_result.reset_seconds,
+        )
+
+    # Tier 2 — per-org/month. Authoritative budget for the pricing plan.
+    plan = await get_org_plan(org_id)
+    budget = monthly_budget_for(plan)
+    monthly = await _monthly_check_and_increment(org_id=org_id, limit=budget)
+    if not monthly.allowed:
+        # 402 with a specific code so the frontend can route to /pricing
+        # instead of showing a generic "try again later" toast.
+        days_left = max(monthly.seconds_until_reset // 86_400, 1)
+        raise QuotaExceeded(
+            message=(
+                f"You've used all {monthly.limit} AI tasks on your {plan} plan "
+                f"this month. Resets in {days_left} day{'s' if days_left != 1 else ''}, "
+                "or upgrade to keep going."
+            ),
+            retry_after=monthly.seconds_until_reset,
+            details={
+                "plan": plan,
+                "used": monthly.used,
+                "limit": monthly.limit,
+                "resets_in_seconds": monthly.seconds_until_reset,
+            },
+        )
+
+
+# ── Compatibility shim for existing callers ──────────────────────────────────
+
+async def enforce_chat_rate_limit(org_id: str) -> None:
+    """Deprecated: kept temporarily so older imports don't break during the
+    Phase A migration. New code calls `enforce_chat_quota(user_id, org_id)`."""
+    # We don't have user_id here, so fall back to org_id for the per-user
+    # bucket. Better than nothing while the routers are being migrated.
+    await enforce_chat_quota(user_id=org_id, org_id=org_id)

@@ -6,7 +6,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from supabase import Client, create_client
 
 from app.config import get_settings
+from app.observability import bind_user_context, get_logger
 
+log = get_logger(__name__)
 bearer_scheme = HTTPBearer()
 
 
@@ -32,7 +34,7 @@ async def verify_jwt(
     try:
         response = await asyncio.to_thread(lambda: client.auth.get_user(token))
     except Exception as e:
-        print(f"[auth] Token validation failed ({type(e).__name__}): {e}")
+        log.warning("token_validation_failed", exc_type=type(e).__name__, error=str(e))
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     user = getattr(response, "user", None)
@@ -42,5 +44,9 @@ async def verify_jwt(
 
     app_metadata = getattr(user, "app_metadata", None) or {}
     org_id: str | None = app_metadata.get("org_id")
+
+    # Bind to log context + Sentry scope so every subsequent log line and any
+    # error captured during this request carries identity.
+    bind_user_context(user_id=user_id, org_id=org_id)
 
     return {"user_id": user_id, "org_id": org_id, "token": token}

@@ -245,9 +245,15 @@ def _to_genai_contents(messages: list[Message]) -> list[gt.Content]:
             if msg.content:
                 parts.append(gt.Part(text=msg.content))
             for tc in msg.tool_calls:
-                parts.append(
-                    gt.Part(function_call=gt.FunctionCall(name=tc.name, args=tc.args))
-                )
+                # thought_signature (if captured on parse) MUST ride back on
+                # the same Part as the function_call, or Gemini 2.5+ thinking
+                # models reject the turn with INVALID_ARGUMENT.
+                part_kwargs: dict[str, Any] = {
+                    "function_call": gt.FunctionCall(name=tc.name, args=tc.args),
+                }
+                if tc.signature is not None:
+                    part_kwargs["thought_signature"] = tc.signature
+                parts.append(gt.Part(**part_kwargs))
             if not parts:
                 # Defensive: an empty assistant turn would make Gemini reject the whole request.
                 parts.append(gt.Part(text=""))
@@ -291,7 +297,8 @@ def _parse_response(response: Any) -> LLMResponse:
                 text_parts.append(txt)
             fc = getattr(part, "function_call", None)
             if fc is not None:
-                tool_calls.append(_function_call_to_tool_call(fc))
+                signature = getattr(part, "thought_signature", None)
+                tool_calls.append(_function_call_to_tool_call(fc, signature=signature))
 
     return LLMResponse(
         text="".join(text_parts),
@@ -313,7 +320,13 @@ def _parse_stream_chunk(chunk: Any) -> list[StreamChunk]:
             out.append(StreamChunk(kind="text", text=txt))
         fc = getattr(part, "function_call", None)
         if fc is not None:
-            out.append(StreamChunk(kind="tool_call", tool_call=_function_call_to_tool_call(fc)))
+            signature = getattr(part, "thought_signature", None)
+            out.append(
+                StreamChunk(
+                    kind="tool_call",
+                    tool_call=_function_call_to_tool_call(fc, signature=signature),
+                )
+            )
     return out
 
 
@@ -333,7 +346,7 @@ def _humanize_network_error(exc: Exception) -> str:
     return f"AI service error: {name}: {msg}"
 
 
-def _function_call_to_tool_call(fc: Any) -> ToolCall:
+def _function_call_to_tool_call(fc: Any, *, signature: bytes | None = None) -> ToolCall:
     raw_args: Any = getattr(fc, "args", {}) or {}
     if isinstance(raw_args, str):
         # Some SDK versions return JSON-encoded args; tolerate both.
@@ -349,6 +362,7 @@ def _function_call_to_tool_call(fc: Any) -> ToolCall:
         id=getattr(fc, "id", None) or f"call-{uuid.uuid4().hex[:12]}",
         name=getattr(fc, "name", "") or "",
         args=raw_args,
+        signature=signature,
     )
 
 
