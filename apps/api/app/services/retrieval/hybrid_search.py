@@ -177,13 +177,60 @@ class HybridRetriever(Retriever):
         if not vector_hits and not fts_hits:
             return []
         if not fts_hits:
-            return list(vector_hits[:k])
-        if not vector_hits:
-            return list(fts_hits[:k])
+            fused = list(vector_hits[:k])
+        elif not vector_hits:
+            fused = list(fts_hits[:k])
+        else:
+            fused = reciprocal_rank_fusion(
+                vector_hits, fts_hits, k_rrf=self._rrf_k, top_k=k
+            )
 
-        return reciprocal_rank_fusion(
-            vector_hits, fts_hits, k_rrf=self._rrf_k, top_k=k
-        )
+        # Citation-count boost (Day 12 / #49). Additive on the RRF score so
+        # we don't override the ranking — just tip the scales toward chunks
+        # from documents the org has historically found useful. Cap at ~10%
+        # of typical RRF top scores so it can't dominate the order.
+        return await _apply_citation_boost(fused, org_id=org_id)
+
+
+async def _apply_citation_boost(
+    hits: list[SearchHit],
+    *,
+    org_id: str,
+) -> list[SearchHit]:
+    """Re-rank by RRF + a small additive prior derived from doc citation counts.
+
+    Empty result, single-document org, or no citations recorded yet → no-op
+    (the boost contribution is zero everywhere, so order is preserved).
+    """
+    if not hits:
+        return hits
+    doc_ids = list({h.document_id for h in hits if h.document_id})
+    if not doc_ids:
+        return hits
+
+    # Local import keeps the retrieval module independent of analytics writes —
+    # citation_tracker depends on database/langfuse modules we'd rather not pull
+    # into every retrieval call site.
+    from app.services.citation_tracker import fetch_document_citation_counts
+
+    counts = await fetch_document_citation_counts(
+        org_id=org_id, document_ids=doc_ids
+    )
+    if not counts or all(c == 0 for c in counts.values()):
+        return hits
+
+    max_count = max(counts.values()) or 1
+    boosted: list[SearchHit] = []
+    for h in hits:
+        c = counts.get(h.document_id, 0)
+        # 0..0.005 — RRF top hits sit around 0.03–0.05, so this nudges close
+        # results without ever overtaking a clearly-better-matched chunk.
+        boost = (c / max_count) * 0.005
+        if boost > 0:
+            boosted.append(h.with_overrides(similarity=h.similarity + boost))
+        else:
+            boosted.append(h)
+    return sorted(boosted, key=lambda h: h.similarity, reverse=True)
 
 
 def _unwrap(result, branch: str) -> list[SearchHit]:

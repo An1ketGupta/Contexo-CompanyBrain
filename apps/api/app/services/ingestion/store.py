@@ -1,87 +1,197 @@
-"""Idempotent persistence for chunks + embeddings.
+"""Idempotent persistence for chunks + embeddings, with per-chunk state.
 
-`persist_chunks` is safe to call multiple times for the same doc_id:
-prior chunks (and their cascading embeddings) are deleted first, then the new
-set is inserted in batches.
+Two-phase write:
+    1. `persist_chunks_pending` inserts the full chunk set with
+       `embedding_status='pending'`. Prior chunks for the doc are deleted
+       first, so this remains the idempotent reset point.
+    2. `record_embeddings` writes the embedding rows for a batch of chunks
+       that just succeeded, and flips their status to `'embedded'`.
+    3. `mark_chunks_failed` flips status to `'failed'` (with an error msg)
+       for chunks whose embedding call exhausted retries.
+
+This split lets the pipeline track per-chunk outcomes — needed for the
+"partial document" UX where some chunks embedded and some didn't, and for
+the targeted retry path that re-embeds only the failed chunks.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from supabase import Client
 
-from .types import EmbeddedChunk
+from .types import Chunk
 
 log = logging.getLogger(__name__)
 
 _INSERT_BATCH = 200  # Supabase REST has a ~1 MiB body limit; 200 chunks ≈ safe
 
 
-async def persist_chunks(
-    embedded: list[EmbeddedChunk],
+@dataclass(frozen=True)
+class PersistedChunk:
+    """A chunk that's been written to the DB and has a server-assigned id."""
+
+    id: str
+    chunk: Chunk
+
+
+async def persist_chunks_pending(
+    chunks: list[Chunk],
     *,
     doc_id: str,
     org_id: str,
     client: Client,
-) -> int:
-    """Replace this document's chunks atomically-from-the-user's-perspective.
+) -> list[PersistedChunk]:
+    """Replace this document's chunks with the new set, all in `pending` state.
 
-    Returns the number of chunks written.
+    Returns the persisted chunks with their assigned ids so the caller can
+    embed and then update status row-by-row.
     """
     await _delete_existing(client, doc_id)
+    if not chunks:
+        return []
 
-    if not embedded:
-        return 0
+    rows: list[dict[str, Any]] = []
+    persisted: list[PersistedChunk] = []
+    for ch in chunks:
+        cid = str(uuid.uuid4())
+        persisted.append(PersistedChunk(id=cid, chunk=ch))
+        rows.append(
+            {
+                "id": cid,
+                "org_id": org_id,
+                "document_id": doc_id,
+                "content": ch.content,
+                "chunk_index": ch.chunk_index,
+                "token_count": ch.token_count,
+                "page_number": ch.page_number,
+                "section_heading": ch.section_heading,
+                "metadata": ch.metadata or {},
+                "embedding_status": "pending",
+                "retry_count": 0,
+            }
+        )
+    await _batched_insert(client, "chunks", rows)
+    return persisted
 
-    chunk_rows, chunk_ids = _build_chunk_rows(embedded, doc_id=doc_id, org_id=org_id)
-    await _batched_insert(client, "chunks", chunk_rows)
 
-    embedding_rows = _build_embedding_rows(chunk_ids, embedded, org_id=org_id)
+async def record_embeddings(
+    items: list[tuple[PersistedChunk, list[float]]],
+    *,
+    org_id: str,
+    client: Client,
+) -> None:
+    """Persist embeddings for a batch of chunks and flip their status.
+
+    Both writes are batched. We treat the status flip as best-effort retryable:
+    the embedding row is the source of truth; the status column is denormalised
+    for fast filtering. A chunk with an embedding row but stale `pending`
+    status is benign — vector search will still surface it.
+    """
+    if not items:
+        return
+
+    embedding_rows = [
+        {"chunk_id": pc.id, "org_id": org_id, "embedding": vec}
+        for pc, vec in items
+    ]
     await _batched_insert(client, "embeddings", embedding_rows)
 
-    return len(embedded)
+    ids = [pc.id for pc, _ in items]
+    # Bulk update via .in_(); supabase-py issues one PATCH per call so we
+    # batch the id list the same way we batch inserts.
+    for start in range(0, len(ids), _INSERT_BATCH):
+        batch_ids = ids[start : start + _INSERT_BATCH]
+        await asyncio.to_thread(
+            lambda b=batch_ids: client.table("chunks")
+            .update({"embedding_status": "embedded", "embedding_error": None})
+            .in_("id", b)
+            .execute()
+        )
+
+
+async def mark_chunks_failed(
+    chunk_ids: list[str],
+    *,
+    error: str,
+    client: Client,
+) -> None:
+    """Flip a batch of chunks to `failed` with a truncated error message."""
+    if not chunk_ids:
+        return
+    truncated = (error or "embedding failed")[:500]
+    for start in range(0, len(chunk_ids), _INSERT_BATCH):
+        batch = chunk_ids[start : start + _INSERT_BATCH]
+        await asyncio.to_thread(
+            lambda b=batch: client.table("chunks")
+            .update({"embedding_status": "failed", "embedding_error": truncated})
+            .in_("id", b)
+            .execute()
+        )
+
+
+async def bump_retry_count(chunk_ids: list[str], *, client: Client) -> None:
+    """Bump retry_count for each chunk we re-attempted. Best-effort."""
+    if not chunk_ids:
+        return
+    # No bulk arithmetic update through PostgREST — read then write. Done
+    # rarely (only on retry path) so the round-trip cost is fine.
+    rows = await asyncio.to_thread(
+        lambda: client.table("chunks").select("id, retry_count").in_("id", chunk_ids).execute()
+    )
+    for row in rows.data or []:
+        cid = row["id"]
+        current = int(row.get("retry_count") or 0)
+        await asyncio.to_thread(
+            lambda c=cid, n=current + 1: client.table("chunks")
+            .update({"retry_count": n})
+            .eq("id", c)
+            .execute()
+        )
+
+
+async def fetch_failed_chunks(
+    *,
+    doc_id: str,
+    client: Client,
+) -> list[PersistedChunk]:
+    """Return all chunks for a doc that are in `failed` state, ordered."""
+    result = await asyncio.to_thread(
+        lambda: client.table("chunks")
+        .select(
+            "id, content, chunk_index, token_count, page_number, "
+            "section_heading, metadata"
+        )
+        .eq("document_id", doc_id)
+        .eq("embedding_status", "failed")
+        .order("chunk_index")
+        .execute()
+    )
+    out: list[PersistedChunk] = []
+    for row in result.data or []:
+        out.append(
+            PersistedChunk(
+                id=row["id"],
+                chunk=Chunk(
+                    content=row["content"],
+                    chunk_index=int(row["chunk_index"]),
+                    token_count=int(row.get("token_count") or 0),
+                    page_number=row.get("page_number"),
+                    section_heading=row.get("section_heading"),
+                    metadata=row.get("metadata") or {},
+                ),
+            )
+        )
+    return out
 
 
 async def _delete_existing(client: Client, doc_id: str) -> None:
     await asyncio.to_thread(
         lambda: client.table("chunks").delete().eq("document_id", doc_id).execute()
     )
-
-
-def _build_chunk_rows(
-    embedded: list[EmbeddedChunk], *, doc_id: str, org_id: str
-) -> tuple[list[dict[str, Any]], list[str]]:
-    rows: list[dict[str, Any]] = []
-    ids: list[str] = []
-    for ec in embedded:
-        cid = str(uuid.uuid4())
-        ids.append(cid)
-        rows.append(
-            {
-                "id": cid,
-                "org_id": org_id,
-                "document_id": doc_id,
-                "content": ec.chunk.content,
-                "chunk_index": ec.chunk.chunk_index,
-                "token_count": ec.chunk.token_count,
-                "page_number": ec.chunk.page_number,
-                "section_heading": ec.chunk.section_heading,
-                "metadata": ec.chunk.metadata or {},
-            }
-        )
-    return rows, ids
-
-
-def _build_embedding_rows(
-    chunk_ids: list[str], embedded: list[EmbeddedChunk], *, org_id: str
-) -> list[dict[str, Any]]:
-    return [
-        {"chunk_id": cid, "org_id": org_id, "embedding": ec.embedding}
-        for cid, ec in zip(chunk_ids, embedded, strict=True)
-    ]
 
 
 async def _batched_insert(client: Client, table: str, rows: list[dict[str, Any]]) -> None:

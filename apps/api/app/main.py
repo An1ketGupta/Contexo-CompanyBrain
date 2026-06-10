@@ -13,9 +13,14 @@ from app.routers import (
     chat,
     documents,
     health,
+    integrations as integrations_router,
     invitations,
+    public_api,
     search,
     settings as settings_router,
+    slack_router,
+    usage as usage_router,
+    webhooks as webhooks_router,
 )
 
 
@@ -73,6 +78,11 @@ app.include_router(search.router)
 app.include_router(settings_router.router)
 app.include_router(invitations.router)
 app.include_router(auth_router.router)
+app.include_router(usage_router.router)
+app.include_router(webhooks_router.router)
+app.include_router(integrations_router.router)
+app.include_router(public_api.router)
+app.include_router(slack_router.router)
 
 # Inngest serve endpoint — webhook the Inngest server hits to invoke our functions.
 # Mounts at /api/inngest by default.

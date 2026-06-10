@@ -1,7 +1,12 @@
 "use client";
 
 import useSWR from "swr";
-import type { MessageFeedback, MessageSource } from "@/lib/types";
+import type {
+  MessageConfidence,
+  MessageFeedback,
+  MessageMetadata,
+  MessageSource,
+} from "@/lib/types";
 
 export interface PersistedMessage {
   id: string;
@@ -9,6 +14,8 @@ export interface PersistedMessage {
   content: string;
   sources: MessageSource[] | null;
   feedback?: MessageFeedback | null;
+  metadata?: MessageMetadata | null;
+  confidence?: MessageConfidence | null;
   created_at: string;
 }
 
@@ -18,6 +25,7 @@ interface ConversationResponse {
     title: string | null;
     created_at: string;
     updated_at: string;
+    scoped_document_id?: string | null;
   };
   messages: PersistedMessage[];
 }

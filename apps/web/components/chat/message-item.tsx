@@ -12,6 +12,7 @@ import {
 import type { DisplayMessage, MessageError } from "@/hooks/use-chat";
 import type { MessageFeedback } from "@/lib/types";
 import { Citations } from "./citations";
+import { ConfidenceBadge } from "./confidence-badge";
 import { CopyButton } from "./copy-button";
 import { Markdown } from "./markdown";
 import { SearchingIndicator } from "./searching-indicator";
@@ -58,6 +59,12 @@ export function MessageItem({
 
         {!expandedSearches && showSearchPanel && (
           <SearchSummary count={message.searches.length} />
+        )}
+
+        {message.confidence && !isError && (
+          <div className="mb-2">
+            <ConfidenceBadge confidence={message.confidence} />
+          </div>
         )}
 
         {isError && message.error ? (

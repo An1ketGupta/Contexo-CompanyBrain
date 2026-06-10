@@ -4,9 +4,11 @@ import { use, useCallback, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ConversationSidebar } from "@/components/chat/conversation-sidebar";
+import { KnowledgeGapBanner } from "@/components/chat/knowledge-gap-banner";
 import { MessageInput } from "@/components/chat/message-input";
 import { MessageList } from "@/components/chat/message-list";
 import { ChatMessagesSkeleton } from "@/components/chat/chat-messages-skeleton";
+import { ScopeBanner } from "@/components/chat/scope-banner";
 import { useChat } from "@/hooks/use-chat";
 import { useConversation } from "@/hooks/use-conversation";
 import { useConversations } from "@/hooks/use-conversations";
@@ -20,8 +22,19 @@ export default function ChatConversationPage({
   const { id } = use(params);
   const router = useRouter();
   const { documents, loading: loadingDocs } = useDocuments();
-  const { messages: persistedMessages, loading, error } = useConversation(id);
+  const {
+    conversation,
+    messages: persistedMessages,
+    loading,
+    error,
+  } = useConversation(id);
   const { touch, refresh } = useConversations();
+
+  const scopedDocument = useMemo(() => {
+    const scopeId = conversation?.scoped_document_id;
+    if (!scopeId) return null;
+    return documents.find((d) => d.id === scopeId) ?? null;
+  }, [conversation?.scoped_document_id, documents]);
 
   // Shown only to seed useChat — once the user sends a message, the hook owns
   // the timeline. Memoize so we don't reset state on every render.
@@ -33,6 +46,7 @@ export default function ChatConversationPage({
         content: m.content,
         sources: m.sources,
         feedback: m.feedback ?? null,
+        confidence: m.metadata?.confidence ?? m.confidence ?? null,
         created_at: m.created_at,
       })),
     [persistedMessages],
@@ -46,7 +60,16 @@ export default function ChatConversationPage({
     [touch, refresh],
   );
 
-  const { messages, isStreaming, send, stop, retry, setFeedback } = useChat({
+  const {
+    messages,
+    isStreaming,
+    knowledgeGap,
+    dismissKnowledgeGap,
+    send,
+    stop,
+    retry,
+    setFeedback,
+  } = useChat({
     conversationId: id,
     initialMessages,
     onTurnComplete: handleTurnComplete,
@@ -68,6 +91,13 @@ export default function ChatConversationPage({
     <>
       <ConversationSidebar activeId={id} />
       <main className="flex h-full min-h-0 flex-1 flex-col">
+        {(scopedDocument || conversation?.scoped_document_id) && (
+          <ScopeBanner
+            documentName={
+              scopedDocument?.name ?? "(deleted document)"
+            }
+          />
+        )}
         {loading && messages.length === 0 ? (
           <ChatMessagesSkeleton />
         ) : noContent ? (
@@ -80,6 +110,10 @@ export default function ChatConversationPage({
         ) : (
           <MessageList messages={messages} onRetry={retry} onFeedback={setFeedback} />
         )}
+
+        <div className="px-4 md:px-6">
+          <KnowledgeGapBanner gap={knowledgeGap} onDismiss={dismissKnowledgeGap} />
+        </div>
 
         <MessageInput
           onSend={send}

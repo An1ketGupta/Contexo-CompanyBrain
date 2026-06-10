@@ -35,6 +35,7 @@ from app.services.langfuse import (
     start_trace_span,
     update_current_trace,
 )
+from app.services.org_config import get_org_instructions
 from app.services.retrieval import SearchHit, hybrid_search
 
 from .client import SEARCH_TOOL, SEARCH_TOOL_NAME, LLMClient, LLMError, get_llm_client
@@ -100,9 +101,93 @@ class ErrorEvent:
     message: str = ""
 
 
+@dataclass(frozen=True)
+class ConfidenceEvent:
+    """Surfaces a UI-facing confidence band for the assistant message.
+
+    Computed from raw vector cosine of the chunks that survived into the final
+    sources list (i.e. the chunks the orchestrator actually surfaced upward).
+    RRF/FTS-only hits without a cosine are excluded — they're informative for
+    ranking but not for absolute "how good a match" thresholding.
+
+    `level` is a coarse high/medium/low band the UI maps to colour; `score`
+    is the same average expressed on a 0–10 scale so the UI can render the
+    number alongside the badge.
+    """
+
+    kind: Literal["confidence"] = field(default="confidence", init=False)
+    level: Literal["high", "medium", "low"] = "low"
+    score: float = 0.0
+    chunks_considered: int = 0
+
+
+@dataclass(frozen=True)
+class KnowledgeGapEvent:
+    """Emitted once after all retrieval is done if every search returned zero
+    chunks. Triggers the inline "limited context found" warning in the chat UI
+    so users learn to fill the gap (upload a doc) rather than chase a bad answer.
+
+    `topics` lists the actual queries the LLM issued — those are what we'd
+    suggest documents for, not whatever regex'd noun phrase we'd guess from
+    the user's prompt.
+    """
+
+    kind: Literal["knowledge_gap"] = field(default="knowledge_gap", init=False)
+    topics: tuple[str, ...] = ()
+
+
 OrchestratorEvent = (
-    SearchingEvent | SearchedEvent | SourcesEvent | TokenEvent | FinalEvent | ErrorEvent
+    SearchingEvent
+    | SearchedEvent
+    | SourcesEvent
+    | TokenEvent
+    | FinalEvent
+    | ErrorEvent
+    | KnowledgeGapEvent
+    | ConfidenceEvent
 )
+
+
+# Confidence thresholds — calibrated on Google `text-embedding-004` cosine
+# similarity. 0.75+ is "this chunk is unambiguously about the query"; 0.45+
+# is "topically related"; below that is noise. Knowledge-gap turns force the
+# low band regardless of score so the UI doesn't mislead.
+_CONFIDENCE_HIGH = 0.75
+_CONFIDENCE_MEDIUM = 0.45
+
+
+def _compute_confidence(
+    sources: list[dict],
+    hits: list[SearchHit],
+    *,
+    knowledge_gap: bool,
+) -> ConfidenceEvent:
+    """Average the raw vector cosine across cited chunks → confidence band."""
+    if not sources or knowledge_gap:
+        return ConfidenceEvent(level="low", score=0.0, chunks_considered=0)
+
+    cited_ids = {s.get("chunk_id") for s in sources if s.get("chunk_id")}
+    cosines: list[float] = []
+    for h in hits:
+        if h.chunk_id in cited_ids and h.vector_similarity is not None:
+            cosines.append(h.vector_similarity)
+            cited_ids.discard(h.chunk_id)
+
+    if not cosines:
+        return ConfidenceEvent(level="low", score=0.0, chunks_considered=0)
+
+    avg = sum(cosines) / len(cosines)
+    if avg >= _CONFIDENCE_HIGH:
+        level: Literal["high", "medium", "low"] = "high"
+    elif avg >= _CONFIDENCE_MEDIUM:
+        level = "medium"
+    else:
+        level = "low"
+    return ConfidenceEvent(
+        level=level,
+        score=round(avg * 10, 1),
+        chunks_considered=len(cosines),
+    )
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -117,6 +202,8 @@ async def execute_task(
     stream: bool = False,
     user_id: str | None = None,
     conversation_id: str | None = None,
+    scoped_document_id: str | None = None,
+    conversation_summary: str | None = None,
 ) -> AsyncIterator[OrchestratorEvent]:
     """Run one user task through the LLM+retrieval loop.
 
@@ -147,6 +234,42 @@ async def execute_task(
     seen_queries: set[str] = set()
     searches_done = 0
     tool_call_total = 0
+    # Track every query the LLM ran AND its hit count. We use this both for
+    # the SearchedEvent stream and for the post-loop knowledge-gap signal:
+    # if every search returned 0, we emit a KnowledgeGapEvent so the UI can
+    # nudge the user to upload more documents.
+    search_attempts: list[tuple[str, int]] = []
+
+    # Org-level system-prompt prefix (Day 9 / #67). TTL-cached, so this is a
+    # cheap dict hit on the hot path. Falls back to None on lookup error.
+    try:
+        org_instructions = await get_org_instructions(org_id)
+    except Exception as exc:
+        log.warning("org_instructions_lookup_failed: %s", exc)
+        org_instructions = None
+
+    # Scope-aware system note. When a conversation is pinned to one document,
+    # tell the LLM so it doesn't generalize from a single source like it had
+    # the whole knowledge base. Cheap one-line lookup; cached implicitly by
+    # PostgREST connection reuse.
+    if scoped_document_id:
+        scope_note = await _scope_system_note(db_client, scoped_document_id)
+        if scope_note:
+            org_instructions = (
+                f"{org_instructions}\n\n{scope_note}" if org_instructions else scope_note
+            )
+
+    # Conversation summary (Day 12 / #53). Injected as a system note ahead of
+    # the live history window so the LLM stays coherent on long threads
+    # without us re-sending hundreds of earlier-turn tokens.
+    if conversation_summary:
+        summary_note = (
+            "EARLIER CONVERSATION (summary of turns not in live history):\n"
+            f"{conversation_summary.strip()}"
+        )
+        org_instructions = (
+            f"{org_instructions}\n\n{summary_note}" if org_instructions else summary_note
+        )
 
     started = time.perf_counter()
     final_text = ""
@@ -177,6 +300,7 @@ async def execute_task(
                 response: LLMResponse = await llm.complete(
                     messages,
                     tools=tools_for_this_round,
+                    system_extra=org_instructions,
                 )
             except LLMError as exc:
                 log.exception("LLM call failed in round %d: %s", round_idx, exc)
@@ -227,7 +351,13 @@ async def execute_task(
 
             results: list[list[SearchHit] | BaseException] = await asyncio.gather(
                 *[
-                    _run_search(tc.args["query"], org_id, db_client, settings.chat_search_k)
+                    _run_search(
+                        tc.args["query"],
+                        org_id,
+                        db_client,
+                        settings.chat_search_k,
+                        document_id=scoped_document_id,
+                    )
                     for tc in valid_calls
                 ],
                 return_exceptions=True,
@@ -244,6 +374,7 @@ async def execute_task(
                 else:
                     hits = res
                 all_hits.extend(hits)
+                search_attempts.append((tc.args["query"], len(hits)))
                 yield SearchedEvent(query=tc.args["query"], hit_count=len(hits))
                 messages.append(
                     Message(
@@ -261,6 +392,22 @@ async def execute_task(
         sources = _dedupe_sources(all_hits, limit=settings.chat_max_context_chunks)
         yield SourcesEvent(sources=sources)
 
+        # Knowledge-gap signal: every search the LLM ran returned 0 hits.
+        # Skip if no searches happened (pure-conversational turn like "thanks")
+        # or if any search produced anything — we trust the LLM to communicate
+        # uncertainty itself in the partial-coverage case.
+        knowledge_gap = bool(search_attempts) and all(count == 0 for _, count in search_attempts)
+        if knowledge_gap:
+            yield KnowledgeGapEvent(
+                topics=tuple(q for q, _ in search_attempts),
+            )
+
+        # Confidence — emitted whenever the LLM consulted retrieval. Skipping
+        # zero-source turns means a "hi how are you" doesn't render a "low
+        # confidence" badge on a chat that wasn't asking for facts.
+        if sources:
+            yield _compute_confidence(sources, all_hits, knowledge_gap=knowledge_gap)
+
         if stream and not final_text:
             # We may have exited the loop because the LLM was about to speak. To
             # stream the final answer, re-issue the last LLM call WITHOUT tools
@@ -269,7 +416,7 @@ async def execute_task(
             # history gives us a fresh streamable final turn.)
             full_text_parts: list[str] = []
             try:
-                chunk_iter = await llm.stream(messages, tools=())
+                chunk_iter = await llm.stream(messages, tools=(), system_extra=org_instructions)
                 async for chunk in chunk_iter:
                     if chunk.kind == "text" and chunk.text:
                         full_text_parts.append(chunk.text)
@@ -304,9 +451,38 @@ async def execute_task(
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+async def _scope_system_note(client: Client, document_id: str) -> str | None:
+    """One-line scope reminder injected into the system prompt."""
+    try:
+        result = await asyncio.to_thread(
+            lambda: client.table("documents")
+            .select("name")
+            .eq("id", document_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception:
+        return None
+    name = (getattr(result, "data", None) or {}).get("name") if result else None
+    if not name:
+        return None
+    return (
+        f"SCOPE: All retrieval for this conversation is restricted to the single "
+        f"document \"{name}\". If the document doesn't cover what the user asks, "
+        f"say so explicitly — do not draw on prior knowledge of the broader org."
+    )
+
+
 @observe(name="hybrid_search")
-async def _run_search(query: str, org_id: str, client: Client, k: int) -> list[SearchHit]:
-    return await hybrid_search(query, org_id, client, k=k)
+async def _run_search(
+    query: str,
+    org_id: str,
+    client: Client,
+    k: int,
+    *,
+    document_id: str | None = None,
+) -> list[SearchHit]:
+    return await hybrid_search(query, org_id, client, k=k, document_id=document_id)
 
 
 def _extract_query(tc: ToolCall) -> str:
@@ -339,9 +515,11 @@ def _format_context(hits: list[SearchHit]) -> str:
 def _dedupe_sources(hits: list[SearchHit], *, limit: int) -> list[dict]:
     """Dedupe across all searches by chunk_id, keep best-ranked occurrence.
 
-    Returns a UI-friendly shape: `{chunk_id, document_id, document_name,
-    page_number, section_heading, excerpt, snippet}`. Caller (DB layer) decides
-    what to persist in `messages.sources`.
+    Returns a UI-friendly shape plus two scores used downstream:
+        similarity        — the canonical (RRF-fused) score from retrieval
+        vector_similarity — the raw cosine, when the vector branch contributed
+    Both feed `record_citations` so the analytics layer can rank chunks by
+    quality, and `vector_similarity` is what drives the confidence band.
     """
     by_chunk: dict[str, tuple[int, SearchHit]] = {}
     for i, h in enumerate(hits):
@@ -361,6 +539,8 @@ def _dedupe_sources(hits: list[SearchHit], *, limit: int) -> list[dict]:
                 "section_heading": h.section_heading,
                 "excerpt": (h.content or "").strip()[:280],
                 "snippet": h.snippet,
+                "similarity": h.similarity,
+                "vector_similarity": h.vector_similarity,
             }
         )
     return out

@@ -80,7 +80,7 @@ function CitationCard({ group }: { group: CitationGroup }) {
         ? `Page ${group.pages[0]}`
         : `${group.pages.length} pages`;
 
-  const openDocument = async () => {
+  const openDocument = async (preferredPage?: number | null) => {
     if (!group.document_id) {
       toast.error("Document link unavailable.");
       return;
@@ -93,7 +93,15 @@ function CitationCard({ group }: { group: CitationGroup }) {
         throw new Error(body.detail ?? body.error ?? `Failed (${res.status})`);
       }
       const { url } = (await res.json()) as { url: string };
-      window.open(url, "_blank", "noopener,noreferrer");
+      // PDF page anchor — only meaningful when the browser's built-in PDF
+      // viewer is rendering, but harmless on other formats. We detect PDF by
+      // the original filename in either the document name or the signed URL.
+      const page =
+        preferredPage ?? (group.pages.length > 0 ? group.pages[0] : null);
+      const isPdf =
+        /\.pdf(\?|$)/i.test(url) || /\.pdf$/i.test(group.document_name);
+      const target = page != null && isPdf ? `${url}#page=${page}` : url;
+      window.open(target, "_blank", "noopener,noreferrer");
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Could not open document.",
@@ -140,11 +148,22 @@ function CitationCard({ group }: { group: CitationGroup }) {
                 key={i}
                 className="text-[11.5px] leading-5 text-muted-foreground"
               >
-                {e.page_number != null && (
-                  <span className="mr-1 rounded bg-background px-1 py-px text-[10px] font-medium text-foreground">
-                    p.{e.page_number}
-                  </span>
-                )}
+                {e.page_number != null &&
+                  (group.document_id ? (
+                    <button
+                      type="button"
+                      onClick={() => openDocument(e.page_number)}
+                      disabled={opening}
+                      className="mr-1 rounded bg-background px-1 py-px text-[10px] font-medium text-foreground transition-colors hover:bg-primary/10 hover:text-primary disabled:opacity-50"
+                      aria-label={`Open document at page ${e.page_number}`}
+                    >
+                      p.{e.page_number}
+                    </button>
+                  ) : (
+                    <span className="mr-1 rounded bg-background px-1 py-px text-[10px] font-medium text-foreground">
+                      p.{e.page_number}
+                    </span>
+                  ))}
                 <span className="line-clamp-3">{e.excerpt}</span>
               </p>
             ))}
@@ -153,7 +172,7 @@ function CitationCard({ group }: { group: CitationGroup }) {
           {group.document_id && (
             <button
               type="button"
-              onClick={openDocument}
+              onClick={() => openDocument()}
               disabled={opening}
               className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline disabled:opacity-50"
             >

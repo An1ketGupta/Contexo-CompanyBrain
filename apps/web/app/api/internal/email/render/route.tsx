@@ -32,6 +32,11 @@ import {
   weeklyDigestSubject,
   type WeeklyDigestEmailProps,
 } from "@/emails/weekly-digest";
+import {
+  KnowledgeRefreshEmail,
+  knowledgeRefreshSubject,
+  type KnowledgeRefreshEmailProps,
+} from "@/emails/knowledge-refresh";
 
 /**
  * Server-to-server email rendering. The FastAPI Inngest worker calls this
@@ -74,6 +79,10 @@ const TEMPLATES = {
     Component: WeeklyDigestEmail,
     subject: weeklyDigestSubject,
   } satisfies Template<WeeklyDigestEmailProps>,
+  knowledge_refresh: {
+    Component: KnowledgeRefreshEmail,
+    subject: knowledgeRefreshSubject,
+  } satisfies Template<KnowledgeRefreshEmailProps>,
 };
 
 type TemplateName = keyof typeof TEMPLATES;

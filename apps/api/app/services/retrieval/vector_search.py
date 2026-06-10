@@ -45,6 +45,10 @@ class SearchHit:
     vector_rank: int | None = None
     fts_rank: int | None = None
     rrf_score: float | None = None
+    # Raw cosine from the vector branch. Survives RRF fusion (which clobbers
+    # `similarity` with the fused score) so the confidence calculation in
+    # task_chain has a true [0,1] interpretable signal to aggregate on.
+    vector_similarity: float | None = None
 
     def with_overrides(self, **changes: Any) -> "SearchHit":
         """Return a copy with selected fields replaced — used by hybrid fusion."""
@@ -117,6 +121,7 @@ class VectorRetriever:
 
 
 def _row_to_hit(row: dict) -> SearchHit:
+    sim = float(row["similarity"])
     return SearchHit(
         chunk_id=row["chunk_id"],
         content=row["content"],
@@ -125,7 +130,8 @@ def _row_to_hit(row: dict) -> SearchHit:
         chunk_index=row["chunk_index"],
         page_number=row.get("page_number"),
         section_heading=row.get("section_heading"),
-        similarity=float(row["similarity"]),
+        similarity=sim,
+        vector_similarity=sim,
     )
 
 

@@ -3,10 +3,12 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { MessageSquarePlus, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { MessageSquarePlus, MoreHorizontal, Pencil, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { useConversations, type ConversationSummary } from "@/hooks/use-conversations";
+import { useDebounced } from "@/hooks/use-debounced";
 import { reportApiError, type ApiError } from "@/lib/errors";
+import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,7 +35,14 @@ interface ConversationSidebarProps {
 
 export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
   const router = useRouter();
-  const { conversations, loading, error, rename, remove } = useConversations();
+  const [searchInput, setSearchInput] = useState("");
+  // Debounce so we don't hit the FTS RPC on every keystroke.
+  const debouncedSearch = useDebounced(searchInput, 300);
+  const searching = debouncedSearch.trim().length > 0;
+
+  const { conversations, loading, error, rename, remove } = useConversations(
+    debouncedSearch,
+  );
 
   const [renaming, setRenaming] = useState<ConversationSummary | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ConversationSummary | null>(null);
@@ -76,8 +85,31 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
         </Link>
       </div>
 
+      <div className="px-3 pb-2">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search conversations…"
+            className="h-8 pl-8 pr-7 text-xs"
+            aria-label="Search conversations"
+          />
+          {searchInput && (
+            <button
+              type="button"
+              onClick={() => setSearchInput("")}
+              aria-label="Clear search"
+              className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      </div>
+
       <div className="px-3 pb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Recent
+        {searching ? "Results" : "Recent"}
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 pb-3">
@@ -91,7 +123,9 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
           <div className="px-2 text-xs text-destructive">{error}</div>
         ) : conversations.length === 0 ? (
           <div className="px-2 text-xs text-muted-foreground">
-            No conversations yet.
+            {searching
+              ? `No matches for "${debouncedSearch}".`
+              : "No conversations yet."}
           </div>
         ) : (
           <ul className="space-y-0.5">

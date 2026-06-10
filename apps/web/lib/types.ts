@@ -3,7 +3,15 @@ export type Json = string | number | boolean | null | { [key: string]: Json } | 
 export type OrgPlan = "free" | "starter" | "growth" | "business";
 export type UserRole = "admin" | "member";
 export type DocumentStatus = "pending" | "processing" | "ready" | "failed";
-export type DocumentFileType = "pdf" | "docx" | "txt" | "md";
+export type DocumentFileType =
+  | "pdf"
+  | "docx"
+  | "txt"
+  | "md"
+  | "xlsx"
+  | "pptx"
+  | "html"
+  | "csv";
 export type MessageRole = "user" | "assistant";
 export type MessageFeedback = "positive" | "negative";
 
@@ -35,6 +43,22 @@ export interface Document {
   metadata: Json;
   created_by: string | null;
   created_at: string;
+  tags?: string[];
+}
+
+export interface DocumentTag {
+  tag: string;
+  count: number;
+}
+
+export interface UsageSnapshot {
+  plan: string;
+  used: number;
+  limit: number | null;
+  reset_at: string;
+  seconds_until_reset: number;
+  unlimited: boolean;
+  source: "redis" | "local";
 }
 
 export interface Chunk {
@@ -69,6 +93,20 @@ export interface MessageSource {
   snippet: string | null;
 }
 
+export type ConfidenceLevel = "high" | "medium" | "low";
+
+export interface MessageConfidence {
+  level: ConfidenceLevel;
+  // 0–10 scale, matching the backend.
+  score: number;
+  // Number of cited chunks the confidence was averaged over.
+  n: number;
+}
+
+export interface MessageMetadata {
+  confidence?: MessageConfidence;
+}
+
 export interface Message {
   id: string;
   conversation_id: string;
@@ -77,6 +115,7 @@ export interface Message {
   content: string;
   sources: MessageSource[] | null;
   feedback: MessageFeedback | null;
+  metadata: MessageMetadata | null;
   created_at: string;
 }
 
@@ -88,5 +127,12 @@ export type ChatStreamEvent =
   | { type: "searched"; query: string; hit_count: number }
   | { type: "sources"; sources: MessageSource[] }
   | { type: "token"; text: string }
+  | { type: "knowledge_gap"; topics: string[] }
+  | {
+      type: "confidence";
+      level: ConfidenceLevel;
+      score: number;
+      chunks_considered: number;
+    }
   | { type: "done"; message_id: string; tool_calls: number }
   | { type: "error"; message: string };

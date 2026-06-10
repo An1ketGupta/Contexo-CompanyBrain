@@ -1,14 +1,35 @@
 "use client";
 
-import { CheckCircle2, Clock, Loader2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Loader2, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { DocumentStatus } from "@/lib/types";
 
 interface StatusBadgeProps {
   status: DocumentStatus;
+  embeddingStats?: { embedded: number; failed: number; total: number } | null;
 }
 
-export function StatusBadge({ status }: StatusBadgeProps) {
+export function StatusBadge({ status, embeddingStats }: StatusBadgeProps) {
+  // A "ready" doc with non-zero failed chunks is partial — surface it with an
+  // amber warning so users notice the missing context before they complain.
+  if (
+    status === "ready" &&
+    embeddingStats &&
+    embeddingStats.failed > 0 &&
+    embeddingStats.embedded > 0
+  ) {
+    return (
+      <Badge
+        variant="outline"
+        className="border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-300"
+        title={`${embeddingStats.embedded} of ${embeddingStats.total} chunks embedded.`}
+      >
+        <AlertTriangle />
+        Partial ({embeddingStats.embedded}/{embeddingStats.total})
+      </Badge>
+    );
+  }
+
   switch (status) {
     case "pending":
       return (

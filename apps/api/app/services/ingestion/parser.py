@@ -1,12 +1,18 @@
 """Document parsers — produce paragraph-level RawSegments.
 
-PDF: PyMuPDF 'dict' mode for block-level layout + font-size heading detection.
+PDF:  PyMuPDF 'dict' mode for block-level layout + font-size heading detection.
 DOCX: python-docx style names ('Heading 1', 'Title', ...) drive section tracking.
 MD:   ATX-style headings (#, ##, ###) anchor sections.
 TXT:  blank-line-separated paragraphs.
+XLSX: one segment per non-empty row, section_heading = sheet name.
+PPTX: one segment per text frame, section_heading = slide title (or "Slide N").
+HTML: <h1..h6> become section headings; nav/script/style/footer are dropped.
+CSV:  one row per segment, headers prepended on the first row of each chunk.
 """
 from __future__ import annotations
 
+import csv
+import io
 import logging
 import re
 from collections import Counter
@@ -46,6 +52,14 @@ def parse_document(file_bytes: bytes, file_type: str) -> list[RawSegment]:
         segments = list(_parse_markdown(_decode_bytes(file_bytes)))
     elif file_type == "txt":
         segments = list(_parse_text(_decode_bytes(file_bytes)))
+    elif file_type == "xlsx":
+        segments = list(_parse_xlsx(file_bytes))
+    elif file_type == "pptx":
+        segments = list(_parse_pptx(file_bytes))
+    elif file_type == "html":
+        segments = list(_parse_html(file_bytes))
+    elif file_type == "csv":
+        segments = list(_parse_csv(file_bytes))
     else:
         raise ParseError(f"Unsupported file type: {file_type}")
 
@@ -220,6 +234,215 @@ def _parse_text(text: str) -> Iterator[RawSegment]:
         para = para.strip()
         if para:
             yield RawSegment(content=para)
+
+
+# ── XLSX ──────────────────────────────────────────────────────────────────────
+
+# Cap per-sheet row scan to keep parsing memory bounded on hostile inputs.
+# 100k rows × ~32 cells × ~16 chars ≈ 50 MB of text, which is comfortably
+# within our memory budget and well past any realistic business spreadsheet.
+_XLSX_MAX_ROWS_PER_SHEET = 100_000
+
+
+def _parse_xlsx(file_bytes: bytes) -> Iterator[RawSegment]:
+    try:
+        import openpyxl  # local import: keeps cold-start fast for PDF-only orgs
+    except ImportError as exc:
+        raise ParseError("openpyxl is not installed") from exc
+
+    try:
+        wb = openpyxl.load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
+    except Exception as exc:
+        raise ParseError(f"Failed to open XLSX: {exc}") from exc
+
+    try:
+        for sheet in wb.worksheets:
+            sheet_title = (sheet.title or "Sheet").strip()
+            header: list[str] = []
+            for row_idx, row in enumerate(sheet.iter_rows(values_only=True)):
+                if row_idx >= _XLSX_MAX_ROWS_PER_SHEET:
+                    log.warning("xlsx: %s truncated at %d rows", sheet_title, _XLSX_MAX_ROWS_PER_SHEET)
+                    break
+                cells = [_xlsx_cell_to_text(c) for c in row]
+                if not any(cells):
+                    continue
+                if not header and any(cells):
+                    # Treat the first non-empty row as the header so later rows
+                    # are emitted as "col: value" lines — much more retrievable
+                    # than a bare CSV-style "a | b | c".
+                    header = cells
+                    yield RawSegment(
+                        content=" | ".join(c for c in cells if c),
+                        section_heading=sheet_title,
+                        metadata={"row": row_idx + 1, "source": "header"},
+                    )
+                    continue
+                if header:
+                    pairs = [
+                        f"{header[i]}: {cells[i]}"
+                        for i in range(min(len(header), len(cells)))
+                        if cells[i]
+                    ]
+                    text = ", ".join(pairs) if pairs else " | ".join(c for c in cells if c)
+                else:
+                    text = " | ".join(c for c in cells if c)
+                if text.strip():
+                    yield RawSegment(
+                        content=text,
+                        section_heading=sheet_title,
+                        metadata={"row": row_idx + 1},
+                    )
+    finally:
+        wb.close()
+
+
+def _xlsx_cell_to_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+# ── PPTX ──────────────────────────────────────────────────────────────────────
+
+def _parse_pptx(file_bytes: bytes) -> Iterator[RawSegment]:
+    try:
+        from pptx import Presentation
+    except ImportError as exc:
+        raise ParseError("python-pptx is not installed") from exc
+
+    try:
+        prs = Presentation(BytesIO(file_bytes))
+    except Exception as exc:
+        raise ParseError(f"Failed to open PPTX: {exc}") from exc
+
+    for slide_idx, slide in enumerate(prs.slides, start=1):
+        title = _pptx_slide_title(slide) or f"Slide {slide_idx}"
+
+        for shape in slide.shapes:
+            text = _pptx_shape_text(shape)
+            if text and text != title:
+                yield RawSegment(
+                    content=text,
+                    section_heading=title,
+                    metadata={"slide": slide_idx},
+                )
+
+        notes = _pptx_notes(slide)
+        if notes:
+            yield RawSegment(
+                content=notes,
+                section_heading=title,
+                metadata={"slide": slide_idx, "source": "notes"},
+            )
+
+
+def _pptx_slide_title(slide) -> str | None:
+    try:
+        if slide.shapes.title and slide.shapes.title.text:
+            return slide.shapes.title.text.strip() or None
+    except Exception:
+        return None
+    return None
+
+
+def _pptx_shape_text(shape) -> str:
+    if not getattr(shape, "has_text_frame", False):
+        return ""
+    parts: list[str] = []
+    for para in shape.text_frame.paragraphs:
+        line = "".join(run.text for run in para.runs).strip()
+        if line:
+            parts.append(line)
+    return "\n".join(parts).strip()
+
+
+def _pptx_notes(slide) -> str:
+    try:
+        if not getattr(slide, "has_notes_slide", False) or not slide.has_notes_slide:
+            return ""
+        nf = slide.notes_slide.notes_text_frame
+        return (nf.text or "").strip()
+    except Exception:
+        return ""
+
+
+# ── HTML ──────────────────────────────────────────────────────────────────────
+
+_HTML_DROP_TAGS = ("script", "style", "noscript", "template", "nav", "footer", "aside", "header")
+
+
+def _parse_html(file_bytes: bytes) -> Iterator[RawSegment]:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError as exc:
+        raise ParseError("beautifulsoup4 is not installed") from exc
+
+    text = _decode_bytes(file_bytes)
+    try:
+        soup = BeautifulSoup(text, "lxml")
+    except Exception:
+        # lxml may be missing in dev — fall back to the stdlib parser so HTML
+        # still ingests, just with slightly worse heading detection.
+        soup = BeautifulSoup(text, "html.parser")
+
+    for tag in soup(_HTML_DROP_TAGS):
+        tag.decompose()
+
+    current_heading: str | None = None
+    root = soup.body or soup
+    for element in root.descendants:
+        name = getattr(element, "name", None)
+        if name is None:
+            continue
+        if name in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            heading = element.get_text(" ", strip=True)
+            if heading:
+                current_heading = heading[:200]
+            continue
+        if name in ("p", "li", "blockquote", "td", "th", "dd", "dt", "pre"):
+            body = element.get_text(" ", strip=True)
+            if body and len(body) > 1:
+                yield RawSegment(content=body, section_heading=current_heading)
+
+
+# ── CSV ───────────────────────────────────────────────────────────────────────
+
+_CSV_MAX_ROWS = 100_000
+
+
+def _parse_csv(file_bytes: bytes) -> Iterator[RawSegment]:
+    text = _decode_bytes(file_bytes)
+    sample = text[:8192]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+
+    reader = csv.reader(io.StringIO(text), dialect=dialect)
+    header: list[str] = []
+    for row_idx, row in enumerate(reader):
+        if row_idx >= _CSV_MAX_ROWS:
+            log.warning("csv: truncated at %d rows", _CSV_MAX_ROWS)
+            break
+        cells = [c.strip() for c in row]
+        if not any(cells):
+            continue
+        if not header:
+            header = cells
+            yield RawSegment(
+                content=" | ".join(c for c in cells if c),
+                metadata={"row": row_idx + 1, "source": "header"},
+            )
+            continue
+        pairs = [
+            f"{header[i]}: {cells[i]}"
+            for i in range(min(len(header), len(cells)))
+            if cells[i]
+        ]
+        if pairs:
+            yield RawSegment(content=", ".join(pairs), metadata={"row": row_idx + 1})
 
 
 # ── Bytes → str with fallback ─────────────────────────────────────────────────

@@ -1,0 +1,14 @@
+import { NextRequest } from "next/server";
+import { proxyJson } from "@/lib/api-proxy";
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  const { id } = await params;
+  const qs = req.nextUrl.search;
+  return proxyJson(
+    req,
+    `/webhooks/${encodeURIComponent(id)}/deliveries${qs}`,
+  );
+}

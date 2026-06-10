@@ -1,9 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { mutate as globalMutate } from "swr";
 import { networkError, parseApiError, type ApiError, type ErrorCode } from "@/lib/errors";
 import { newRequestId, REQUEST_ID_HEADER } from "@/lib/request-id";
-import type { ChatStreamEvent, MessageFeedback, MessageSource } from "@/lib/types";
+import type {
+  ChatStreamEvent,
+  MessageConfidence,
+  MessageFeedback,
+  MessageSource,
+} from "@/lib/types";
+
+export interface KnowledgeGap {
+  topics: string[];
+  /** Server timestamp when the gap was detected — used as a React key for animation. */
+  detected_at: number;
+}
 
 export interface SearchProgress {
   query: string;
@@ -34,6 +46,9 @@ export interface DisplayMessage {
   status: "streaming" | "complete" | "error" | "aborted";
   // Tri-state thumb rating. Tracked on the assistant bubble; user bubbles leave it null.
   feedback: MessageFeedback | null;
+  // Confidence band attached by the orchestrator once retrieval completes.
+  // Null on user bubbles and on assistant turns that didn't trigger search.
+  confidence: MessageConfidence | null;
   error?: MessageError;
   /**
    * The text we sent to produce this assistant message — kept on the user
@@ -51,12 +66,18 @@ export interface DisplayMessage {
 
 export interface UseChatOptions {
   conversationId: string | null;
+  /**
+   * Pin every search to a single document. Only honoured on conversation
+   * creation; ignored once a conversation_id exists on the server.
+   */
+  scopedDocumentId?: string | null;
   initialMessages?: Array<{
     id: string;
     role: DisplayRole;
     content: string;
     sources: MessageSource[] | null;
     feedback?: MessageFeedback | null;
+    confidence?: MessageConfidence | null;
     created_at: string;
   }>;
   onConversationStarted?: (id: string) => void;
@@ -93,12 +114,14 @@ function persistedToDisplay(
     searches: [],
     status: "complete",
     feedback: m.feedback ?? null,
+    confidence: m.confidence ?? null,
     created_at: m.created_at,
   };
 }
 
 export function useChat({
   conversationId,
+  scopedDocumentId,
   initialMessages,
   onConversationStarted,
   onTurnComplete,
@@ -110,6 +133,11 @@ export function useChat({
   const [currentConvoId, setCurrentConvoId] = useState<string | null>(
     conversationId,
   );
+  // Server signals when retrieval returned zero context across all searches.
+  // We surface it as a transient banner above the chat input; cleared on the
+  // next send so it doesn't linger past the user acknowledging it.
+  const [knowledgeGap, setKnowledgeGap] = useState<KnowledgeGap | null>(null);
+  const dismissKnowledgeGap = useCallback(() => setKnowledgeGap(null), []);
 
   const abortRef = useRef<AbortController | null>(null);
   const convoIdRef = useRef<string | null>(conversationId);
@@ -160,6 +188,10 @@ export function useChat({
       const userLocalId = existing?.userLocalId ?? makeLocalId("u");
       const assistantLocalId = existing?.assistantLocalId ?? makeLocalId("a");
 
+      // A new send means whatever gap the last turn surfaced is no longer
+      // about this conversation. Clear before we start.
+      setKnowledgeGap(null);
+
       if (existing) {
         // Retry: reset the assistant bubble's transient state.
         setMessages((prev) =>
@@ -170,6 +202,7 @@ export function useChat({
                   content: "",
                   sources: [],
                   searches: [],
+                  confidence: null,
                   status: "streaming",
                   error: undefined,
                 }
@@ -186,6 +219,7 @@ export function useChat({
           searches: [],
           status: "complete",
           feedback: null,
+          confidence: null,
           pending_text: trimmed,
           client_message_id: clientMessageId,
           created_at: new Date().toISOString(),
@@ -199,6 +233,7 @@ export function useChat({
           searches: [],
           status: "streaming",
           feedback: null,
+          confidence: null,
           pending_text: trimmed,
           client_message_id: clientMessageId,
           created_at: new Date().toISOString(),
@@ -231,6 +266,10 @@ export function useChat({
               message: trimmed,
               conversation_id: convoIdRef.current,
               client_message_id: clientMessageId,
+              // Backend ignores this once the conversation row exists; only
+              // honoured on the very first send of a brand-new conversation.
+              scoped_document_id:
+                !convoIdRef.current && scopedDocumentId ? scopedDocumentId : undefined,
             }),
             signal: controller.signal,
           });
@@ -247,6 +286,7 @@ export function useChat({
           handleEvent(event, assistantLocalId, {
             setMessages,
             setCurrentConvoId,
+            setKnowledgeGap,
             onConversationStarted,
           });
         });
@@ -262,6 +302,10 @@ export function useChat({
 
         const finalConvoId = convoIdRef.current;
         if (finalConvoId) onTurnComplete?.(finalConvoId);
+
+        // Tick the quota meter forward without waiting for the 60s poll.
+        // SWR de-dupes if no QuotaMeter is mounted, so this is free.
+        globalMutate("/api/usage/me");
       } catch (err) {
         const abortReason = (controller.signal as { reason?: unknown }).reason;
         const isAbort = (err as Error)?.name === "AbortError";
@@ -312,7 +356,7 @@ export function useChat({
         abortRef.current = null;
       }
     },
-    [isStreaming, onConversationStarted, onTurnComplete],
+    [isStreaming, onConversationStarted, onTurnComplete, scopedDocumentId],
   );
 
   const send = useCallback(
@@ -399,6 +443,8 @@ export function useChat({
     messages,
     isStreaming,
     conversationId: currentConvoId,
+    knowledgeGap,
+    dismissKnowledgeGap,
     send,
     stop,
     retry,
@@ -414,10 +460,11 @@ function handleEvent(
   ctx: {
     setMessages: React.Dispatch<React.SetStateAction<DisplayMessage[]>>;
     setCurrentConvoId: React.Dispatch<React.SetStateAction<string | null>>;
+    setKnowledgeGap: React.Dispatch<React.SetStateAction<KnowledgeGap | null>>;
     onConversationStarted?: (id: string) => void;
   },
 ) {
-  const { setMessages, setCurrentConvoId, onConversationStarted } = ctx;
+  const { setMessages, setCurrentConvoId, setKnowledgeGap, onConversationStarted } = ctx;
 
   switch (event.type) {
     case "start": {
@@ -469,6 +516,30 @@ function handleEvent(
         prev.map((m) =>
           m.local_id === assistantLocalId
             ? { ...m, sources: event.sources }
+            : m,
+        ),
+      );
+      return;
+    }
+    case "knowledge_gap": {
+      setKnowledgeGap({
+        topics: event.topics ?? [],
+        detected_at: Date.now(),
+      });
+      return;
+    }
+    case "confidence": {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.local_id === assistantLocalId
+            ? {
+                ...m,
+                confidence: {
+                  level: event.level,
+                  score: event.score,
+                  n: event.chunks_considered,
+                },
+              }
             : m,
         ),
       );

@@ -98,6 +98,7 @@ class LLMClient(Protocol):
         tools: tuple[Any, ...] = (),
         temperature: float | None = None,
         timeout: float | None = None,
+        system_extra: str | None = None,
     ) -> LLMResponse: ...
 
     async def stream(
@@ -107,6 +108,7 @@ class LLMClient(Protocol):
         tools: tuple[Any, ...] = (),
         temperature: float | None = None,
         timeout: float | None = None,
+        system_extra: str | None = None,
     ) -> AsyncIterator[StreamChunk]: ...
 
 
@@ -142,9 +144,10 @@ class GeminiClient:
         tools: tuple[Any, ...] = (),
         temperature: float | None = None,
         timeout: float | None = None,
+        system_extra: str | None = None,
     ) -> LLMResponse:
         contents = _to_genai_contents(messages)
-        config = self._build_config(tools, temperature)
+        config = self._build_config(tools, temperature, system_extra)
 
         try:
             response = await asyncio.wait_for(
@@ -175,9 +178,10 @@ class GeminiClient:
         tools: tuple[Any, ...] = (),
         temperature: float | None = None,
         timeout: float | None = None,
+        system_extra: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         contents = _to_genai_contents(messages)
-        config = self._build_config(tools, temperature)
+        config = self._build_config(tools, temperature, system_extra)
         time_budget = timeout or self._default_timeout
 
         # genai's stream is a sync generator — bridge it to an async one via a
@@ -224,9 +228,24 @@ class GeminiClient:
 
     # ── Internals ─────────────────────────────────────────────────────────
 
-    def _build_config(self, tools: tuple[Any, ...], temperature: float | None) -> gt.GenerateContentConfig:
+    def _build_config(
+        self,
+        tools: tuple[Any, ...],
+        temperature: float | None,
+        system_extra: str | None = None,
+    ) -> gt.GenerateContentConfig:
+        # Org-level instructions sit ABOVE our hardcoded SYSTEM_PROMPT so the
+        # base rules ("only use retrieved context", "no fabrication") still
+        # bind. Admins customize tone/scope — they cannot override the rails.
+        system = SYSTEM_PROMPT
+        extra = (system_extra or "").strip()
+        if extra:
+            system = (
+                f"# Organization context\n\n{extra}\n\n"
+                f"---\n\n{SYSTEM_PROMPT}"
+            )
         kwargs: dict[str, Any] = {
-            "system_instruction": SYSTEM_PROMPT,
+            "system_instruction": system,
             "temperature": temperature if temperature is not None else self._default_temperature,
         }
         if tools:

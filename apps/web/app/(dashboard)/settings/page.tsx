@@ -5,19 +5,25 @@ import useSWR from "swr";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
+  ChevronRight,
+  KeyRound,
   Loader2,
   Mail,
   MoreHorizontal,
+  Plug,
   ThumbsDown,
   ThumbsUp,
   Trash2,
   UserMinus,
   UserPlus,
+  Webhook,
 } from "lucide-react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -67,6 +73,36 @@ export default function SettingsPage() {
 
       <TeamCard isAdmin={user?.role === "admin"} currentUserId={user?.id ?? null} />
 
+      <AIInstructionsCard canEdit={user?.role === "admin"} />
+
+      {user?.role === "admin" && (
+        <Card
+          title="Connected systems"
+          description="Bring your team's tools into the brain — and let them call it from outside."
+        >
+          <div className="-mx-1 grid gap-1">
+            <SettingsLink
+              href="/settings/integrations"
+              icon={<Plug className="h-4 w-4" />}
+              title="Integrations"
+              description="Google Drive, Notion, Email forward-to-brain, Slack bot"
+            />
+            <SettingsLink
+              href="/settings/webhooks"
+              icon={<Webhook className="h-4 w-4" />}
+              title="Webhooks"
+              description="Notify external systems when documents or queries complete"
+            />
+            <SettingsLink
+              href="/settings/api"
+              icon={<KeyRound className="h-4 w-4" />}
+              title="API keys"
+              description="Programmatic access to the Developer API"
+            />
+          </div>
+        </Card>
+      )}
+
       {user?.role === "admin" && <FeedbackSignalCard />}
 
       <ProfileCard
@@ -77,6 +113,34 @@ export default function SettingsPage() {
 
       <DangerZoneCard organizationName={organization?.name ?? ""} />
     </div>
+  );
+}
+
+function SettingsLink({
+  href,
+  icon,
+  title,
+  description,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="flex items-center gap-3 rounded-md px-2 py-2.5 text-sm hover:bg-muted"
+    >
+      <div className="grid h-7 w-7 shrink-0 place-items-center rounded bg-muted text-muted-foreground">
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-foreground">{title}</p>
+        <p className="text-xs text-muted-foreground">{description}</p>
+      </div>
+      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+    </Link>
   );
 }
 
@@ -722,6 +786,135 @@ function Stat({
     </div>
   );
 }
+
+// ── AI Instructions (Day 9 / #67) ───────────────────────────────────────────
+
+const AI_INSTRUCTIONS_MAX = 500;
+
+function AIInstructionsCard({ canEdit }: { canEdit: boolean }) {
+  const { data, error, isLoading, mutate } = useSWR<{ ai_instructions: string }>(
+    "/api/organizations/me/ai-settings",
+    jsonFetcher,
+    { revalidateOnFocus: false },
+  );
+
+  const initial = data?.ai_instructions ?? "";
+  const [value, setValue] = useState(initial);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setValue(initial);
+  }, [initial]);
+
+  const trimmed = value.trim();
+  const dirty = trimmed !== initial.trim();
+  const overLimit = trimmed.length > AI_INSTRUCTIONS_MAX;
+
+  const save = async () => {
+    if (overLimit) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/organizations/me/ai-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ai_instructions: trimmed || null }),
+      }).catch((err) => {
+        throw networkError(err);
+      });
+      if (!res.ok) throw await parseApiError(res);
+      toast.success(
+        trimmed ? "AI instructions saved." : "AI instructions cleared.",
+      );
+      await mutate();
+    } catch (err) {
+      reportApiError(err as Awaited<ReturnType<typeof parseApiError>>);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const clear = async () => {
+    setValue("");
+    if (!initial) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/organizations/me/ai-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ai_instructions: null }),
+      });
+      if (!res.ok) throw await parseApiError(res);
+      toast.success("AI instructions cleared.");
+      await mutate();
+    } catch (err) {
+      reportApiError(err as Awaited<ReturnType<typeof parseApiError>>);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card
+      title="AI instructions"
+      description={
+        canEdit
+          ? "Context prepended to every AI response. Use it to describe your company, set tone guidelines, or specify things the AI should never mention."
+          : "Org-wide context the AI uses on every response. Only workspace admins can change this."
+      }
+    >
+      {isLoading ? (
+        <Skeleton className="h-24" />
+      ) : error ? (
+        <p className="text-sm text-destructive">
+          Couldn&apos;t load AI instructions. Try again later.
+        </p>
+      ) : (
+        <>
+          <div className="grid gap-1.5">
+            <Textarea
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder="We're a B2B SaaS for accounting firms. Tone is formal but approachable. Never mention competitor pricing."
+              rows={5}
+              maxLength={AI_INSTRUCTIONS_MAX + 50}
+              disabled={!canEdit || saving}
+            />
+            <div className="flex items-center justify-between text-[11px]">
+              <p className="text-muted-foreground">
+                Leave empty to clear. Applies to every chat in this workspace.
+              </p>
+              <p
+                className={
+                  overLimit
+                    ? "font-medium text-destructive tabular-nums"
+                    : "text-muted-foreground tabular-nums"
+                }
+              >
+                {trimmed.length}/{AI_INSTRUCTIONS_MAX}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            {initial && canEdit && (
+              <Button variant="ghost" onClick={clear} disabled={saving}>
+                Clear
+              </Button>
+            )}
+            <Button
+              onClick={save}
+              disabled={!canEdit || !dirty || saving || overLimit}
+            >
+              {saving && <Loader2 className="animate-spin" />}
+              Save instructions
+            </Button>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 
 // ── Danger zone ─────────────────────────────────────────────────────────────
 

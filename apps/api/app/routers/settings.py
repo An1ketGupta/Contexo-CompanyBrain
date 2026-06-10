@@ -47,6 +47,14 @@ class UpdateOrganizationRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=80)
 
 
+class UpdateOrgSettingsRequest(BaseModel):
+    # `None` clears any existing value; empty string is treated the same as None.
+    # 500-char cap mirrors org_config.INSTRUCTIONS_MAX_CHARS — keep the two in sync
+    # if you change it. The text rides inside the LLM system prompt on every turn,
+    # so length directly costs us tokens.
+    ai_instructions: str | None = Field(default=None, max_length=500)
+
+
 class UpdateProfileRequest(BaseModel):
     display_name: str = Field(..., min_length=1, max_length=80)
 
@@ -99,6 +107,76 @@ async def update_organization(
             detail="Workspace not found.",
         )
     return {"organization": result.data[0]}
+
+
+# ── Org-wide AI settings (Day 9 / #67) ────────────────────────────────────────
+
+
+@router.get("/organizations/me/ai-settings")
+async def get_org_ai_settings(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    user_id, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+    result = await asyncio.to_thread(
+        lambda: client.table("organizations")
+        .select("ai_instructions")
+        .eq("id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not result or not result.data:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    return {"ai_instructions": result.data.get("ai_instructions") or ""}
+
+
+@router.patch("/organizations/me/ai-settings")
+async def update_org_ai_settings(
+    body: UpdateOrgSettingsRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Admin-only. Set or clear the per-org AI instructions prepended to the
+    LLM system prompt on every chat turn.
+
+    Invalidates the in-process org_config cache for this process — other
+    worker processes pick up the change within the cache TTL (~60s).
+    """
+    user_id, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+
+    me = await asyncio.to_thread(
+        lambda: client.table("users")
+        .select("role")
+        .eq("id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not me.data or me.data.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workspace admins can change AI settings.",
+        )
+
+    cleaned: str | None
+    raw = (body.ai_instructions or "").strip()
+    cleaned = raw or None  # treat blank as a clear
+
+    result = await asyncio.to_thread(
+        lambda: client.table("organizations")
+        .update({"ai_instructions": cleaned})
+        .eq("id", org_id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+
+    # Invalidate the cache so this worker picks the change up on the very
+    # next chat call. Other workers age out via TTL.
+    from app.services.org_config import invalidate
+
+    invalidate(org_id)
+
+    return {"ai_instructions": cleaned or ""}
 
 
 # ── User profile ──────────────────────────────────────────────────────────────
@@ -264,6 +342,81 @@ async def admin_feedback_stats(
         "unrated": unrated,
         "total": positive + negative + unrated,
     }
+
+
+# ── API keys (Day 15 / #47) ──────────────────────────────────────────────────
+
+class CreateApiKeyBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    scope: str = Field(default="org", pattern="^(org|user)$")
+
+
+@router.get("/settings/api-keys")
+async def list_api_keys(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    user_id, org_id, token = _require_user(current_user)
+    # Members can see keys but only admins can create/revoke. Visibility is
+    # safe because we never expose key_hash or anything reversible.
+    from app.services.api_keys import list_keys
+    keys = await list_keys(org_id=org_id)
+    return {"keys": keys}
+
+
+@router.post("/settings/api-keys", status_code=status.HTTP_201_CREATED)
+async def create_api_key(
+    body: CreateApiKeyBody,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    user_id, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+    me = await asyncio.to_thread(
+        lambda: client.table("users").select("role").eq("id", user_id).maybe_single().execute()
+    )
+    if not me or not me.data or me.data.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workspace admins can create API keys.",
+        )
+
+    cleaned = " ".join(body.name.split()).strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Name cannot be empty.")
+
+    from app.services.api_keys import create_key
+    issued = await create_key(
+        org_id=org_id, user_id=user_id, name=cleaned, scope=body.scope
+    )
+    # The full key leaves the server here and never again.
+    return {
+        "id": issued.id,
+        "name": issued.name,
+        "scope": issued.scope,
+        "key": issued.full_key,
+        "key_prefix": issued.key_prefix,
+        "created_at": issued.created_at,
+    }
+
+
+@router.delete("/settings/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_api_key(
+    key_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> None:
+    user_id, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+    me = await asyncio.to_thread(
+        lambda: client.table("users").select("role").eq("id", user_id).maybe_single().execute()
+    )
+    if not me or not me.data or me.data.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workspace admins can revoke API keys.",
+        )
+    from app.services.api_keys import revoke_key
+    ok = await revoke_key(org_id=org_id, key_id=key_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Key not found or already revoked.")
 
 
 async def _wipe_org_storage(svc, org_id: str) -> None:

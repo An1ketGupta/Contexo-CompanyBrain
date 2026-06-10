@@ -26,11 +26,20 @@ const fetcher = async (url: string): Promise<ConversationsResponse> => {
   return res.json();
 };
 
-export function useConversations() {
+export function useConversations(query?: string) {
+  const trimmed = (query ?? "").trim();
+  const url = trimmed
+    ? `/api/chat/conversations?q=${encodeURIComponent(trimmed)}`
+    : "/api/chat/conversations";
   const { data, error, isLoading, mutate } = useSWR<ConversationsResponse, ApiError>(
-    "/api/chat/conversations",
+    url,
     fetcher,
-    { revalidateOnFocus: true },
+    {
+      revalidateOnFocus: true,
+      // Keep the last result while a new search is in flight so the sidebar
+      // doesn't flash empty between keystrokes.
+      keepPreviousData: true,
+    },
   );
 
   const conversations = data?.conversations ?? [];

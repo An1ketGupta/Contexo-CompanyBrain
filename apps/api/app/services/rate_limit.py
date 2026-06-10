@@ -22,6 +22,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Literal
 
 import httpx
 
@@ -209,6 +210,61 @@ async def _monthly_check_and_increment(
 
     return MonthlyCounterResult(
         allowed=True, used=used, limit=limit, seconds_until_reset=ttl
+    )
+
+
+# ── Read-only usage probe (powers the sidebar meter) ─────────────────────────
+
+
+@dataclass(frozen=True)
+class UsageSnapshot:
+    """Read-only view of the current month's chat quota for an org.
+
+    `limit=None` → unlimited (business plan). `source="redis"` when the count
+    came from Upstash; `"local"` when Upstash was unreachable and we returned
+    a best-effort zero so the UI still renders.
+    """
+
+    plan: str
+    used: int
+    limit: int | None
+    seconds_until_reset: int
+    source: Literal["redis", "local"]
+
+
+async def get_usage_snapshot(org_id: str) -> UsageSnapshot:
+    """Read the live monthly counter without incrementing it.
+
+    Shares the same Upstash key as the limiter (`quota:chat:{org}:{YYYYMM}`)
+    so the meter never disagrees with the gate that actually enforces the
+    plan. If Upstash is down, we surface `source="local"` and a zero count
+    rather than failing — the UI degrades to a placeholder, but the user
+    still sees their plan and reset window.
+    """
+    plan = await get_org_plan(org_id)
+    limit = monthly_budget_for(plan)
+    ttl = _seconds_until_next_month()
+
+    client = await _upstash()
+    if client is None:
+        return UsageSnapshot(
+            plan=plan, used=0, limit=limit, seconds_until_reset=ttl, source="local"
+        )
+
+    key = f"quota:chat:{org_id}:{_month_key()}"
+    try:
+        resp = await client.post("/", json=["GET", key])
+        resp.raise_for_status()
+        result = resp.json().get("result")
+        used = int(result) if result is not None else 0
+    except Exception as exc:
+        log.warning("usage_snapshot_upstash_failed", org_id=org_id, error=str(exc))
+        return UsageSnapshot(
+            plan=plan, used=0, limit=limit, seconds_until_reset=ttl, source="local"
+        )
+
+    return UsageSnapshot(
+        plan=plan, used=used, limit=limit, seconds_until_reset=ttl, source="redis"
     )
 
 

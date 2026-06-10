@@ -22,6 +22,7 @@ EventType = Literal[
     "quota_warning",
     "quota_exceeded",
     "weekly_digest",
+    "knowledge_refresh",
 ]
 
 

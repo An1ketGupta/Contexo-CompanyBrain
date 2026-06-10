@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Brain } from "lucide-react";
 import { SidebarNav } from "./sidebar-nav";
 import { UserMenu } from "./user-menu";
+import { QuotaMeter } from "./quota-meter";
 import { useCurrentUser } from "@/hooks/use-user";
 
 export function Sidebar() {
@@ -24,6 +25,8 @@ export function Sidebar() {
       <div className="flex-1 overflow-y-auto py-2">
         <SidebarNav />
       </div>
+
+      <QuotaMeter />
 
       <div className="border-t border-border p-2">
         <UserMenu user={user} organization={organization} />

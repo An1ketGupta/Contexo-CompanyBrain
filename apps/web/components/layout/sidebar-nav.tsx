@@ -2,18 +2,22 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FileText, MessageSquare, Settings } from "lucide-react";
+import { FileText, LineChart, MessageSquare, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useCurrentUser } from "@/hooks/use-user";
 
 interface NavItem {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
+  /** Admin-only items hide for member roles. */
+  adminOnly?: boolean;
 }
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/documents", label: "Documents", icon: FileText },
+  { href: "/insights", label: "Insights", icon: LineChart, adminOnly: true },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -23,10 +27,13 @@ interface SidebarNavProps {
 
 export function SidebarNav({ onNavigate }: SidebarNavProps) {
   const pathname = usePathname();
+  const { user } = useCurrentUser();
+  const isAdmin = user?.role === "admin";
 
   return (
     <nav className="flex flex-col gap-1 px-3 py-2">
       {NAV_ITEMS.map((item) => {
+        if (item.adminOnly && !isAdmin) return null;
         const isActive =
           pathname === item.href || pathname.startsWith(`${item.href}/`);
         const Icon = item.icon;

@@ -1,18 +1,13 @@
-"""Inngest function: process an uploaded document end-to-end.
+"""Inngest functions: ingest a fresh document, or retry only its failed chunks.
 
-Step layout (status transitions are fine-grained for dashboard visibility; the
-heavy ingest work is one step because Inngest caps step output at ~4MB JSON and
-file bytes + chunk lists exceed that):
+`process-document` (doc/uploaded): full pipeline.
+`retry-failed-chunks` (doc/retry-chunks): targeted re-embed of `failed` chunks.
 
-    mark-processing      -> documents.status = 'processing'
-    ingest               -> download + parse + chunk + embed + persist
-                            (idempotent; embedder has tenacity retries internally)
-    mark-ready | mark-failed
-
-If `ingest` raises an unexpected error, Inngest retries the step up to 3 times
-with backoff. On final failure, the `on_failure` handler marks the doc failed.
-Expected business errors (e.g. EmptyDocumentError, ParseError) are caught
-inside `_try_ingest` and reported as a `failed` result without triggering retry.
+Outcome mapping for `process-document`:
+    embedded > 0, failed == 0   → status = ready
+    embedded > 0, failed > 0    → status = ready, metadata.embedding = {…}
+                                  (the UI surfaces the partial banner from this)
+    embedded == 0               → status = failed
 """
 from __future__ import annotations
 
@@ -26,7 +21,10 @@ from app.services.ingestion import (
     download_from_storage,
     mark_status,
     process_document as run_pipeline,
+    reembed_failed_chunks,
 )
+from app.services.summarization import summarize_conversation
+from app.services.webhooks import trigger_event as trigger_webhook_event
 
 from .client import get_inngest_client
 
@@ -84,24 +82,197 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
     )
 
     if result["status"] == "ok":
-        chunk_count = result["chunk_count"]
-        await step.run(
-            "mark-ready",
-            lambda: mark_status(doc_id, "ready", chunk_count=chunk_count),
-        )
-        # Notify the uploader. Idempotent via dedupe_key=doc_id so a retried
-        # Inngest run never produces a duplicate email.
-        await step.run(
-            "notify-document-ready",
-            lambda: _notify_document_ready(doc_id=doc_id, chunk_count=chunk_count),
-        )
+        embedded = int(result["embedded"])
+        failed = int(result["failed"])
+        total = int(result["chunk_count"])
+        # Even a single failed chunk is worth surfacing — fold the per-chunk
+        # tally into metadata.embedding so the documents UI can render the
+        # partial badge without a second round-trip.
+        if embedded == 0:
+            await step.run(
+                "mark-failed",
+                lambda: mark_status(
+                    doc_id,
+                    "failed",
+                    error_reason="All chunks failed to embed. Check upstream LLM provider.",
+                    embedding_stats={"embedded": 0, "failed": failed, "total": total},
+                ),
+            )
+            await step.run(
+                "webhook-document-failed",
+                lambda: _fire_doc_webhook(
+                    org_id=org_id, doc_id=doc_id, event="document.failed",
+                    error="All chunks failed to embed.",
+                ),
+            )
+        else:
+            stats = {"embedded": embedded, "failed": failed, "total": total} if failed else None
+            await step.run(
+                "mark-ready",
+                lambda s=stats: mark_status(
+                    doc_id, "ready", chunk_count=total, embedding_stats=s,
+                ),
+            )
+            await step.run(
+                "notify-document-ready",
+                lambda: _notify_document_ready(doc_id=doc_id, chunk_count=embedded),
+            )
+            await step.run(
+                "webhook-document-processed",
+                lambda e=embedded, t=total: _fire_doc_webhook(
+                    org_id=org_id, doc_id=doc_id, event="document.processed",
+                    chunks_embedded=e, chunks_total=t,
+                ),
+            )
     else:
         await step.run(
             "mark-failed",
             lambda: mark_status(doc_id, "failed", error_reason=result["error"]),
         )
+        await step.run(
+            "webhook-document-failed",
+            lambda r=result: _fire_doc_webhook(
+                org_id=org_id, doc_id=doc_id, event="document.failed",
+                error=r.get("error", "ingestion failed"),
+            ),
+        )
 
     return result
+
+
+@_inngest_client.create_function(
+    fn_id="retry-failed-chunks",
+    trigger=inngest.TriggerEvent(event="doc/retry-chunks"),
+    retries=2,
+    concurrency=[
+        inngest.Concurrency(
+            limit=3,
+            key="event.data.org_id",
+            scope="fn",
+        ),
+    ],
+)
+async def retry_failed_chunks(ctx: inngest.Context) -> dict[str, Any]:
+    step = ctx.step
+    data = ctx.event.data
+    doc_id: str = data["doc_id"]
+    org_id: str = data["org_id"]
+
+    log.info("[inngest] retry-failed-chunks doc=%s", doc_id)
+
+    result = await step.run(
+        "retry",
+        lambda: _try_retry(doc_id=doc_id, org_id=org_id),
+    )
+
+    if result["status"] == "ok":
+        # Fetch the current chunks tally to compute the new partial state.
+        stats = await step.run(
+            "refresh-status",
+            lambda: _refresh_after_retry(doc_id=doc_id),
+        )
+        return {"status": "ok", **stats}
+
+    return result
+
+
+async def _refresh_after_retry(*, doc_id: str) -> dict[str, Any]:
+    """Recompute embedded/failed/total from chunks table and update status."""
+    from app.database import get_service_client
+    import asyncio as _asyncio
+
+    svc = get_service_client()
+    rows = await _asyncio.to_thread(
+        lambda: svc.table("chunks")
+        .select("embedding_status")
+        .eq("document_id", doc_id)
+        .execute()
+    )
+    statuses = [r["embedding_status"] for r in rows.data or []]
+    total = len(statuses)
+    embedded = sum(1 for s in statuses if s == "embedded")
+    failed = sum(1 for s in statuses if s == "failed")
+
+    if total == 0:
+        return {"total": 0, "embedded": 0, "failed": 0}
+
+    if embedded == 0:
+        await mark_status(
+            doc_id,
+            "failed",
+            error_reason="All chunks failed to embed after retry.",
+            embedding_stats={"embedded": 0, "failed": failed, "total": total},
+        )
+    else:
+        stats = {"embedded": embedded, "failed": failed, "total": total} if failed else None
+        await mark_status(doc_id, "ready", chunk_count=total, embedding_stats=stats)
+
+    return {"total": total, "embedded": embedded, "failed": failed}
+
+
+async def _try_retry(*, doc_id: str, org_id: str) -> dict[str, Any]:
+    try:
+        stats = await reembed_failed_chunks(doc_id=doc_id, org_id=org_id)
+        return {
+            "status": "ok",
+            "chunk_count": stats.chunk_count,
+            "embedded": stats.embedded,
+            "failed": stats.failed,
+        }
+    except PipelineError as exc:
+        return {"status": "failed", "error": str(exc)}
+
+
+async def _fire_doc_webhook(
+    *,
+    org_id: str,
+    doc_id: str,
+    event: str,
+    chunks_embedded: int | None = None,
+    chunks_total: int | None = None,
+    error: str | None = None,
+) -> None:
+    """Best-effort document lifecycle webhook fan-out.
+
+    We resolve the doc name here so receivers don't have to make a follow-up
+    API call to get a human-readable identifier in their own dashboards.
+    """
+    from app.database import get_service_client
+    import asyncio as _asyncio
+
+    svc = get_service_client()
+    name: str | None = None
+    file_type: str | None = None
+    try:
+        doc = await _asyncio.to_thread(
+            lambda: svc.table("documents")
+            .select("name, file_type")
+            .eq("id", doc_id)
+            .maybe_single()
+            .execute()
+        )
+        if doc and doc.data:
+            name = doc.data.get("name")
+            file_type = doc.data.get("file_type")
+    except Exception:
+        pass
+
+    payload: dict[str, Any] = {
+        "document_id": doc_id,
+        "name": name,
+        "file_type": file_type,
+    }
+    if chunks_embedded is not None:
+        payload["chunks_embedded"] = chunks_embedded
+    if chunks_total is not None:
+        payload["chunks_total"] = chunks_total
+    if error:
+        payload["error"] = error
+
+    try:
+        await trigger_webhook_event(org_id=org_id, event=event, payload=payload)
+    except Exception as exc:
+        log.warning("[inngest] webhook fire failed: event=%s err=%s", event, exc)
 
 
 async def _notify_document_ready(*, doc_id: str, chunk_count: int) -> None:
@@ -167,10 +338,38 @@ async def _try_ingest(
             file_bytes=file_bytes,
             file_type=file_type,
         )
-        return {"status": "ok", **stats}
+        return {
+            "status": "ok",
+            "chunk_count": stats.chunk_count,
+            "embedded": stats.embedded,
+            "failed": stats.failed,
+            "total_tokens": stats.total_tokens,
+        }
     except PipelineError as exc:
         # Known business failure — record it, don't retry.
         return {"status": "failed", "error": str(exc)}
 
 
-FUNCTIONS: list = [process_document]
+@_inngest_client.create_function(
+    fn_id="summarize-conversation",
+    trigger=inngest.TriggerEvent(event="conversation/turn-saved"),
+    retries=1,
+    # Bound concurrency per org so a runaway tab doesn't fan us out.
+    concurrency=[
+        inngest.Concurrency(limit=2, key="event.data.org_id", scope="fn"),
+    ],
+)
+async def summarize_conversation_fn(ctx: inngest.Context) -> dict[str, Any]:
+    """Best-effort: tail of every assistant turn. summarize_conversation()
+    is idempotent and short-circuits when no refresh is needed, so the cost
+    of a no-op invocation is one PostgREST round trip."""
+    data = ctx.event.data
+    conversation_id: str = data["conversation_id"]
+    result = await ctx.step.run(
+        "summarize",
+        lambda: summarize_conversation(conversation_id=conversation_id),
+    )
+    return result
+
+
+FUNCTIONS: list = [process_document, retry_failed_chunks, summarize_conversation_fn]

@@ -1,31 +1,49 @@
 "use client";
 
+import { useState } from "react";
 import { FileText } from "lucide-react";
 import { UploadDialog } from "@/components/documents/upload-dialog";
 import { DocumentTable } from "@/components/documents/document-table";
+import { DocumentFiltersBar } from "@/components/documents/document-filters";
+import { BulkActionBar } from "@/components/documents/bulk-action-bar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useDocuments } from "@/hooks/use-documents";
+import {
+  DEFAULT_FILTERS,
+  isFiltering,
+  useDocuments,
+  type DocumentFilters,
+} from "@/hooks/use-documents";
 import { useDocumentsRealtime } from "@/hooks/use-documents-realtime";
 
 export default function DocumentsPage() {
+  const [filters, setFilters] = useState<DocumentFilters>(DEFAULT_FILTERS);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
   const {
     documents,
+    total,
     loading,
     error,
     refresh,
     deleteDocument,
+    bulkDelete,
+    bulkAddTags,
+    updateTags,
     upsertDocument,
     removeDocument,
     retryDocument,
-  } = useDocuments();
+  } = useDocuments(filters);
 
   useDocumentsRealtime({
     onUpsert: upsertDocument,
     onRemove: removeDocument,
   });
 
+  const filtering = isFiltering(filters);
+  const isEmpty = !loading && !error && documents.length === 0;
+
   return (
-    <div className="mx-auto max-w-5xl p-6 md:p-8">
+    <div className="mx-auto max-w-6xl p-6 md:p-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-foreground">
@@ -38,17 +56,34 @@ export default function DocumentsPage() {
         <UploadDialog onUploadComplete={refresh} />
       </div>
 
-      {loading ? (
+      <DocumentFiltersBar
+        filters={filters}
+        onChange={setFilters}
+        totalShown={documents.length}
+        totalAvailable={total}
+      />
+
+      <BulkActionBar
+        selectedIds={selectedIds}
+        onClear={() => setSelectedIds(new Set())}
+        onBulkDelete={bulkDelete}
+        onBulkAddTags={bulkAddTags}
+      />
+
+      {loading && documents.length === 0 ? (
         <TableSkeleton />
       ) : error ? (
         <ErrorState message={error} onRetry={refresh} />
-      ) : documents.length === 0 ? (
-        <EmptyState />
+      ) : isEmpty ? (
+        filtering ? <NoMatchesState onClear={() => setFilters(DEFAULT_FILTERS)} /> : <EmptyState />
       ) : (
         <DocumentTable
           documents={documents}
+          selectedIds={selectedIds}
+          onSelectionChange={setSelectedIds}
           onDelete={deleteDocument}
           onRetry={retryDocument}
+          onUpdateTags={updateTags}
         />
       )}
     </div>
@@ -91,6 +126,23 @@ function EmptyState() {
         Upload a PDF, DOCX, TXT, or MD file. Once processed, your AI will use it
         as context for every task.
       </p>
+    </div>
+  );
+}
+
+function NoMatchesState({ onClear }: { onClear: () => void }) {
+  return (
+    <div className="rounded-lg border border-dashed border-border bg-background px-6 py-12 text-center">
+      <h2 className="text-base font-semibold text-foreground">No matches</h2>
+      <p className="mx-auto mt-1 max-w-xs text-sm text-muted-foreground">
+        No documents match the current filters.
+      </p>
+      <button
+        onClick={onClear}
+        className="mt-3 text-sm font-medium text-primary hover:underline"
+      >
+        Clear filters
+      </button>
     </div>
   );
 }

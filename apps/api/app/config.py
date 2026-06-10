@@ -110,6 +110,40 @@ class Settings(BaseSettings):
     rate_limit_chat_monthly_starter: int = 500
     rate_limit_chat_monthly_growth: int = 2_500
 
+    # Per-API-key/minute on the public /v1 endpoints. Tighter than the per-user
+    # cap because automation can burn through quotas in seconds.
+    rate_limit_api_per_key_per_minute: int = 60
+
+    # ── Day-14 integrations: OAuth credentials ─────────────────────────────
+    # Google Drive — see https://console.cloud.google.com/apis/credentials.
+    # Empty in dev disables the Drive UI card + skips the polling cron.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_oauth_redirect_uri: str = "http://localhost:8000/integrations/drive/callback"
+
+    # Notion — create an integration at https://notion.so/my-integrations
+    # and a public OAuth app under "Settings → OAuth Domain & URIs".
+    notion_client_id: str = ""
+    notion_client_secret: str = ""
+    notion_oauth_redirect_uri: str = "http://localhost:8000/integrations/notion/callback"
+
+    # Email-forward inbound (Resend Inbound or Mailgun routes). The
+    # signing-secret is used to verify webhook authenticity. The base domain
+    # is the suffix orgs see (brain-<slug>@inbound.<domain>).
+    inbound_email_domain: str = "inbound.nirnayaiq.com"
+    inbound_email_webhook_secret: str = ""
+
+    # ── Day-15 Slack bot ─────────────────────────────────────────────────────
+    slack_client_id: str = ""
+    slack_client_secret: str = ""
+    slack_signing_secret: str = ""
+    slack_oauth_redirect_uri: str = "http://localhost:8000/integrations/slack/callback"
+
+    # JWT signing secret for OAuth state round-trips (any OAuth that needs to
+    # round-trip a user id through a third party — Slack, Drive, Notion).
+    # Distinct from internal_email_secret to limit blast radius if either leaks.
+    oauth_state_secret: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:
