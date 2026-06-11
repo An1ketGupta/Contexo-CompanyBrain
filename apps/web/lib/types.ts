@@ -31,6 +31,12 @@ export interface User {
   created_at: string;
 }
 
+export type DocumentHealthLabel =
+  | "healthy"
+  | "stale"
+  | "at_risk"
+  | "unused";
+
 export interface Document {
   id: string;
   org_id: string;
@@ -44,6 +50,10 @@ export interface Document {
   created_by: string | null;
   created_at: string;
   tags?: string[];
+  // V4 #34
+  health_score?: number | null;
+  health_label?: DocumentHealthLabel | null;
+  last_accessed_at?: string | null;
 }
 
 export interface DocumentTag {
@@ -103,8 +113,15 @@ export interface MessageConfidence {
   n: number;
 }
 
+export type QueryIntent =
+  | "factual_qa"
+  | "task_generation"
+  | "analysis"
+  | "search";
+
 export interface MessageMetadata {
   confidence?: MessageConfidence;
+  intent?: QueryIntent;
 }
 
 export interface Message {
@@ -119,10 +136,16 @@ export interface Message {
   created_at: string;
 }
 
-// SSE event types emitted by POST /chat/stream. Shape mirrors what
-// app/api/routers/chat.py:_event_to_payload sends on the wire.
+// SSE event types emitted by POST /chat/stream and POST /chat/messages/{id}/regenerate.
+// Shape mirrors what app/api/routers/chat.py:_event_to_payload sends on the wire.
 export type ChatStreamEvent =
-  | { type: "start"; conversation_id: string }
+  | {
+      type: "start";
+      conversation_id: string;
+      parent_user_message_id?: string;
+      branch_index?: number;
+    }
+  | { type: "intent"; intent: QueryIntent }
   | { type: "searching"; query: string }
   | { type: "searched"; query: string; hit_count: number }
   | { type: "sources"; sources: MessageSource[] }
@@ -134,5 +157,66 @@ export type ChatStreamEvent =
       score: number;
       chunks_considered: number;
     }
-  | { type: "done"; message_id: string; tool_calls: number }
+  | {
+      type: "done";
+      message_id: string;
+      tool_calls: number;
+      parent_user_message_id?: string;
+      branch_index?: number;
+      total_branches?: number;
+    }
   | { type: "error"; message: string };
+
+// ── V3 Day 1: empty-state banner + onboarding checklist ──────────────────────
+
+export interface DocumentStatusSummary {
+  total: number;
+  ready: number;
+  processing: number;
+  failed: number;
+  has_ready: boolean;
+}
+
+export interface OnboardingState {
+  workspace_created: boolean;
+  first_doc_uploaded: boolean;
+  first_question_asked: boolean;
+  completed: boolean;
+  dismissed: boolean;
+}
+
+// ── V3 Day 2: prompt template library ────────────────────────────────────────
+
+export type TemplateCategory =
+  | "Email"
+  | "Job Description"
+  | "Announcement"
+  | "Policy Q&A"
+  | "Meeting Prep"
+  | "Customer Response"
+  | "Slack Reply"
+  | "Other";
+
+export interface TemplateVariable {
+  name: string;
+  label: string;
+  placeholder: string;
+  required: boolean;
+}
+
+export interface PromptTemplate {
+  id: string;
+  title: string;
+  description: string | null;
+  template_text: string;
+  category: TemplateCategory;
+  is_shared: boolean;
+  is_builtin: boolean;
+  use_count: number;
+  // V4 #70 — {{variable}} definitions.
+  variables: TemplateVariable[];
+  org_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
