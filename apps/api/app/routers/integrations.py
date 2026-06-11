@@ -120,7 +120,7 @@ async def integrations_status(
     settings = get_settings()
     client = get_user_client(token)
 
-    drive_row, notion_row, inbound = await asyncio.gather(
+    drive_row, notion_row, slack_row, inbound = await asyncio.gather(
         asyncio.to_thread(
             lambda: client.table("drive_integrations")
             .select("folder_ids, last_synced_at, created_at")
@@ -129,6 +129,11 @@ async def integrations_status(
         asyncio.to_thread(
             lambda: client.table("notion_integrations")
             .select("workspace_name, selected_pages, last_synced_at, created_at")
+            .maybe_single().execute()
+        ),
+        asyncio.to_thread(
+            lambda: client.table("slack_integrations")
+            .select("slack_team_name, installed_at")
             .maybe_single().execute()
         ),
         email_forward.get_inbound_address(org_id=org_id),
@@ -151,6 +156,12 @@ async def integrations_status(
         "email": {
             "available": bool(settings.inbound_email_domain),
             "address": inbound,
+        },
+        "slack": {
+            "available": bool(settings.slack_client_id),
+            "connected": bool(slack_row and slack_row.data),
+            "workspace_name": (slack_row.data or {}).get("slack_team_name") if slack_row else None,
+            "installed_at": (slack_row.data or {}).get("installed_at") if slack_row else None,
         },
     }
 
