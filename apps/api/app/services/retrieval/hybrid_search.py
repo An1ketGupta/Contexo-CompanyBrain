@@ -148,9 +148,16 @@ class HybridRetriever(Retriever):
         client: Client,
         k: int = DEFAULT_FINAL_K,
         document_id: str | None = None,
+        document_ids: list[str] | None = None,
     ) -> list[SearchHit]:
         query = query.strip()
         if not query:
+            return []
+        # If a tag scope resolved to zero docs there's nothing to retrieve —
+        # save both RPC round-trips. We propagate this to the inner retrievers
+        # too so they no-op consistently, but checking here keeps the gather
+        # call from spinning up tasks for an inevitable empty result.
+        if document_ids is not None and len(document_ids) == 0:
             return []
 
         vector_task = self.vector.search(
@@ -159,6 +166,7 @@ class HybridRetriever(Retriever):
             client=client,
             k=self._branch_k,
             document_id=document_id,
+            document_ids=document_ids,
         )
         fts_task = self.fts.search(
             query=query,
@@ -166,6 +174,7 @@ class HybridRetriever(Retriever):
             client=client,
             k=self._branch_k,
             document_id=document_id,
+            document_ids=document_ids,
         )
 
         # return_exceptions: a transient failure in one branch shouldn't
@@ -257,6 +266,7 @@ async def hybrid_search(
     *,
     k: int = DEFAULT_FINAL_K,
     document_id: str | None = None,
+    document_ids: list[str] | None = None,
 ) -> list[SearchHit]:
     """Convenience wrapper around the default hybrid retriever."""
     return await get_hybrid_retriever().search(
@@ -265,4 +275,5 @@ async def hybrid_search(
         client=client,
         k=k,
         document_id=document_id,
+        document_ids=document_ids,
     )

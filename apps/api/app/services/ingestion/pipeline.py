@@ -67,6 +67,7 @@ async def process_document(
     file_bytes: bytes,
     file_type: str,
     client: Client | None = None,
+    document_version_id: str | None = None,
 ) -> ProcessStats:
     """Run the full pipeline. Returns stats. Raises PipelineError on hard failure."""
     client = client or get_service_client()
@@ -82,7 +83,11 @@ async def process_document(
             raise PipelineError("Document yielded no chunks after splitting.")
 
         persisted = await persist_chunks_pending(
-            chunks, doc_id=doc_id, org_id=org_id, client=client
+            chunks,
+            doc_id=doc_id,
+            org_id=org_id,
+            client=client,
+            document_version_id=document_version_id,
         )
         log.info("[%s] persisted %d pending chunks", doc_id, len(persisted))
 

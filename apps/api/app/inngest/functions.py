@@ -23,6 +23,8 @@ from app.services.ingestion import (
     process_document as run_pipeline,
     reembed_failed_chunks,
 )
+from app.database import get_service_client
+from app.services.health_score import recompute_org_health
 from app.services.summarization import summarize_conversation
 from app.services.webhooks import trigger_event as trigger_webhook_event
 
@@ -66,8 +68,11 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
     org_id: str = data["org_id"]
     file_path: str = data["file_path"]
     file_type: str = data["file_type"]
+    # V4 #68 — present when this run is processing a new document version.
+    # NULL for first-time uploads (no version row exists for legacy docs).
+    version_id: str | None = data.get("version_id")
 
-    log.info("[inngest] process-document doc=%s org=%s path=%s", doc_id, org_id, file_path)
+    log.info("[inngest] process-document doc=%s org=%s path=%s version=%s", doc_id, org_id, file_path, version_id)
 
     await step.run("mark-processing", lambda: mark_status(doc_id, "processing"))
 
@@ -78,6 +83,7 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
             org_id=org_id,
             file_path=file_path,
             file_type=file_type,
+            version_id=version_id,
         ),
     )
 
@@ -113,10 +119,17 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
                     doc_id, "ready", chunk_count=total, embedding_stats=s,
                 ),
             )
+            # Newly-ready doc may shift coverage. Drop the cache eagerly so the
+            # admin Coverage page reflects this upload without waiting on TTL.
             await step.run(
-                "notify-document-ready",
-                lambda: _notify_document_ready(doc_id=doc_id, chunk_count=embedded),
+                "invalidate-coverage-cache",
+                lambda: _invalidate_coverage(org_id=org_id),
             )
+            # Disabled: using browser notifications instead (placeholder for later)
+            # await step.run(
+            #     "notify-document-ready",
+            #     lambda: _notify_document_ready(doc_id=doc_id, chunk_count=embedded),
+            # )
             await step.run(
                 "webhook-document-processed",
                 lambda e=embedded, t=total: _fire_doc_webhook(
@@ -169,14 +182,14 @@ async def retry_failed_chunks(ctx: inngest.Context) -> dict[str, Any]:
         # Fetch the current chunks tally to compute the new partial state.
         stats = await step.run(
             "refresh-status",
-            lambda: _refresh_after_retry(doc_id=doc_id),
+            lambda: _refresh_after_retry(doc_id=doc_id, org_id=org_id),
         )
         return {"status": "ok", **stats}
 
     return result
 
 
-async def _refresh_after_retry(*, doc_id: str) -> dict[str, Any]:
+async def _refresh_after_retry(*, doc_id: str, org_id: str) -> dict[str, Any]:
     """Recompute embedded/failed/total from chunks table and update status."""
     from app.database import get_service_client
     import asyncio as _asyncio
@@ -206,8 +219,22 @@ async def _refresh_after_retry(*, doc_id: str) -> dict[str, Any]:
     else:
         stats = {"embedded": embedded, "failed": failed, "total": total} if failed else None
         await mark_status(doc_id, "ready", chunk_count=total, embedding_stats=stats)
+        await _invalidate_coverage(org_id=org_id)
 
     return {"total": total, "embedded": embedded, "failed": failed}
+
+
+async def _invalidate_coverage(*, org_id: str) -> dict[str, str]:
+    """Drop the cached coverage_scores row. Wrapper for Inngest step.run.
+
+    Imported lazily to keep the inngest module's cold-start light and to
+    avoid a circular import with services.coverage which itself only pulls
+    from database + embedder.
+    """
+    from app.services.coverage import invalidate_coverage
+
+    await invalidate_coverage(org_id)
+    return {"status": "invalidated"}
 
 
 async def _try_retry(*, doc_id: str, org_id: str) -> dict[str, Any]:
@@ -326,6 +353,7 @@ async def _try_ingest(
     org_id: str,
     file_path: str,
     file_type: str,
+    version_id: str | None = None,
 ) -> dict[str, Any]:
     """Run the pipeline. Business failures → {'status': 'failed', 'error'}.
     Unexpected failures bubble up so Inngest can retry.
@@ -337,6 +365,7 @@ async def _try_ingest(
             org_id=org_id,
             file_bytes=file_bytes,
             file_type=file_type,
+            document_version_id=version_id,
         )
         return {
             "status": "ok",
@@ -372,4 +401,45 @@ async def summarize_conversation_fn(ctx: inngest.Context) -> dict[str, Any]:
     return result
 
 
-FUNCTIONS: list = [process_document, retry_failed_chunks, summarize_conversation_fn]
+# ── V4 #34 — Nightly knowledge health recompute ─────────────────────────────
+# Runs at 02:00 UTC every day. Loops over orgs and recomputes health_score for
+# every ready document. Per-org step.run isolation means one bad org doesn't
+# block the rest, and we can re-run a single fan-out child without re-doing
+# the whole batch.
+@_inngest_client.create_function(
+    fn_id="recompute-document-health",
+    trigger=inngest.TriggerCron(cron="0 2 * * *"),
+    retries=1,
+)
+async def recompute_document_health_fn(ctx: inngest.Context) -> dict[str, Any]:
+    step = ctx.step
+
+    async def _fetch_active_org_ids() -> list[str]:
+        svc = get_service_client()
+        # Only recompute for orgs with at least one ready document. New orgs
+        # that haven't uploaded anything don't need a row, and listing them
+        # would just inflate the fan-out step count.
+        res = svc.table("documents") \
+            .select("org_id") \
+            .eq("status", "ready") \
+            .limit(50000) \
+            .execute()
+        return sorted({row["org_id"] for row in (res.data or []) if row.get("org_id")})
+
+    org_ids = await step.run("list-orgs", _fetch_active_org_ids)
+    total_updated = 0
+    for org_id in org_ids:
+        updated = await step.run(
+            f"recompute-{org_id}",
+            lambda oid=org_id: recompute_org_health(oid),
+        )
+        total_updated += int(updated or 0)
+    return {"orgs": len(org_ids), "documents_updated": total_updated}
+
+
+FUNCTIONS: list = [
+    process_document,
+    retry_failed_chunks,
+    summarize_conversation_fn,
+    recompute_document_health_fn,
+]

@@ -317,6 +317,18 @@ async def create_invitation(
         # Log + continue. The admin can revoke + re-invite if delivery fails.
         log.warning("invite_email_dispatch_failed", invite_id=invite_row["id"], error=str(exc))
 
+    try:
+        from app.services.analytics import track_event
+
+        await track_event(
+            org_id=org_id,
+            user_id=user_id,
+            event_type="invite_sent",
+            metadata={"role": body.role},
+        )
+    except Exception:
+        pass
+
     return {
         "invitation": {
             "id": invite_row["id"],
@@ -604,5 +616,17 @@ async def accept_invitation(token: str, body: InviteAccept) -> dict[str, Any]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Joined workspace, but session needs a refresh. Sign out and back in.",
         ) from exc
+
+    try:
+        from app.services.analytics import track_event
+
+        await track_event(
+            org_id=row["org_id"],
+            user_id=body.user_id,
+            event_type="invite_accepted",
+            metadata={"role": row["role"]},
+        )
+    except Exception:
+        pass
 
     return {"org_id": row["org_id"], "role": row["role"]}

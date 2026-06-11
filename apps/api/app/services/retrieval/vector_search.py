@@ -66,6 +66,7 @@ class Retriever(Protocol):
         client: Client,
         k: int = 10,
         document_id: str | None = None,
+        document_ids: list[str] | None = None,
     ) -> list[SearchHit]: ...
 
 
@@ -90,9 +91,16 @@ class VectorRetriever:
         client: Client,
         k: int = 10,
         document_id: str | None = None,
+        document_ids: list[str] | None = None,
     ) -> list[SearchHit]:
         query = query.strip()
         if not query:
+            return []
+        # An explicitly-empty document_ids list means "no documents satisfy the
+        # scope" (e.g. the user picked tags that no document carries). Short-
+        # circuit instead of issuing a query that would scan all chunks and
+        # then filter to zero — same answer, zero work.
+        if document_ids is not None and len(document_ids) == 0:
             return []
 
         vectors = await self.embedder.embed_texts([query], task_type="RETRIEVAL_QUERY")
@@ -107,6 +115,8 @@ class VectorRetriever:
         }
         if document_id is not None:
             params["match_document_id"] = document_id
+        if document_ids:
+            params["match_document_ids"] = document_ids
 
         try:
             response = await asyncio.to_thread(
@@ -152,6 +162,7 @@ async def vector_search(
     *,
     k: int = 10,
     document_id: str | None = None,
+    document_ids: list[str] | None = None,
 ) -> list[SearchHit]:
     """Convenience wrapper around the default retriever."""
     return await get_vector_retriever().search(
@@ -160,4 +171,5 @@ async def vector_search(
         client=client,
         k=k,
         document_id=document_id,
+        document_ids=document_ids,
     )

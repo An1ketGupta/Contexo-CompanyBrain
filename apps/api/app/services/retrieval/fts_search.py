@@ -28,9 +28,12 @@ class FTSRetriever(Retriever):
         client: Client,
         k: int = 10,
         document_id: str | None = None,
+        document_ids: list[str] | None = None,
     ) -> list[SearchHit]:
         query = query.strip()
         if not query:
+            return []
+        if document_ids is not None and len(document_ids) == 0:
             return []
 
         params: dict = {
@@ -40,6 +43,8 @@ class FTSRetriever(Retriever):
         }
         if document_id is not None:
             params["match_document_id"] = document_id
+        if document_ids:
+            params["match_document_ids"] = document_ids
 
         try:
             response = await asyncio.to_thread(
@@ -84,6 +89,7 @@ async def fts_search(
     *,
     k: int = 10,
     document_id: str | None = None,
+    document_ids: list[str] | None = None,
 ) -> list[SearchHit]:
     """Convenience wrapper around the default FTS retriever."""
     return await get_fts_retriever().search(
@@ -92,4 +98,5 @@ async def fts_search(
         client=client,
         k=k,
         document_id=document_id,
+        document_ids=document_ids,
     )

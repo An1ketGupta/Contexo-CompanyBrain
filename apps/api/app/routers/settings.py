@@ -55,8 +55,17 @@ class UpdateOrgSettingsRequest(BaseModel):
     ai_instructions: str | None = Field(default=None, max_length=500)
 
 
+class UpdateOrgSharingRequest(BaseModel):
+    # V3 Day 4 #62. Admin kill-switch for public output links. New shares are
+    # gated by this; existing tokens stop resolving while the flag is off.
+    allow_output_sharing: bool
+
+
 class UpdateProfileRequest(BaseModel):
-    display_name: str = Field(..., min_length=1, max_length=80)
+    # Both optional; PATCH allows changing one without echoing the other back.
+    display_name: str | None = Field(default=None, min_length=1, max_length=80)
+    # V4 #57 — hide my activity from the team feed.
+    activity_private: bool | None = None
 
 
 class DeleteAccountRequest(BaseModel):
@@ -179,6 +188,62 @@ async def update_org_ai_settings(
     return {"ai_instructions": cleaned or ""}
 
 
+# ── Org-wide sharing toggle (Day 4 / #62) ─────────────────────────────────────
+
+
+@router.get("/organizations/me/sharing")
+async def get_org_sharing(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    user_id, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+    result = await asyncio.to_thread(
+        lambda: client.table("organizations")
+        .select("allow_output_sharing")
+        .eq("id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not result or not result.data:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    return {
+        "allow_output_sharing": bool(result.data.get("allow_output_sharing", True)),
+    }
+
+
+@router.patch("/organizations/me/sharing")
+async def update_org_sharing(
+    body: UpdateOrgSharingRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Admin-only. Toggle whether team members can mint public share links."""
+    user_id, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+
+    me = await asyncio.to_thread(
+        lambda: client.table("users")
+        .select("role")
+        .eq("id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not me.data or me.data.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workspace admins can change sharing settings.",
+        )
+
+    result = await asyncio.to_thread(
+        lambda: client.table("organizations")
+        .update({"allow_output_sharing": body.allow_output_sharing})
+        .eq("id", org_id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    return {"allow_output_sharing": body.allow_output_sharing}
+
+
 # ── User profile ──────────────────────────────────────────────────────────────
 
 @router.patch("/users/me")
@@ -189,16 +254,27 @@ async def update_profile(
     user_id, _org_id, token = _require_user(current_user)
     client = get_user_client(token)
 
-    cleaned = " ".join(body.display_name.split()).strip()
-    if not cleaned:
+    update: dict[str, Any] = {}
+    if body.display_name is not None:
+        cleaned = " ".join(body.display_name.split()).strip()
+        if not cleaned:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Display name cannot be empty.",
+            )
+        update["display_name"] = cleaned
+    if body.activity_private is not None:
+        update["activity_private"] = body.activity_private
+
+    if not update:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Display name cannot be empty.",
+            detail="No changes supplied.",
         )
 
     result = await asyncio.to_thread(
         lambda: client.table("users")
-        .update({"display_name": cleaned})
+        .update(update)
         .eq("id", user_id)
         .execute()
     )

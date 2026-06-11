@@ -44,11 +44,17 @@ async def persist_chunks_pending(
     doc_id: str,
     org_id: str,
     client: Client,
+    document_version_id: str | None = None,
 ) -> list[PersistedChunk]:
     """Replace this document's chunks with the new set, all in `pending` state.
 
     Returns the persisted chunks with their assigned ids so the caller can
     embed and then update status row-by-row.
+
+    `document_version_id` (V4 #68) — when present, every new chunk is tagged
+    with the version it came from. Old archived chunks keep their original
+    version pointer; queries that need to know "which version cited this
+    chunk?" can read it directly off the row.
     """
     await _delete_existing(client, doc_id)
     if not chunks:
@@ -59,21 +65,22 @@ async def persist_chunks_pending(
     for ch in chunks:
         cid = str(uuid.uuid4())
         persisted.append(PersistedChunk(id=cid, chunk=ch))
-        rows.append(
-            {
-                "id": cid,
-                "org_id": org_id,
-                "document_id": doc_id,
-                "content": ch.content,
-                "chunk_index": ch.chunk_index,
-                "token_count": ch.token_count,
-                "page_number": ch.page_number,
-                "section_heading": ch.section_heading,
-                "metadata": ch.metadata or {},
-                "embedding_status": "pending",
-                "retry_count": 0,
-            }
-        )
+        row: dict[str, Any] = {
+            "id": cid,
+            "org_id": org_id,
+            "document_id": doc_id,
+            "content": ch.content,
+            "chunk_index": ch.chunk_index,
+            "token_count": ch.token_count,
+            "page_number": ch.page_number,
+            "section_heading": ch.section_heading,
+            "metadata": ch.metadata or {},
+            "embedding_status": "pending",
+            "retry_count": 0,
+        }
+        if document_version_id:
+            row["document_version_id"] = document_version_id
+        rows.append(row)
     await _batched_insert(client, "chunks", rows)
     return persisted
 
@@ -189,8 +196,17 @@ async def fetch_failed_chunks(
 
 
 async def _delete_existing(client: Client, doc_id: str) -> None:
+    # V4 #68 — only delete ACTIVE chunks. Archived chunks belong to prior
+    # versions of this document and are still referenced by chunk_citations;
+    # cascading them away would corrupt the audit trail. Search RPCs
+    # (vector_search / fts_search, migration 021) already skip is_archived,
+    # so leaving them in the table is invisible to retrieval.
     await asyncio.to_thread(
-        lambda: client.table("chunks").delete().eq("document_id", doc_id).execute()
+        lambda: client.table("chunks")
+        .delete()
+        .eq("document_id", doc_id)
+        .eq("is_archived", False)
+        .execute()
     )
 
 

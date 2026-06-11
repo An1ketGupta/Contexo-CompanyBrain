@@ -9,16 +9,23 @@ from app.inngest import get_inngest_client
 from app.middleware.request_context import RequestContextMiddleware
 from app.observability import init_observability
 from app.routers import (
+    admin as admin_router,
     auth as auth_router,
     chat,
+    document_versions as document_versions_router,
     documents,
     health,
     integrations as integrations_router,
     invitations,
+    meeting_prep as meeting_prep_router,
+    organizations as organizations_router,
     public_api,
     search,
     settings as settings_router,
+    sharing as sharing_router,
     slack_router,
+    team as team_router,
+    templates as templates_router,
     usage as usage_router,
     webhooks as webhooks_router,
 )
@@ -54,9 +61,15 @@ def create_app() -> FastAPI:
     # CORS is added first → executed last; RequestContext is added last → first.
     # Order matters: we want request_id bound BEFORE CORS short-circuits an
     # OPTIONS pre-flight so even pre-flight rejections are traceable.
+    # `allow_origin_regex` lets the Chrome extension (V4 #32) call this API
+    # without us pinning a specific extension id. Chrome extension origins
+    # are `chrome-extension://<32-char-id>`; the id is stable per build but
+    # differs between dev (load-unpacked) and Web Store builds, so a regex
+    # is the only sane allow-list.
     _app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
+        allow_origin_regex=r"^chrome-extension://[a-z0-9]+$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -83,6 +96,13 @@ app.include_router(webhooks_router.router)
 app.include_router(integrations_router.router)
 app.include_router(public_api.router)
 app.include_router(slack_router.router)
+app.include_router(organizations_router.router)
+app.include_router(templates_router.router)
+app.include_router(sharing_router.router)
+app.include_router(admin_router.router)
+app.include_router(team_router.router)
+app.include_router(document_versions_router.router)
+app.include_router(meeting_prep_router.router)
 
 # Inngest serve endpoint — webhook the Inngest server hits to invoke our functions.
 # Mounts at /api/inngest by default.

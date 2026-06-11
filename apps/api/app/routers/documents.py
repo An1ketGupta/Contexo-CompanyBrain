@@ -112,6 +112,24 @@ class UploadCompleteRequest(BaseModel):
     doc_id: str
 
 
+# V4 Day 3 #32 — Chrome Extension "Add to Brain". The browser scrapes the
+# page with Readability + DOMPurify and hands us clean text; this endpoint
+# is the only entry point for non-file sources.
+class DocumentFromUrlRequest(BaseModel):
+    url: str = Field(..., min_length=1, max_length=2048)
+    title: str = Field(..., min_length=1, max_length=255)
+    content: str = Field(..., min_length=1, max_length=200_000)
+    hostname: str | None = Field(default=None, max_length=255)
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, v: str) -> str:
+        v = v.strip()
+        if not re.match(r"^https?://", v, re.IGNORECASE):
+            raise ValueError("url must be http(s)")
+        return v
+
+
 # ── Step 1: Init upload — validate, create DB row, return signed URL ───────────
 
 @router.post("/upload/init", status_code=status.HTTP_201_CREATED)
@@ -232,7 +250,160 @@ async def complete_upload(
         body.doc_id, org_id, result.data["file_path"], result.data["file_type"]
     )
 
+    # V4 #18 / #57: telemetry + team activity. We log on `upload/complete`
+    # rather than `upload/init` so half-finished uploads don't pollute the
+    # feed. file_size lookup is cheap because the row just landed in cache.
+    try:
+        from app.services.analytics import track_event
+        from app.services.activity import log_activity, resolve_user_privacy
+
+        meta_res = await asyncio.to_thread(
+            lambda: svc.table("documents")
+            .select("name, file_type, file_size_bytes")
+            .eq("id", body.doc_id)
+            .maybe_single()
+            .execute()
+        )
+        meta = (meta_res and meta_res.data) or {}
+        size_kb = (meta.get("file_size_bytes") or 0) // 1024
+        user_id = current_user.get("user_id")
+        await track_event(
+            org_id=org_id,
+            user_id=user_id,
+            event_type="doc_uploaded",
+            metadata={"file_type": meta.get("file_type"), "file_size_kb": size_kb},
+        )
+        if user_id:
+            is_private = await resolve_user_privacy(user_id)
+            await log_activity(
+                org_id=org_id,
+                user_id=user_id,
+                activity_type="uploaded_doc",
+                metadata={"doc_name": meta.get("name") or "a document"},
+                is_private=is_private,
+            )
+    except Exception:
+        pass
+
     return {"doc_id": body.doc_id, "status": "pending"}
+
+
+# ── Chrome Extension: ingest a webpage by URL (V4 Day 3 / #32) ────────────────
+
+# Pre-extracted text path: the browser ran Readability on the user's current
+# tab and POSTs the cleaned content here. Skips file Storage entirely (no blob
+# exists) and queues the Inngest text-mode pipeline.
+@router.post("/from-url", status_code=status.HTTP_201_CREATED)
+async def create_document_from_url(
+    body: DocumentFromUrlRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    org_id: str | None = current_user["org_id"]
+    user_id: str = current_user["user_id"]
+
+    if not org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No organization found. Please sign out and sign back in.",
+        )
+
+    svc = get_service_client()
+
+    # Dedupe by (org_id, source_url). The unique index in 023 would error
+    # the insert otherwise; doing the lookup first lets us short-circuit with
+    # a friendly "already added" instead of a 409.
+    existing = await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .select("id, status")
+        .eq("org_id", org_id)
+        .eq("source_url", body.url)
+        .maybe_single()
+        .execute()
+    )
+    if existing and existing.data:
+        return {
+            "doc_id": existing.data["id"],
+            "status": existing.data.get("status") or "pending",
+            "already_existed": True,
+        }
+
+    doc_id = str(uuid.uuid4())
+    # Trim title aggressively — many pages have ridiculously long titles
+    # ("My Notion — Page A — Notion — workspace.notion.so"). Hostname fallback
+    # keeps the documents grid readable when title is empty.
+    safe_title = (body.title or "").strip()[:255] or (body.hostname or body.url)[:255]
+    content_size_bytes = len(body.content.encode("utf-8"))
+
+    try:
+        await asyncio.to_thread(
+            lambda: svc.table("documents")
+            .insert({
+                "id": doc_id,
+                "org_id": org_id,
+                "name": safe_title,
+                "file_path": None,
+                "file_type": "webpage",
+                "file_size_bytes": content_size_bytes,
+                "status": "pending",
+                "created_by": user_id,
+                "source_url": body.url,
+                "content": body.content,
+                "metadata": {
+                    "hostname": body.hostname,
+                    "source": "chrome-extension",
+                },
+            })
+            .execute()
+        )
+    except Exception as exc:
+        log.error("[documents/from-url] insert failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to record the page. Please try again.",
+        ) from exc
+
+    await _trigger_text_processing(
+        doc_id=doc_id,
+        org_id=org_id,
+        text=body.content,
+        title=safe_title,
+        source_url=body.url,
+    )
+
+    # Mirror the doc/uploaded telemetry + team activity from `complete_upload`
+    # so the activity feed and analytics show extension-sourced docs alongside
+    # uploaded ones.
+    try:
+        from app.services.analytics import track_event
+        from app.services.activity import log_activity, resolve_user_privacy
+
+        await track_event(
+            org_id=org_id,
+            user_id=user_id,
+            event_type="doc_uploaded",
+            metadata={
+                "file_type": "webpage",
+                "file_size_kb": content_size_bytes // 1024,
+                "source": "chrome-extension",
+            },
+        )
+        is_private = await resolve_user_privacy(user_id)
+        await log_activity(
+            org_id=org_id,
+            user_id=user_id,
+            activity_type="uploaded_doc",
+            metadata={"doc_name": safe_title, "source": "chrome-extension"},
+            is_private=is_private,
+        )
+    except Exception:
+        pass
+
+    return {
+        "doc_id": doc_id,
+        "status": "pending",
+        "already_existed": False,
+        "name": safe_title,
+    }
 
 
 # ── List with filters, sort, pagination ───────────────────────────────────────
@@ -271,7 +442,7 @@ async def list_documents(
 
     def _run() -> Any:
         q = client.table("documents").select(
-            "id, name, file_type, file_size_bytes, status, chunk_count, tags, metadata, created_at",
+            "id, name, file_type, file_size_bytes, status, chunk_count, tags, metadata, created_at, health_score, health_label, last_accessed_at",
             count="exact",
         )
         if status_filter:
@@ -802,7 +973,7 @@ async def delete_document(
 
     result = await asyncio.to_thread(
         lambda: svc.table("documents")
-        .select("file_path")
+        .select("file_path, file_type")
         .eq("id", doc_id)
         .eq("org_id", org_id)
         .maybe_single()
@@ -813,6 +984,7 @@ async def delete_document(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
 
     file_path: str = result.data["file_path"]
+    file_type: str | None = result.data.get("file_type")
 
     await asyncio.to_thread(
         lambda: svc.table("documents").delete().eq("id", doc_id).execute()
@@ -821,6 +993,18 @@ async def delete_document(
     try:
         await asyncio.to_thread(
             lambda: svc.storage.from_(STORAGE_BUCKET).remove([file_path])
+        )
+    except Exception:
+        pass
+
+    try:
+        from app.services.analytics import track_event
+
+        await track_event(
+            org_id=org_id,
+            user_id=current_user.get("user_id"),
+            event_type="doc_deleted",
+            metadata={"file_type": file_type},
         )
     except Exception:
         pass
@@ -853,6 +1037,45 @@ async def _trigger_processing(doc_id: str, org_id: str, file_path: str, file_typ
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Failed to queue document for processing. Please try again.",
+        ) from exc
+
+
+async def _trigger_text_processing(
+    *,
+    doc_id: str,
+    org_id: str,
+    text: str,
+    title: str | None = None,
+    source_url: str | None = None,
+) -> None:
+    """Emit the generic doc/process-text Inngest event.
+
+    Shared with the Notion sync + email-forward inbound paths
+    (see `inngest/integration_functions.py`). The Inngest function reads the
+    text straight from the event payload — 50k chars fits well under
+    Inngest's per-event size cap, and skipping a DB round-trip in the
+    function keeps the retry path simple.
+    """
+    client = get_inngest_client()
+    try:
+        await client.send(
+            inngest.Event(
+                name="doc/process-text",
+                data={
+                    "doc_id": doc_id,
+                    "org_id": org_id,
+                    "text": text,
+                    "title": title,
+                    "source_url": source_url,
+                },
+                id=f"doc-process-text-{doc_id}",
+            )
+        )
+    except Exception as exc:
+        log.error("Failed to send doc/process-text event for %s: %s", doc_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to queue page for processing. Please try again.",
         ) from exc
 
 
