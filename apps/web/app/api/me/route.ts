@@ -18,7 +18,7 @@ export async function GET(): Promise<NextResponse> {
   const [{ data: profile }, { data: org }] = await Promise.all([
     supabase
       .from("users")
-      .select("id, org_id, role, display_name")
+      .select("id, org_id, role, display_name, activity_private")
       .eq("id", user.id)
       .maybeSingle(),
     orgIdFromJwt
@@ -37,6 +37,7 @@ export async function GET(): Promise<NextResponse> {
       display_name: profile?.display_name ?? user.email?.split("@")[0] ?? null,
       role: profile?.role ?? "member",
       org_id: profile?.org_id ?? orgIdFromJwt,
+      activity_private: profile?.activity_private ?? false,
     },
     organization: org ?? null,
   });

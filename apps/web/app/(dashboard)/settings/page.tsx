@@ -75,6 +75,8 @@ export default function SettingsPage() {
 
       <AIInstructionsCard canEdit={user?.role === "admin"} />
 
+      <SharingCard canEdit={user?.role === "admin"} />
+
       {user?.role === "admin" && (
         <Card
           title="Connected systems"
@@ -108,6 +110,11 @@ export default function SettingsPage() {
       <ProfileCard
         displayName={user?.display_name ?? ""}
         email={user?.email ?? ""}
+        onSaved={refresh}
+      />
+
+      <ActivityPrivacyCard
+        activityPrivate={user?.activity_private ?? false}
         onSaved={refresh}
       />
 
@@ -345,6 +352,81 @@ function ProfileCard({
           Save changes
         </Button>
       </div>
+    </Card>
+  );
+}
+
+// ── Activity privacy (V4 #57) ───────────────────────────────────────────────
+
+function ActivityPrivacyCard({
+  activityPrivate,
+  onSaved,
+}: {
+  activityPrivate: boolean;
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState(activityPrivate);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setValue(activityPrivate);
+  }, [activityPrivate]);
+
+  const dirty = value !== activityPrivate;
+
+  const save = async (next: boolean) => {
+    setValue(next);
+    setSaving(true);
+    try {
+      const res = await fetch("/api/users/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ activity_private: next }),
+      }).catch((err) => {
+        throw networkError(err);
+      });
+      if (!res.ok) throw await parseApiError(res);
+      toast.success(
+        next
+          ? "New activity will stay private."
+          : "New activity will show in the team feed.",
+      );
+      onSaved();
+    } catch (err) {
+      setValue(!next);
+      reportApiError(err as Awaited<ReturnType<typeof parseApiError>>);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Activity privacy"
+      description="Control whether teammates see your activity in the sidebar feed."
+    >
+      <label className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">Hide my activity</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Only affects new activity. Past entries keep their visibility.
+          </p>
+        </div>
+        <input
+          type="checkbox"
+          className="mt-1 h-4 w-7 cursor-pointer appearance-none rounded-full bg-muted transition-colors checked:bg-primary disabled:opacity-50 relative before:absolute before:top-0.5 before:left-0.5 before:h-3 before:w-3 before:rounded-full before:bg-background before:transition-transform checked:before:translate-x-3"
+          checked={value}
+          disabled={saving}
+          onChange={(e) => save(e.target.checked)}
+          aria-label="Hide my activity"
+        />
+      </label>
+      {dirty && saving ? (
+        <p className="text-xs text-muted-foreground">
+          <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />
+          Saving…
+        </p>
+      ) : null}
     </Card>
   );
 }
@@ -910,6 +992,93 @@ function AIInstructionsCard({ canEdit }: { canEdit: boolean }) {
             </Button>
           </div>
         </>
+      )}
+    </Card>
+  );
+}
+
+
+// ── Sharing toggle (V3 Day 4 #62) ──────────────────────────────────────────
+
+function SharingCard({ canEdit }: { canEdit: boolean }) {
+  const { data, error, isLoading, mutate } = useSWR<{
+    allow_output_sharing: boolean;
+  }>("/api/organizations/me/sharing", jsonFetcher, {
+    revalidateOnFocus: false,
+  });
+
+  const [busy, setBusy] = useState(false);
+  const allowed = !!data?.allow_output_sharing;
+
+  const toggle = async (next: boolean) => {
+    setBusy(true);
+    // Optimistic — flip immediately, revert on failure.
+    await mutate({ allow_output_sharing: next }, { revalidate: false });
+    try {
+      const res = await fetch("/api/organizations/me/sharing", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allow_output_sharing: next }),
+      });
+      if (!res.ok) throw await parseApiError(res);
+      toast.success(
+        next
+          ? "Shared links enabled for the workspace."
+          : "Shared links disabled. Existing links will stop resolving.",
+      );
+      await mutate();
+    } catch (err) {
+      await mutate({ allow_output_sharing: !next }, { revalidate: false });
+      reportApiError(err as Awaited<ReturnType<typeof parseApiError>>);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Shared links"
+      description={
+        canEdit
+          ? "Let teammates publish public links to AI outputs. Existing links stop working when this is off."
+          : "Whether your team can publish public links to AI outputs. Only admins can change this."
+      }
+    >
+      {isLoading ? (
+        <Skeleton className="h-10" />
+      ) : error ? (
+        <p className="text-sm text-destructive">
+          Couldn&apos;t load sharing settings. Try again later.
+        </p>
+      ) : (
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-foreground">
+              Allow public output sharing
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Each share is opt-in per message. Anyone with a link can read it
+              without signing in.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={allowed}
+            disabled={!canEdit || busy}
+            onClick={() => toggle(!allowed)}
+            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              allowed ? "bg-primary" : "bg-muted"
+            }`}
+          >
+            <span
+              aria-hidden
+              className={`inline-block h-5 w-5 transform rounded-full bg-background shadow ring-0 transition-transform ${
+                allowed ? "translate-x-5" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
       )}
     </Card>
   );

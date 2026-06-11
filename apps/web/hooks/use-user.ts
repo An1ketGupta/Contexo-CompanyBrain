@@ -8,6 +8,7 @@ export interface CurrentUser {
   display_name: string | null;
   role: "admin" | "member";
   org_id: string | null;
+  activity_private?: boolean;
 }
 
 export interface CurrentOrg {

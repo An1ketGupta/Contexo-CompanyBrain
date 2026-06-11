@@ -2,7 +2,18 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FileText, LineChart, MessageSquare, Settings } from "lucide-react";
+import {
+  BarChart3,
+  CalendarDays,
+  FileText,
+  HeartPulse,
+  HelpCircle,
+  LineChart,
+  MessageSquare,
+  PieChart,
+  Settings,
+  Shield,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/hooks/use-user";
 
@@ -16,9 +27,35 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
+  { href: "/chat/meeting-prep", label: "Meeting prep", icon: CalendarDays },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/insights", label: "Insights", icon: LineChart, adminOnly: true },
+  {
+    href: "/admin/analytics",
+    label: "Analytics",
+    icon: BarChart3,
+    adminOnly: true,
+  },
+  {
+    href: "/admin/health",
+    label: "KB health",
+    icon: HeartPulse,
+    adminOnly: true,
+  },
+  {
+    href: "/admin/coverage",
+    label: "Coverage",
+    icon: PieChart,
+    adminOnly: true,
+  },
+  {
+    href: "/admin/moderation",
+    label: "Moderation",
+    icon: Shield,
+    adminOnly: true,
+  },
   { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/help", label: "Help", icon: HelpCircle },
 ];
 
 interface SidebarNavProps {
@@ -34,8 +71,20 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
     <nav className="flex flex-col gap-1 px-3 py-2">
       {NAV_ITEMS.map((item) => {
         if (item.adminOnly && !isAdmin) return null;
+        // Exact match OR prefix match — but only if no other sibling item is
+        // a *more* specific prefix of the current path. Without this, /chat
+        // lights up while the user is on /chat/meeting-prep.
+        const moreSpecificMatch = NAV_ITEMS.some(
+          (other) =>
+            other !== item &&
+            other.href !== item.href &&
+            other.href.startsWith(`${item.href}/`) &&
+            (pathname === other.href ||
+              pathname.startsWith(`${other.href}/`)),
+        );
         const isActive =
-          pathname === item.href || pathname.startsWith(`${item.href}/`);
+          !moreSpecificMatch &&
+          (pathname === item.href || pathname.startsWith(`${item.href}/`));
         const Icon = item.icon;
         return (
           <Link

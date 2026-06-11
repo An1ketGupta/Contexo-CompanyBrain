@@ -5,6 +5,8 @@ import { Brain } from "lucide-react";
 import { SidebarNav } from "./sidebar-nav";
 import { UserMenu } from "./user-menu";
 import { QuotaMeter } from "./quota-meter";
+import { ActivityFeed } from "./activity-feed";
+import { OnboardingChecklist } from "@/components/onboarding/onboarding-checklist";
 import { useCurrentUser } from "@/hooks/use-user";
 
 export function Sidebar() {
@@ -25,6 +27,14 @@ export function Sidebar() {
       <div className="flex-1 overflow-y-auto py-2">
         <SidebarNav />
       </div>
+
+      {/* Onboarding sits between the nav and the quota meter so it's visible
+          on every dashboard page without scrolling. Renders nothing once
+          dismissed or once all steps are derived as complete + confetti has
+          fired. */}
+      <OnboardingChecklist />
+
+      <ActivityFeed />
 
       <QuotaMeter />
 
