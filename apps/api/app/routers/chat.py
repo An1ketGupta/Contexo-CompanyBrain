@@ -3,13 +3,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
+from datetime import datetime, timezone
 
 import inngest
 from typing import Any, AsyncIterator, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from supabase import Client
@@ -20,6 +22,11 @@ from app.database import get_user_client
 from app.errors import NoOrganization
 from app.observability import get_logger
 from app.services.llm import Message
+from app.services.moderation import (
+    ModerationResult,
+    log_moderation_event,
+    moderate_input,
+)
 from app.services.rate_limit import enforce_chat_quota
 from app.inngest import get_inngest_client
 from app.services.citation_tracker import record_citations
@@ -29,6 +36,7 @@ from app.services.llm.task_chain import (
     ConfidenceEvent,
     ErrorEvent,
     FinalEvent,
+    IntentEvent,
     KnowledgeGapEvent,
     OrchestratorEvent,
     SearchedEvent,
@@ -65,10 +73,31 @@ class ChatRequest(BaseModel):
     # on follow-up turns of an existing conversation — scope is set once at
     # creation so the LLM can rely on it across the whole thread.
     scoped_document_id: str | None = Field(default=None, min_length=8, max_length=64)
+    # V3 #19 — same locked-at-creation semantics, but the scope is "every doc
+    # carrying any of these tags" instead of one specific document. Empty list
+    # / omitted = unscoped. Capped to keep the doc-id resolution cheap and the
+    # system-prompt note readable.
+    scoped_tags: list[str] | None = Field(default=None, max_length=10)
 
 
-class RenameConversationRequest(BaseModel):
-    title: str = Field(..., min_length=1, max_length=TITLE_MAX_LEN)
+class UpdateConversationRequest(BaseModel):
+    # Both fields are optional so the same PATCH can rename, pin, or do both.
+    # Pinning is a single boolean; ordering and "pinned section" rendering
+    # are handled on the read path.
+    title: str | None = Field(default=None, min_length=1, max_length=TITLE_MAX_LEN)
+    is_pinned: bool | None = None
+
+
+class RegenerateRequest(BaseModel):
+    # Optional refinement steers the regeneration — appended to the original
+    # user prompt as a "[Refinement: ...]" note. Capped to keep the prompt
+    # reasonable and to discourage rewriting a whole new question via this
+    # path (that should be a new user turn).
+    refinement: str | None = Field(default=None, min_length=1, max_length=2_000)
+
+
+class ActiveBranchRequest(BaseModel):
+    branch_index: int = Field(..., ge=0, le=20)
 
 
 class FeedbackBody(BaseModel):
@@ -96,17 +125,41 @@ async def chat(
     """One-shot task execution. Returns the full output once retrieval +
     generation are complete. Use /chat/stream for interactive UIs."""
     org_id, user_id, token = _require_org(current_user)
+
+    # V4 #79 — content moderation runs BEFORE the quota check so a malicious
+    # prompt doesn't drain quota by being blocked. Decision is pure-regex,
+    # ~sub-ms.
+    decision = moderate_input(body.message)
+    if decision.result == ModerationResult.BLOCKED:
+        await log_moderation_event(
+            org_id=org_id, user_id=user_id, query=body.message,
+            decision=decision, action_taken="rejected",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "This query was blocked by content moderation. If you believe "
+                "this is in error, contact your workspace admin."
+            ),
+        )
+    if decision.result == ModerationResult.FLAGGED:
+        await log_moderation_event(
+            org_id=org_id, user_id=user_id, query=body.message,
+            decision=decision, action_taken="logged_and_proceeded",
+        )
+
     await enforce_chat_quota(user_id=user_id, org_id=org_id)
     client = get_user_client(token)
 
-    conversation_id, scoped_document_id = await _ensure_conversation(
+    conversation_id, scoped_document_id, scoped_tags = await _ensure_conversation(
         client, body.conversation_id, org_id, user_id, body.message,
         scoped_document_id=body.scoped_document_id,
+        scoped_tags=body.scoped_tags,
     )
     history = await _load_history(client, conversation_id)
     summary = await load_conversation_summary(conversation_id, client=client)
 
-    await _save_user_message_idempotent(
+    user_message_id = await _save_user_message_idempotent(
         client,
         conversation_id=conversation_id,
         org_id=org_id,
@@ -119,6 +172,7 @@ async def chat(
     tool_calls_made = 0
     trace_id: str | None = None
     confidence: ConfidenceEvent | None = None
+    final_intent: str = ""
     error_msg: str | None = None
 
     async for event in execute_task(
@@ -130,6 +184,7 @@ async def chat(
         user_id=user_id,
         conversation_id=conversation_id,
         scoped_document_id=scoped_document_id,
+        scoped_tags=scoped_tags or None,
         conversation_summary=summary,
     ):
         if isinstance(event, FinalEvent):
@@ -137,6 +192,7 @@ async def chat(
             final_sources = event.sources
             tool_calls_made = event.tool_calls_made
             trace_id = event.trace_id
+            final_intent = event.intent
         elif isinstance(event, ConfidenceEvent):
             confidence = event
         elif isinstance(event, ErrorEvent):
@@ -161,6 +217,10 @@ async def chat(
         sources=final_sources,
         trace_id=trace_id,
         confidence=confidence,
+        parent_user_message_id=user_message_id,
+        branch_index=0,
+        is_active_branch=True,
+        intent=final_intent or None,
     )
 
     await _touch_conversation(client, conversation_id)
@@ -180,6 +240,13 @@ async def chat(
         user_id=user_id,
         sources=final_sources,
         output=final_text,
+    )
+    await _emit_chat_analytics(
+        org_id=org_id,
+        user_id=user_id,
+        query=body.message,
+        intent=final_intent or "",
+        source_count=len(final_sources or []),
     )
 
     return ChatResponse(
@@ -205,6 +272,28 @@ async def chat_stream(
     that filter on `data:` lines.
     """
     org_id, user_id, token = _require_org(current_user)
+
+    # V4 #79 — moderation as STEP 0. Blocked queries never start the stream;
+    # we raise so the browser sees a 400 JSON, not a half-open SSE channel.
+    decision = moderate_input(body.message)
+    if decision.result == ModerationResult.BLOCKED:
+        await log_moderation_event(
+            org_id=org_id, user_id=user_id, query=body.message,
+            decision=decision, action_taken="rejected",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "This query was blocked by content moderation. If you believe "
+                "this is in error, contact your workspace admin."
+            ),
+        )
+    if decision.result == ModerationResult.FLAGGED:
+        await log_moderation_event(
+            org_id=org_id, user_id=user_id, query=body.message,
+            decision=decision, action_taken="logged_and_proceeded",
+        )
+
     # Rate-limit raises with our envelope — the StreamingResponse never starts
     # so the browser sees a normal JSON error, not a half-open SSE.
     await enforce_chat_quota(user_id=user_id, org_id=org_id)
@@ -212,14 +301,15 @@ async def chat_stream(
     client = get_user_client(token)
     request_id = getattr(request.state, "request_id", None)
 
-    conversation_id, scoped_document_id = await _ensure_conversation(
+    conversation_id, scoped_document_id, scoped_tags = await _ensure_conversation(
         client, body.conversation_id, org_id, user_id, body.message,
         scoped_document_id=body.scoped_document_id,
+        scoped_tags=body.scoped_tags,
     )
     history = await _load_history(client, conversation_id)
     summary = await load_conversation_summary(conversation_id, client=client)
 
-    await _save_user_message_idempotent(
+    user_message_id = await _save_user_message_idempotent(
         client,
         conversation_id=conversation_id,
         org_id=org_id,
@@ -247,6 +337,7 @@ async def chat_stream(
                     user_id=user_id,
                     conversation_id=conversation_id,
                     scoped_document_id=scoped_document_id,
+                    scoped_tags=scoped_tags or None,
                     conversation_summary=summary,
                 ):
                     await events_queue.put(ev)
@@ -258,6 +349,7 @@ async def chat_stream(
         tool_calls_made = 0
         trace_id: str | None = None
         confidence_evt: ConfidenceEvent | None = None
+        final_intent: str = ""
         had_error = False
         error_payload: dict | None = None
 
@@ -288,6 +380,7 @@ async def chat_stream(
                     final_sources = ev.sources
                     tool_calls_made = ev.tool_calls_made
                     trace_id = ev.trace_id
+                    final_intent = ev.intent
                 elif isinstance(ev, ConfidenceEvent):
                     confidence_evt = ev
                 elif isinstance(ev, ErrorEvent):
@@ -331,6 +424,10 @@ async def chat_stream(
                     sources=final_sources,
                     trace_id=trace_id,
                     confidence=confidence_evt,
+                    parent_user_message_id=user_message_id,
+                    branch_index=0,
+                    is_active_branch=True,
+                    intent=final_intent or None,
                 )
                 await _touch_conversation(client, conversation_id)
                 await _fire_summarize_event(conversation_id, org_id)
@@ -347,6 +444,13 @@ async def chat_stream(
                     user_id=user_id,
                     sources=final_sources,
                     output=final_text,
+                )
+                await _emit_chat_analytics(
+                    org_id=org_id,
+                    user_id=user_id,
+                    query=body.message,
+                    intent=final_intent or "",
+                    source_count=len(final_sources or []),
                 )
                 yield _sse(
                     {
@@ -409,9 +513,13 @@ async def list_conversations(
 
     query = (q or "").strip()
     if not query:
+        # Pinned conversations come first regardless of recency, then the
+        # rest by updated_at DESC. Migration 019 adds an index that matches
+        # this exact ORDER BY so Postgres can serve it without a sort.
         result = await asyncio.to_thread(
             lambda: client.table("conversations")
-            .select("id, title, created_at, updated_at")
+            .select("id, title, is_pinned, created_at, updated_at")
+            .order("is_pinned", desc=True)
             .order("updated_at", desc=True)
             .limit(50)
             .execute()
@@ -431,11 +539,14 @@ async def list_conversations(
     )
     rows = result.data or []
     # The RPC returns a `rank` column — drop it for API consumers; sidebar
-    # cares about order, not numeric weights.
+    # cares about order, not numeric weights. The pin flag rides along so
+    # the sidebar can render the icon on each row. Search results pre-RPC
+    # update may not carry the field; default to False for compatibility.
     convos = [
         {
             "id": r["id"],
             "title": r["title"],
+            "is_pinned": bool(r.get("is_pinned", False)),
             "created_at": r["created_at"],
             "updated_at": r["updated_at"],
         }
@@ -454,7 +565,10 @@ async def get_conversation(
 
     convo = await asyncio.to_thread(
         lambda: client.table("conversations")
-        .select("id, title, created_at, updated_at, scoped_document_id")
+        .select(
+            "id, title, is_pinned, created_at, updated_at, "
+            "scoped_document_id, scoped_tags"
+        )
         .eq("id", conversation_id)
         .maybe_single()
         .execute()
@@ -462,35 +576,133 @@ async def get_conversation(
     if not convo.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
 
-    msgs = await asyncio.to_thread(
+    # Load every assistant branch + every user row. Two reasons we don't
+    # filter to is_active_branch=true at the DB:
+    #   * The UI's branch navigator needs to know `total_branches` per group
+    #     to render "1/3" etc — we'd have to count separately otherwise.
+    #   * Flipping branches is a client-only operation once the rows are in
+    #     memory; round-tripping for each switch would feel laggy.
+    # We do filter in the response so the timeline only includes the active
+    # branch per group; the inactive ones ride along under a separate key.
+    msgs_result = await asyncio.to_thread(
         lambda: client.table("messages")
-        .select("id, role, content, sources, feedback, metadata, created_at")
+        .select(
+            "id, role, content, sources, feedback, metadata, created_at, "
+            "parent_user_message_id, branch_index, is_active_branch"
+        )
         .eq("conversation_id", conversation_id)
         .order("created_at")
         .execute()
     )
-    return {"conversation": convo.data, "messages": msgs.data or []}
+    all_rows: list[dict] = msgs_result.data or []
+
+    # Group assistant rows by their parent_user_message_id so we can emit:
+    #   * branches[parent_user_id] = [ {id, branch_index, ...}, ... ]
+    #   * timeline = user rows + the active branch from each group
+    branches_by_parent: dict[str, list[dict]] = {}
+    user_rows: list[dict] = []
+    active_by_parent: dict[str, dict] = {}
+    orphan_assistants: list[dict] = []
+
+    for row in all_rows:
+        role = row.get("role")
+        if role == "user":
+            user_rows.append(row)
+            continue
+        if role != "assistant":
+            continue
+        parent_id = row.get("parent_user_message_id")
+        if not parent_id:
+            # Pre-migration assistant rows that didn't get backfilled — keep
+            # them in the timeline as a stand-alone bubble so legacy chats
+            # don't lose history.
+            orphan_assistants.append(row)
+            continue
+        branches_by_parent.setdefault(parent_id, []).append(row)
+        if row.get("is_active_branch"):
+            active_by_parent[parent_id] = row
+
+    # Build the linear timeline. We rely on created_at order to interleave;
+    # for each user message we emit the active assistant branch (if any)
+    # immediately after.
+    timeline: list[dict] = []
+    for u in user_rows:
+        timeline.append(u)
+        active = active_by_parent.get(u["id"])
+        if active is not None:
+            total_branches = len(branches_by_parent.get(u["id"], []))
+            active = {
+                **active,
+                "total_branches": total_branches,
+            }
+            timeline.append(active)
+
+    # Anything we missed (orphans, or assistant rows whose user row didn't
+    # come back due to RLS) goes at the end so the chat doesn't look broken.
+    if orphan_assistants:
+        # Insert orphans by created_at so they slot near where they belong.
+        timeline.extend({**r, "total_branches": 1} for r in orphan_assistants)
+        timeline.sort(key=lambda r: r.get("created_at") or "")
+
+    return {
+        "conversation": convo.data,
+        "messages": timeline,
+        # Expose all branches keyed by parent so the UI can switch without
+        # an extra round trip. The default render uses the active one.
+        "branches": {
+            parent_id: [
+                {
+                    "id": b["id"],
+                    "branch_index": b.get("branch_index", 0),
+                    "is_active_branch": b.get("is_active_branch", False),
+                    "content": b.get("content", ""),
+                    "sources": b.get("sources"),
+                    "feedback": b.get("feedback"),
+                    "metadata": b.get("metadata"),
+                    "created_at": b.get("created_at"),
+                }
+                for b in sorted(rows, key=lambda r: r.get("branch_index", 0))
+            ]
+            for parent_id, rows in branches_by_parent.items()
+            if len(rows) > 1  # only emit when there's something to switch to
+        },
+    }
 
 
 @router.patch("/conversations/{conversation_id}")
-async def rename_conversation(
+async def update_conversation(
     conversation_id: str,
-    body: RenameConversationRequest,
+    body: UpdateConversationRequest,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
+    """Rename and/or pin a conversation. Either field is optional; supplying
+    neither is a 400. The pinned flag drives sidebar ordering via the
+    `(user_id, is_pinned DESC, updated_at DESC)` index added in migration 019.
+    """
     _, _, token = _require_org(current_user)
     client = get_user_client(token)
 
-    cleaned = " ".join(body.title.split())[:TITLE_MAX_LEN].strip()
-    if not cleaned:
+    payload: dict[str, Any] = {}
+    if body.title is not None:
+        cleaned = " ".join(body.title.split())[:TITLE_MAX_LEN].strip()
+        if not cleaned:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Title cannot be empty.",
+            )
+        payload["title"] = cleaned
+    if body.is_pinned is not None:
+        payload["is_pinned"] = body.is_pinned
+
+    if not payload:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Title cannot be empty.",
+            detail="Nothing to update.",
         )
 
     result = await asyncio.to_thread(
         lambda: client.table("conversations")
-        .update({"title": cleaned})
+        .update(payload)
         .eq("id", conversation_id)
         .execute()
     )
@@ -587,7 +799,458 @@ async def update_message_feedback(
             comment=f"User rated {body.feedback}",
         )
 
+    # V4 #18: analytics event for the admin dashboard feedback ratio. Only log
+    # actual ratings (not clears) — a "took back my thumb" event isn't useful.
+    if body.feedback is not None:
+        from app.services.analytics import track_event
+
+        await track_event(
+            org_id=current_user.get("org_id"),
+            user_id=current_user.get("user_id"),
+            event_type="feedback_given",
+            metadata={"feedback": body.feedback},
+        )
+
     return {"feedback": body.feedback}
+
+
+# ── Branching (V3 Day 3 #42) ────────────────────────────────────────────────
+
+@router.post("/messages/{message_id}/regenerate")
+async def regenerate_message(
+    message_id: str,
+    body: RegenerateRequest,
+    request: Request,
+    current_user: dict = Depends(verify_jwt),
+) -> StreamingResponse:
+    """Stream a new assistant branch in place of the given assistant message.
+
+    Semantics:
+      * The new branch shares `parent_user_message_id` with all siblings of
+        the message being regenerated. branch_index is `max(existing)+1`.
+      * On success, all sibling branches of this parent are flipped to
+        `is_active_branch=false`; the new row is the only active one.
+      * Failures leave the existing branch active — we never clear the old
+        active without a successful replacement.
+      * Optional `refinement` rides inside the user prompt as an inline
+        "[Refinement: ...]" suffix so the LLM treats it as steering, not as
+        a wholesale new question.
+
+    SSE shape mirrors POST /chat/stream so the frontend's stream consumer
+    is shared between the two flows.
+    """
+    if not _is_uuid(message_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid message id.")
+
+    org_id, user_id, token = _require_org(current_user)
+    await enforce_chat_quota(user_id=user_id, org_id=org_id)
+    client = get_user_client(token)
+    request_id = getattr(request.state, "request_id", None)
+
+    original = await asyncio.to_thread(
+        lambda: client.table("messages")
+        .select(
+            "id, role, conversation_id, parent_user_message_id, branch_index"
+        )
+        .eq("id", message_id)
+        .maybe_single()
+        .execute()
+    )
+    if not original or not original.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found.")
+    if original.data.get("role") != "assistant":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only assistant messages can be regenerated.",
+        )
+
+    conversation_id = original.data["conversation_id"]
+    parent_user_message_id = original.data.get("parent_user_message_id")
+    if not parent_user_message_id:
+        # Pre-migration assistant message — figure out which user message
+        # produced it by walking back to the previous user row in time.
+        parent_user_message_id = await _find_preceding_user_message(
+            client, conversation_id=conversation_id, before=message_id
+        )
+        if not parent_user_message_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot regenerate — no prior user message found.",
+            )
+
+    user_msg = await asyncio.to_thread(
+        lambda: client.table("messages")
+        .select("content")
+        .eq("id", parent_user_message_id)
+        .maybe_single()
+        .execute()
+    )
+    if not user_msg or not user_msg.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Original prompt missing.")
+
+    base_prompt = (user_msg.data.get("content") or "").strip()
+    refinement = (body.refinement or "").strip()
+    effective_prompt = (
+        f"{base_prompt}\n\n[Refinement: {refinement}]" if refinement else base_prompt
+    )
+    if not effective_prompt:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty prompt.")
+
+    siblings = await asyncio.to_thread(
+        lambda: client.table("messages")
+        .select("branch_index")
+        .eq("parent_user_message_id", parent_user_message_id)
+        .execute()
+    )
+    sibling_rows = siblings.data or []
+    next_branch_index = max((r.get("branch_index", 0) for r in sibling_rows), default=-1) + 1
+
+    # Load conversation context — same shape as POST /chat/stream, but bounded
+    # to the *active branch only* so we don't feed the LLM contradictory
+    # alternate replies.
+    history = await _load_history_active_branch(client, conversation_id)
+    summary = await load_conversation_summary(conversation_id, client=client)
+
+    async def event_stream() -> AsyncIterator[bytes]:
+        yield _sse(
+            {
+                "type": "start",
+                "conversation_id": conversation_id,
+                "parent_user_message_id": parent_user_message_id,
+                "branch_index": next_branch_index,
+            }
+        )
+
+        events_queue: asyncio.Queue[OrchestratorEvent | None] = asyncio.Queue()
+
+        async def producer() -> None:
+            try:
+                async for ev in execute_task(
+                    user_message=effective_prompt,
+                    org_id=org_id,
+                    db_client=client,
+                    history=history,
+                    stream=True,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    conversation_summary=summary,
+                ):
+                    await events_queue.put(ev)
+            finally:
+                await events_queue.put(None)
+
+        final_text = ""
+        final_sources: list[dict] = []
+        tool_calls_made = 0
+        trace_id: str | None = None
+        confidence_evt: ConfidenceEvent | None = None
+        final_intent: str = ""
+        had_error = False
+        error_payload: dict | None = None
+
+        producer_task = asyncio.create_task(producer())
+        last_emit = time.monotonic()
+
+        try:
+            while True:
+                try:
+                    timeout = max(0.1, SSE_HEARTBEAT_SECONDS - (time.monotonic() - last_emit))
+                    ev = await asyncio.wait_for(events_queue.get(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    yield b": keepalive\n\n"
+                    last_emit = time.monotonic()
+                    continue
+
+                if ev is None:
+                    break
+
+                payload = _event_to_payload(ev)
+                if payload is not None:
+                    yield _sse(payload)
+                    last_emit = time.monotonic()
+
+                if isinstance(ev, FinalEvent):
+                    final_text = ev.text
+                    final_sources = ev.sources
+                    tool_calls_made = ev.tool_calls_made
+                    trace_id = ev.trace_id
+                    final_intent = ev.intent
+                elif isinstance(ev, ConfidenceEvent):
+                    confidence_evt = ev
+                elif isinstance(ev, ErrorEvent):
+                    had_error = True
+                    error_payload = {
+                        "type": "error",
+                        "code": "upstream_unavailable",
+                        "message": ev.message,
+                        "request_id": request_id,
+                    }
+        except Exception as exc:
+            log.exception("regenerate_stream_unhandled", error=str(exc))
+            yield _sse(
+                {
+                    "type": "error",
+                    "code": "internal_error",
+                    "message": "Something broke while regenerating. Try again.",
+                    "request_id": request_id,
+                }
+            )
+            producer_task.cancel()
+            return
+        finally:
+            if not producer_task.done():
+                producer_task.cancel()
+
+        if had_error and error_payload is not None:
+            yield _sse(error_payload)
+            return
+
+        if not final_text:
+            yield _sse(
+                {
+                    "type": "error",
+                    "code": "upstream_unavailable",
+                    "message": "Empty regeneration. The old answer is unchanged.",
+                    "request_id": request_id,
+                }
+            )
+            return
+
+        try:
+            # Two-step branch flip: deactivate siblings, then insert active.
+            # The partial unique index uniq_messages_active_branch_per_group
+            # would 23505 if we tried to insert active while another active
+            # row exists, so the order matters.
+            await asyncio.to_thread(
+                lambda: client.table("messages")
+                .update({"is_active_branch": False})
+                .eq("parent_user_message_id", parent_user_message_id)
+                .execute()
+            )
+            new_id = await _save_message(
+                client,
+                conversation_id=conversation_id,
+                org_id=org_id,
+                role="assistant",
+                content=final_text,
+                sources=final_sources,
+                trace_id=trace_id,
+                confidence=confidence_evt,
+                parent_user_message_id=parent_user_message_id,
+                branch_index=next_branch_index,
+                is_active_branch=True,
+                intent=final_intent,
+            )
+            await _touch_conversation(client, conversation_id)
+            await _fire_summarize_event(conversation_id, org_id)
+            await record_citations(
+                sources=final_sources,
+                message_id=new_id,
+                conversation_id=conversation_id,
+                org_id=org_id,
+            )
+            yield _sse(
+                {
+                    "type": "done",
+                    "message_id": new_id,
+                    "parent_user_message_id": parent_user_message_id,
+                    "branch_index": next_branch_index,
+                    "total_branches": len(sibling_rows) + 1,
+                    "tool_calls": tool_calls_made,
+                }
+            )
+        except Exception as exc:
+            log.exception("regen_save_failed", error=str(exc))
+            yield _sse(
+                {
+                    "type": "error",
+                    "code": "internal_error",
+                    "message": "Regenerated, but failed to save. The old answer is unchanged.",
+                    "request_id": request_id,
+                }
+            )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.patch("/messages/{message_id}/active-branch")
+async def set_active_branch(
+    message_id: str,
+    body: ActiveBranchRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Flip which branch in the regen group is rendered as the canonical answer.
+
+    `message_id` identifies any one of the siblings; we look up the group via
+    `parent_user_message_id` and atomically activate the row at `branch_index`,
+    deactivating all others. RLS scopes both updates to the caller's org.
+    """
+    if not _is_uuid(message_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid message id.")
+
+    _, _, token = _require_org(current_user)
+    client = get_user_client(token)
+
+    anchor = await asyncio.to_thread(
+        lambda: client.table("messages")
+        .select("parent_user_message_id, conversation_id, role")
+        .eq("id", message_id)
+        .maybe_single()
+        .execute()
+    )
+    if not anchor or not anchor.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found.")
+    if anchor.data.get("role") != "assistant":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not an assistant message.")
+    parent_id = anchor.data.get("parent_user_message_id")
+    if not parent_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This message has no regeneration history.",
+        )
+
+    target = await asyncio.to_thread(
+        lambda: client.table("messages")
+        .select("id")
+        .eq("parent_user_message_id", parent_id)
+        .eq("branch_index", body.branch_index)
+        .maybe_single()
+        .execute()
+    )
+    if not target or not target.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Branch not found.")
+
+    await asyncio.to_thread(
+        lambda: client.table("messages")
+        .update({"is_active_branch": False})
+        .eq("parent_user_message_id", parent_id)
+        .execute()
+    )
+    result = await asyncio.to_thread(
+        lambda: client.table("messages")
+        .update({"is_active_branch": True})
+        .eq("id", target.data["id"])
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Branch flip failed.")
+    return {
+        "active_message_id": target.data["id"],
+        "branch_index": body.branch_index,
+    }
+
+
+# ── Export (V3 Day 4 #25) ────────────────────────────────────────────────────
+
+@router.get("/conversations/{conversation_id}/export")
+async def export_conversation(
+    conversation_id: str,
+    format: str = Query("markdown", pattern="^(markdown|json)$"),
+    current_user: dict = Depends(verify_jwt),
+) -> Response:
+    """Export a conversation as markdown (download) or JSON (raw).
+
+    Markdown is what users actually want — it pastes cleanly into Notion,
+    Google Docs, Slack, and email clients. JSON is offered for power users
+    and integrations. Only the *active* branch per regen group is included
+    so the export reflects what the user saw on screen.
+    """
+    _, _, token = _require_org(current_user)
+    client = get_user_client(token)
+
+    convo = await asyncio.to_thread(
+        lambda: client.table("conversations")
+        .select("id, title, created_at, updated_at")
+        .eq("id", conversation_id)
+        .maybe_single()
+        .execute()
+    )
+    if not convo or not convo.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+
+    msgs = await asyncio.to_thread(
+        lambda: client.table("messages")
+        .select("role, content, sources, created_at, is_active_branch, parent_user_message_id")
+        .eq("conversation_id", conversation_id)
+        .order("created_at")
+        .execute()
+    )
+    rows = msgs.data or []
+    # User rows have no branching; assistant rows must be active. Also include
+    # legacy assistant rows that pre-date branching (no parent_user_message_id).
+    timeline = [
+        r for r in rows
+        if r.get("role") == "user"
+        or r.get("is_active_branch")
+        or r.get("parent_user_message_id") is None
+    ]
+
+    title = (convo.data.get("title") or "Conversation").strip()
+    slug = _slugify(title) or "conversation"
+
+    if format == "json":
+        return Response(
+            content=json.dumps(
+                {
+                    "conversation": convo.data,
+                    "messages": [
+                        {
+                            "role": m.get("role"),
+                            "content": m.get("content"),
+                            "sources": m.get("sources"),
+                            "created_at": m.get("created_at"),
+                        }
+                        for m in timeline
+                    ],
+                },
+                separators=(",", ":"),
+            ),
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{slug}.json"',
+            },
+        )
+
+    lines: list[str] = [
+        f"# {title}",
+        "",
+        f"*Exported from Company Brain — {_format_export_ts()}*",
+        "",
+        "---",
+        "",
+    ]
+    for m in timeline:
+        role = "**You**" if m.get("role") == "user" else "**Company Brain**"
+        lines.append(role)
+        lines.append("")
+        lines.append((m.get("content") or "").rstrip())
+        sources = m.get("sources") or []
+        if sources:
+            names = ", ".join(
+                str(s.get("document_name") or s.get("name") or "Untitled")
+                for s in sources[:5]
+            )
+            lines.append("")
+            lines.append(f"*Sources: {names}*")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    return Response(
+        content="\n".join(lines),
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{slug}.md"',
+        },
+    )
 
 
 # ── DB helpers ───────────────────────────────────────────────────────────────
@@ -608,24 +1271,34 @@ async def _ensure_conversation(
     user_id: str,
     first_message: str,
     scoped_document_id: str | None = None,
-) -> tuple[str, str | None]:
-    """Look up or create the conversation; return (id, scoped_document_id).
+    scoped_tags: list[str] | None = None,
+) -> tuple[str, str | None, list[str]]:
+    """Look up or create the conversation; return (id, scoped_document_id, scoped_tags).
 
     Scope is only honored at *creation* — we ignore an attempt to retro-scope
     an existing conversation because the LLM may have already produced
     answers under the assumption that all docs were available.
+
+    `scoped_tags` is a sibling of `scoped_document_id`. The two are not
+    mutually exclusive at the schema level, but the chat UI never sets both
+    at once — doc-pinning is a per-document affordance, tag-pinning is a
+    multi-tag affordance from the new-chat surface.
     """
     if conversation_id:
         check = await asyncio.to_thread(
             lambda: client.table("conversations")
-            .select("id, scoped_document_id")
+            .select("id, scoped_document_id, scoped_tags")
             .eq("id", conversation_id)
             .maybe_single()
             .execute()
         )
         if not check.data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
-        return conversation_id, check.data.get("scoped_document_id")
+        return (
+            conversation_id,
+            check.data.get("scoped_document_id"),
+            list(check.data.get("scoped_tags") or []),
+        )
 
     # New conversation — validate scope (if provided) before persisting.
     persisted_scope: str | None = None
@@ -643,6 +1316,19 @@ async def _ensure_conversation(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scoped document not found.")
         persisted_scope = scoped_document_id
 
+    # Normalize tag scope at the API boundary so what we persist matches what
+    # `documents.tags` stores — saves us a normalization step inside the
+    # retrieval path on every search call.
+    persisted_tags: list[str] = []
+    if scoped_tags:
+        seen: set[str] = set()
+        for raw in scoped_tags:
+            cleaned = (raw or "").strip().lower()
+            if not cleaned or cleaned in seen:
+                continue
+            seen.add(cleaned)
+            persisted_tags.append(cleaned)
+
     new_id = str(uuid.uuid4())
     title = _derive_title(first_message)
     row: dict[str, Any] = {
@@ -653,10 +1339,12 @@ async def _ensure_conversation(
     }
     if persisted_scope:
         row["scoped_document_id"] = persisted_scope
+    if persisted_tags:
+        row["scoped_tags"] = persisted_tags
     await asyncio.to_thread(
         lambda: client.table("conversations").insert(row).execute()
     )
-    return new_id, persisted_scope
+    return new_id, persisted_scope, persisted_tags
 
 
 async def _load_history(client: Client, conversation_id: str) -> list[Message]:
@@ -750,6 +1438,10 @@ async def _save_message(
     sources: list[dict] | None,
     trace_id: str | None = None,
     confidence: ConfidenceEvent | None = None,
+    parent_user_message_id: str | None = None,
+    branch_index: int = 0,
+    is_active_branch: bool = True,
+    intent: str | None = None,
 ) -> str:
     new_id = str(uuid.uuid4())
     metadata: dict[str, Any] = {}
@@ -759,6 +1451,8 @@ async def _save_message(
             "score": confidence.score,
             "n": confidence.chunks_considered,
         }
+    if intent:
+        metadata["intent"] = intent
     row: dict[str, Any] = {
         "id": new_id,
         "conversation_id": conversation_id,
@@ -771,10 +1465,137 @@ async def _save_message(
         row["langfuse_trace_id"] = trace_id
     if metadata:
         row["metadata"] = metadata
+    if parent_user_message_id:
+        row["parent_user_message_id"] = parent_user_message_id
+        row["branch_index"] = branch_index
+        row["is_active_branch"] = is_active_branch
     await asyncio.to_thread(
         lambda: client.table("messages").insert(row).execute()
     )
     return new_id
+
+
+async def _emit_chat_analytics(
+    *,
+    org_id: str,
+    user_id: str,
+    query: str,
+    intent: str,
+    source_count: int,
+) -> None:
+    """Fire analytics + activity for a completed turn. Never raises.
+
+    Separated from the chat endpoints so both /chat and /chat/stream stay
+    readable; both call this after a successful save. We don't gate on intent
+    here — the activity feed surfaces task_generation as "an output", everything
+    else as the generic intent label. Privacy is resolved per-call so a user
+    flipping the toggle takes effect on their NEXT turn, not retroactively.
+    """
+    try:
+        from app.services.analytics import track_event
+        from app.services.activity import (
+            INTENT_FEED_LABEL,
+            log_activity,
+            resolve_user_privacy,
+        )
+
+        await track_event(
+            org_id=org_id,
+            user_id=user_id,
+            event_type="chat_sent",
+            metadata={
+                "intent": intent or "unknown",
+                "query_len": len(query),
+                "source_count": source_count,
+            },
+        )
+
+        if intent == "task_generation":
+            is_private = await resolve_user_privacy(user_id)
+            await log_activity(
+                org_id=org_id,
+                user_id=user_id,
+                activity_type="generated_content",
+                metadata={"intent_label": INTENT_FEED_LABEL.get(intent, "content")},
+                is_private=is_private,
+            )
+    except Exception as exc:
+        log.warning("chat_analytics_emit_failed", error=str(exc))
+
+
+async def _load_history_active_branch(
+    client: Client, conversation_id: str
+) -> list[Message]:
+    """Same shape as `_load_history`, but ignores inactive assistant branches.
+
+    Used by the regenerate stream so the LLM never sees both an older answer
+    and the one it's about to replace — otherwise it might "double down" on
+    the answer the user is actively rejecting.
+    """
+    settings = get_settings()
+    n = settings.chat_history_turns
+    result = await asyncio.to_thread(
+        lambda: client.table("messages")
+        .select("role, content, is_active_branch, parent_user_message_id")
+        .eq("conversation_id", conversation_id)
+        .order("created_at", desc=True)
+        .limit(n * 2)  # over-fetch — we filter, then trim to n
+        .execute()
+    )
+    rows = list(reversed(result.data or []))
+    out: list[Message] = []
+    for row in rows:
+        role = row["role"]
+        if role not in ("user", "assistant"):
+            continue
+        if role == "assistant":
+            # Skip non-active branches AND skip legacy rows with no parent
+            # only when they explicitly carry is_active_branch=false (which
+            # backfill would have set true). Concretely: only emit assistant
+            # rows the user is currently looking at.
+            if not row.get("is_active_branch", True):
+                continue
+        content = row.get("content") or ""
+        if not content:
+            continue
+        out.append(Message(role=role, content=content))
+    return out[-n:]
+
+
+async def _find_preceding_user_message(
+    client: Client, *, conversation_id: str, before: str
+) -> str | None:
+    """For pre-branching assistant rows: find the user msg that produced them."""
+    anchor = await asyncio.to_thread(
+        lambda: client.table("messages")
+        .select("created_at")
+        .eq("id", before)
+        .maybe_single()
+        .execute()
+    )
+    if not anchor or not anchor.data:
+        return None
+    prior = await asyncio.to_thread(
+        lambda: client.table("messages")
+        .select("id")
+        .eq("conversation_id", conversation_id)
+        .eq("role", "user")
+        .lt("created_at", anchor.data["created_at"])
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    rows = prior.data or []
+    return rows[0]["id"] if rows else None
+
+
+def _slugify(text: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+    return cleaned[:60] or "conversation"
+
+
+def _format_export_ts() -> str:
+    return datetime.now(timezone.utc).strftime("%B %d, %Y at %H:%M UTC")
 
 
 async def _fire_query_completed_webhook(
@@ -862,6 +1683,8 @@ def _sse(payload: dict) -> bytes:
 
 
 def _event_to_payload(event: OrchestratorEvent) -> dict | None:
+    if isinstance(event, IntentEvent):
+        return {"type": "intent", "intent": event.intent}
     if isinstance(event, SearchingEvent):
         return {"type": "searching", "query": event.query}
     if isinstance(event, SearchedEvent):

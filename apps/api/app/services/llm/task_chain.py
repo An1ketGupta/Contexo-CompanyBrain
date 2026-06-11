@@ -29,6 +29,11 @@ from typing import Any, AsyncIterator, Literal
 from supabase import Client
 
 from app.config import get_settings
+from app.services.intent import (
+    QueryIntent,
+    classify_intent,
+    overlay_for as intent_overlay_for,
+)
 from app.services.langfuse import (
     current_trace_id,
     observe,
@@ -80,6 +85,20 @@ class TokenEvent:
 
 
 @dataclass(frozen=True)
+class IntentEvent:
+    """Emitted once at the very start of the task, before any retrieval.
+
+    Tells the UI which prompt mode the orchestrator picked so it can show a
+    subtle "Writing mode" / "Analysis mode" badge on the in-flight bubble.
+    The label is informational only — the orchestrator already applied the
+    intent-specific system prompt overlay before this fires.
+    """
+
+    kind: Literal["intent"] = field(default="intent", init=False)
+    intent: str = ""
+
+
+@dataclass(frozen=True)
 class FinalEvent:
     """The full assistant message text, emitted at the end of either path."""
 
@@ -91,6 +110,10 @@ class FinalEvent:
     # Persisted on `messages.langfuse_trace_id` so feedback scores can be
     # attached back to the trace that produced the answer.
     trace_id: str | None = None
+    # The intent classifier's label for the user message that produced this
+    # answer. Persisted on `messages.metadata.intent` so we can slice metrics
+    # by intent later (which mode is the slow one? which has lower thumbs?).
+    intent: str = ""
 
 
 @dataclass(frozen=True)
@@ -145,6 +168,7 @@ OrchestratorEvent = (
     | ErrorEvent
     | KnowledgeGapEvent
     | ConfidenceEvent
+    | IntentEvent
 )
 
 
@@ -203,6 +227,7 @@ async def execute_task(
     user_id: str | None = None,
     conversation_id: str | None = None,
     scoped_document_id: str | None = None,
+    scoped_tags: list[str] | None = None,
     conversation_summary: str | None = None,
 ) -> AsyncIterator[OrchestratorEvent]:
     """Run one user task through the LLM+retrieval loop.
@@ -229,6 +254,13 @@ async def execute_task(
 
     messages: list[Message] = list(history or [])
     messages.append(Message(role="user", content=user_message))
+
+    # Day 4 #51 — intent classification. Zero-cost keyword pass; the result
+    # drives a per-intent system-prompt overlay and flows to the UI so it
+    # can render a mode badge. Emitted *before* any retrieval so the UI can
+    # paint the badge alongside the "Thinking…" indicator.
+    intent_result = classify_intent(user_message)
+    yield IntentEvent(intent=intent_result.intent.value)
 
     all_hits: list[SearchHit] = []
     seen_queries: set[str] = set()
@@ -259,6 +291,23 @@ async def execute_task(
                 f"{org_instructions}\n\n{scope_note}" if org_instructions else scope_note
             )
 
+    # Tag-scoped chat (V3 #19). Resolve the tag set to a concrete doc-id list
+    # exactly once per task — passing the tag array down through every search
+    # would either mean an extra query per search call (wasteful) or pushing
+    # the tag→doc join into the search SQL (touches the tuned index path).
+    # The resolved list is small (at most N matching docs) and stable for the
+    # life of this task.
+    scoped_document_ids: list[str] | None = None
+    if scoped_tags:
+        scoped_document_ids = await _resolve_tag_scope(
+            db_client, org_id=org_id, tags=scoped_tags
+        )
+        tag_note = _tag_scope_system_note(scoped_tags, scoped_document_ids)
+        if tag_note:
+            org_instructions = (
+                f"{org_instructions}\n\n{tag_note}" if org_instructions else tag_note
+            )
+
     # Conversation summary (Day 12 / #53). Injected as a system note ahead of
     # the live history window so the LLM stays coherent on long threads
     # without us re-sending hundreds of earlier-turn tokens.
@@ -270,6 +319,13 @@ async def execute_task(
         org_instructions = (
             f"{org_instructions}\n\n{summary_note}" if org_instructions else summary_note
         )
+
+    # Day 4 #51 — append the intent overlay last so it sits closest to the
+    # user turn. Order matters: org rules → summary → mode-specific guidance.
+    intent_overlay = intent_overlay_for(intent_result.intent)
+    org_instructions = (
+        f"{org_instructions}\n\n{intent_overlay}" if org_instructions else intent_overlay
+    )
 
     started = time.perf_counter()
     final_text = ""
@@ -288,8 +344,10 @@ async def execute_task(
                 "org_id": org_id,
                 "history_turns": len(history or []),
                 "stream": stream,
+                "intent": intent_result.intent.value,
+                "intent_keywords": list(intent_result.matched_patterns),
             },
-            tags=["chat"],
+            tags=["chat", f"intent:{intent_result.intent.value}"],
         )
 
         for round_idx in range(settings.chat_max_tool_rounds + 1):
@@ -357,6 +415,7 @@ async def execute_task(
                         db_client,
                         settings.chat_search_k,
                         document_id=scoped_document_id,
+                        document_ids=scoped_document_ids,
                     )
                     for tc in valid_calls
                 ],
@@ -446,6 +505,7 @@ async def execute_task(
             sources=sources,
             tool_calls_made=tool_call_total,
             trace_id=trace_id,
+            intent=intent_result.intent.value,
         )
 
 
@@ -481,8 +541,68 @@ async def _run_search(
     k: int,
     *,
     document_id: str | None = None,
+    document_ids: list[str] | None = None,
 ) -> list[SearchHit]:
-    return await hybrid_search(query, org_id, client, k=k, document_id=document_id)
+    return await hybrid_search(
+        query,
+        org_id,
+        client,
+        k=k,
+        document_id=document_id,
+        document_ids=document_ids,
+    )
+
+
+async def _resolve_tag_scope(
+    client: Client, *, org_id: str, tags: list[str]
+) -> list[str]:
+    """Look up document_ids for all docs in `org_id` carrying any of `tags`.
+
+    Semantics: OR across tags (a doc with ANY of the requested tags counts).
+    We picked OR over AND because the chat scope selector is a multi-pick
+    "search in: HR or Legal or Finance" affordance, not an intersection
+    filter. Empty result is meaningful — it means the scope yields no docs,
+    and downstream retrieval correctly short-circuits to "no results".
+    """
+    clean = [t.strip().lower() for t in tags if t and t.strip()]
+    if not clean:
+        return []
+    try:
+        res = await asyncio.to_thread(
+            lambda: client.table("documents")
+            .select("id")
+            .eq("org_id", org_id)
+            .overlaps("tags", clean)
+            .execute()
+        )
+    except Exception as exc:
+        log.warning("tag_scope_resolution_failed: %s", exc)
+        # Fail open to the empty set, not to "unscoped" — leaking docs the
+        # user explicitly excluded would be worse than returning nothing.
+        return []
+    rows = getattr(res, "data", None) or []
+    return [r["id"] for r in rows if r.get("id")]
+
+
+def _tag_scope_system_note(
+    tags: list[str], document_ids: list[str] | None
+) -> str | None:
+    """Tell the LLM about the active tag scope, mirroring the doc-scope note."""
+    if not tags:
+        return None
+    tag_csv = ", ".join(f'"{t}"' for t in tags[:8])
+    if not document_ids:
+        return (
+            f"SCOPE: This conversation is restricted to documents tagged "
+            f"{tag_csv}, but no documents currently carry those tags. Tell the "
+            f"user so explicitly — do not draw on the rest of the knowledge "
+            f"base or prior knowledge."
+        )
+    return (
+        f"SCOPE: All retrieval for this conversation is restricted to the "
+        f"{len(document_ids)} document(s) tagged {tag_csv}. If those documents "
+        f"don't cover what the user asks, say so explicitly."
+    )
 
 
 def _extract_query(tc: ToolCall) -> str:

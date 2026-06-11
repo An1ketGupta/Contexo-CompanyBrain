@@ -77,6 +77,15 @@ async def record_citations(
         except Exception as exc:
             log.warning("bump_document_citations failed: %s", exc)
 
+        # V4 #34: feed the health-score "recency" signal. Best-effort; the
+        # nightly cron will use last_accessed_at the next time it runs.
+        try:
+            from app.services.health_score import touch_last_accessed
+
+            await touch_last_accessed(doc_ids)
+        except Exception as exc:
+            log.warning("touch_last_accessed failed: %s", exc)
+
     return len(rows)
 
 
