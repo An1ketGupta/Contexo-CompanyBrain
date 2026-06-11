@@ -9,6 +9,17 @@ import { useCurrentUser } from "./use-user";
 interface RealtimeHandlers {
   onUpsert: (doc: Document) => void;
   onRemove: (id: string) => void;
+  /**
+   * Suppress success/failure toasts. Useful when a separate global hook
+   * (see `useDocumentReadyToast`) is already responsible for surfacing
+   * notifications — otherwise the toast double-fires on the documents page.
+   */
+  silentToasts?: boolean;
+}
+
+interface PendingToast {
+  name: string;
+  kind: "ready" | "failed";
 }
 
 /**
@@ -24,13 +35,37 @@ interface RealtimeHandlers {
  *   * Inserts and routine status transitions stay silent — the table itself
  *     is reactive enough.
  */
-export function useDocumentsRealtime({ onUpsert, onRemove }: RealtimeHandlers) {
+export function useDocumentsRealtime({
+  onUpsert,
+  onRemove,
+  silentToasts,
+}: RealtimeHandlers) {
   const { organization } = useCurrentUser();
   const orgId = organization?.id ?? null;
 
   // Remember the last status we *toasted* about per doc, so reordering or
   // re-subscribing doesn't double-fire notifications.
   const lastStatusRef = useRef<Map<string, DocumentStatus>>(new Map());
+
+  // V4 #60: defer toasts that fire while the tab is hidden so the user gets
+  // an actionable "welcome back" surface instead of a buried notification.
+  const queuedRef = useRef<PendingToast[]>([]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const drain = () => {
+      if (document.hidden) return;
+      const queue = queuedRef.current;
+      if (queue.length === 0) return;
+      queuedRef.current = [];
+      for (const item of queue) {
+        emitDocStatusToast(item);
+      }
+    };
+    document.addEventListener("visibilitychange", drain);
+    drain();
+    return () => document.removeEventListener("visibilitychange", drain);
+  }, []);
 
   useEffect(() => {
     if (!orgId) return;
@@ -65,10 +100,21 @@ export function useDocumentsRealtime({ onUpsert, onRemove }: RealtimeHandlers) {
           if (payload.eventType === "UPDATE") {
             const prev = lastStatusRef.current.get(row.id);
             if (prev !== row.status) {
-              if (row.status === "ready" && prev !== "ready") {
-                toast.success(`"${row.name}" is ready to use.`);
-              } else if (row.status === "failed" && prev !== "failed") {
-                toast.error(`"${row.name}" failed to process. Try re-uploading.`);
+              const pending: PendingToast | null =
+                row.status === "ready" && prev !== "ready"
+                  ? { name: row.name, kind: "ready" }
+                  : row.status === "failed" && prev !== "failed"
+                    ? { name: row.name, kind: "failed" }
+                    : null;
+              if (pending && !silentToasts) {
+                if (
+                  typeof document !== "undefined" &&
+                  document.hidden
+                ) {
+                  queuedRef.current.push(pending);
+                } else {
+                  emitDocStatusToast(pending);
+                }
               }
               lastStatusRef.current.set(row.id, row.status);
             }
@@ -86,4 +132,23 @@ export function useDocumentsRealtime({ onUpsert, onRemove }: RealtimeHandlers) {
       supabase.removeChannel(channel);
     };
   }, [orgId, onUpsert, onRemove]);
+}
+
+function emitDocStatusToast(pending: PendingToast) {
+  if (pending.kind === "ready") {
+    toast.success(`"${pending.name}" is ready to use.`, {
+      description: "Ask a question and the AI will draw on it.",
+      action: {
+        label: "Ask",
+        onClick: () => {
+          if (typeof window !== "undefined") {
+            window.location.href = "/chat";
+          }
+        },
+      },
+      duration: 8000,
+    });
+  } else {
+    toast.error(`"${pending.name}" failed to process. Try re-uploading.`);
+  }
 }

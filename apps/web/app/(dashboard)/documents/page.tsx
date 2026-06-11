@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { FileText } from "lucide-react";
 import { UploadDialog } from "@/components/documents/upload-dialog";
+import { DocumentCardList } from "@/components/documents/document-card-list";
 import { DocumentTable } from "@/components/documents/document-table";
 import { DocumentFiltersBar } from "@/components/documents/document-filters";
 import { BulkActionBar } from "@/components/documents/bulk-action-bar";
@@ -37,6 +38,9 @@ export default function DocumentsPage() {
   useDocumentsRealtime({
     onUpsert: upsertDocument,
     onRemove: removeDocument,
+    // The dashboard layout owns the global "ready" toast (V4 #60) so we
+    // mute it here to avoid double-firing on the documents page.
+    silentToasts: true,
   });
 
   const filtering = isFiltering(filters);
@@ -77,14 +81,25 @@ export default function DocumentsPage() {
       ) : isEmpty ? (
         filtering ? <NoMatchesState onClear={() => setFilters(DEFAULT_FILTERS)} /> : <EmptyState />
       ) : (
-        <DocumentTable
-          documents={documents}
-          selectedIds={selectedIds}
-          onSelectionChange={setSelectedIds}
-          onDelete={deleteDocument}
-          onRetry={retryDocument}
-          onUpdateTags={updateTags}
-        />
+        <>
+          <div className="hidden md:block">
+            <DocumentTable
+              documents={documents}
+              selectedIds={selectedIds}
+              onSelectionChange={setSelectedIds}
+              onDelete={deleteDocument}
+              onRetry={retryDocument}
+              onUpdateTags={updateTags}
+            />
+          </div>
+          <div className="md:hidden">
+            <DocumentCardList
+              documents={documents}
+              onDelete={deleteDocument}
+              onRetry={retryDocument}
+            />
+          </div>
+        </>
       )}
     </div>
   );

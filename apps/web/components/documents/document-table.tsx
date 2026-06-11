@@ -16,9 +16,12 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FileIcon } from "./file-icon";
 import { StatusBadge } from "./status-badge";
+import { HealthBadge } from "./health-badge";
 import { DeleteDocumentDialog } from "./delete-document-dialog";
 import { ProcessingIndicator } from "./processing-indicator";
 import { TagDialog } from "./tag-dialog";
+import { UploadVersionButton } from "./upload-version-button";
+import { useCurrentUser } from "@/hooks/use-user";
 
 interface DocumentTableProps {
   documents: Document[];
@@ -168,6 +171,8 @@ function Row({
 }) {
   const [tagOpen, setTagOpen] = useState(false);
   const [savingTags, setSavingTags] = useState(false);
+  const { user } = useCurrentUser();
+  const isAdmin = user?.role === "admin";
 
   return (
     <tr
@@ -240,14 +245,22 @@ function Row({
         {doc.status === "processing" ? (
           <ProcessingIndicator startedAt={doc.created_at} />
         ) : (
-          <StatusBadge
-            status={doc.status}
-            embeddingStats={extractEmbeddingStats(doc.metadata)}
-          />
+          <div className="flex flex-wrap items-center gap-1.5">
+            <StatusBadge
+              status={doc.status}
+              embeddingStats={extractEmbeddingStats(doc.metadata)}
+            />
+            {doc.status === "ready" && doc.health_label ? (
+              <HealthBadge
+                label={doc.health_label}
+                score={doc.health_score ?? null}
+              />
+            ) : null}
+          </div>
         )}
       </td>
       <td className="px-4 py-3 text-right">
-        <div className="flex items-center justify-end gap-1">
+        <div className="flex items-center justify-end gap-2">
           {doc.status === "ready" && (
             <Button asChild variant="ghost" size="sm">
               <Link
@@ -258,6 +271,12 @@ function Row({
                 Ask
               </Link>
             </Button>
+          )}
+          {isAdmin && doc.status === "ready" && (
+            <UploadVersionButton
+              documentId={doc.id}
+              documentName={doc.name}
+            />
           )}
           {(doc.status === "failed" || hasFailedChunks(doc.metadata)) && (
             <RetryButton id={doc.id} name={doc.name} onRetry={onRetry} />
