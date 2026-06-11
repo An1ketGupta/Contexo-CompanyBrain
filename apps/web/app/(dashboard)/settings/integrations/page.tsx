@@ -11,9 +11,9 @@ import {
   Copy,
   Folder,
   Loader2,
+  MessageSquare,
   Plus,
   RefreshCw,
-  Slack,
   Trash2,
   Unplug,
 } from "lucide-react";
@@ -41,6 +41,7 @@ interface SlackStatus {
   available: boolean;
   connected: boolean;
   workspace_name: string | null;
+  installed_at: string | null;
 }
 interface StatusResponse {
   drive: DriveStatus;
@@ -93,7 +94,7 @@ export default function IntegrationsPage() {
           <DriveCard status={data.drive} onChanged={mutate} />
           <NotionCard status={data.notion} onChanged={mutate} />
           <EmailCard status={data.email} onChanged={mutate} />
-          <SlackCard onChanged={mutate} />
+          <SlackCard status={data.slack} onChanged={mutate} />
         </div>
       )}
     </div>
@@ -522,14 +523,32 @@ function EmailCard({
   );
 }
 
-function SlackCard({ onChanged }: { onChanged: () => void }) {
-  return (
-    <Card
-      icon={<Slack className="h-4 w-4" />}
-      title="Slack"
-      description="Run /brain from any channel to query your knowledge base."
-    >
-      <div className="flex items-center gap-2">
+function SlackCard({
+  status,
+  onChanged,
+}: {
+  status?: SlackStatus;
+  onChanged: () => void;
+}) {
+  if (!status || !status.available) {
+    return (
+      <Card
+        icon={<MessageSquare className="h-4 w-4" />}
+        title="Slack"
+        description="Not configured. Ask your operator to set SLACK_CLIENT_ID."
+      >
+        <p className="text-xs text-muted-foreground">Unavailable on this deploy.</p>
+      </Card>
+    );
+  }
+
+  if (!status.connected) {
+    return (
+      <Card
+        icon={<MessageSquare className="h-4 w-4" />}
+        title="Slack"
+        description="Run /brain from any channel to query your knowledge base."
+      >
         <Button
           size="sm"
           onClick={async () => {
@@ -541,24 +560,42 @@ function SlackCard({ onChanged }: { onChanged: () => void }) {
         >
           Add to Slack
         </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={async () => {
-            if (!confirm("Disconnect Slack?")) return;
-            const res = await fetch("/api/integrations/slack", {
-              method: "DELETE",
-            });
-            if (!res.ok) return toast.error("Disconnect failed");
-            toast.success("Disconnected");
-            onChanged();
-          }}
-        >
-          <Unplug className="h-3.5 w-3.5" /> Disconnect
-        </Button>
-      </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          After installing, try{" "}
+          <code className="rounded bg-muted px-1">/brain what is our refund policy?</code>{" "}
+          in any channel.
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card
+      icon={<MessageSquare className="h-4 w-4" />}
+      title={`Slack · ${status.workspace_name ?? "Workspace"}`}
+      description={
+        status.installed_at
+          ? `Installed ${new Date(status.installed_at).toLocaleString()}`
+          : "Connected"
+      }
+    >
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={async () => {
+          if (!confirm("Disconnect Slack?")) return;
+          const res = await fetch("/api/integrations/slack", {
+            method: "DELETE",
+          });
+          if (!res.ok) return toast.error("Disconnect failed");
+          toast.success("Disconnected");
+          onChanged();
+        }}
+      >
+        <Unplug className="h-3.5 w-3.5" /> Disconnect
+      </Button>
       <p className="mt-2 text-xs text-muted-foreground">
-        After installing, try{" "}
+        Try{" "}
         <code className="rounded bg-muted px-1">/brain what is our refund policy?</code>{" "}
         in any channel.
       </p>
