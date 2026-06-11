@@ -1,0 +1,367 @@
+/* Side panel is fixed at ~360-400px wide depending on Chrome's split. */
+:root {
+  --cb-indigo: #6366f1;
+  --cb-indigo-strong: #4f46e5;
+  --cb-bg: #ffffff;
+  --cb-surface: #f9fafb;
+  --cb-border: #e5e7eb;
+  --cb-text: #111827;
+  --cb-subtle: #6b7280;
+  --cb-success-bg: #dcfce7;
+  --cb-success-fg: #15803d;
+  --cb-error-bg: #fee2e2;
+  --cb-error-fg: #b91c1c;
+  --cb-radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  color: var(--cb-text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--cb-bg);
+}
+
+.cb-loading {
+  padding: 24px;
+  color: var(--cb-subtle);
+}
+
+.cb-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.cb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--cb-border);
+  background: var(--cb-surface);
+}
+
+.cb-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cb-logo-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--cb-indigo);
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15);
+}
+
+.cb-brand-text,
+.cb-brand h1 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.cb-page-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--cb-border);
+  background: #eff6ff;
+  font-size: 12px;
+}
+
+.cb-page-bar--disabled {
+  background: #f3f4f6;
+  color: var(--cb-subtle);
+}
+
+.cb-page-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cb-page-host {
+  font-size: 10px;
+  color: var(--cb-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cb-page-title {
+  font-size: 12px;
+  color: #1d4ed8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cb-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--cb-subtle);
+  cursor: pointer;
+}
+
+.cb-toast {
+  padding: 6px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--cb-border);
+}
+
+.cb-toast--ok {
+  background: var(--cb-success-bg);
+  color: var(--cb-success-fg);
+}
+
+.cb-toast--err {
+  background: var(--cb-error-bg);
+  color: var(--cb-error-fg);
+}
+
+.cb-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cb-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--cb-subtle);
+}
+
+.cb-empty em {
+  color: var(--cb-text);
+  font-style: italic;
+}
+
+.cb-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.cb-msg--user {
+  align-items: flex-end;
+}
+
+.cb-msg--asst {
+  align-items: flex-start;
+}
+
+.cb-msg-bubble {
+  padding: 8px 12px;
+  border-radius: 12px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  line-height: 1.5;
+  max-width: 90%;
+}
+
+.cb-msg--user .cb-msg-bubble {
+  background: var(--cb-indigo);
+  color: white;
+  border-bottom-right-radius: 2px;
+}
+
+.cb-msg--asst .cb-msg-bubble {
+  background: var(--cb-surface);
+  color: var(--cb-text);
+  border: 1px solid var(--cb-border);
+  border-bottom-left-radius: 2px;
+}
+
+.cb-cursor {
+  display: inline-block;
+  animation: cb-blink 1s steps(2) infinite;
+  margin-left: 1px;
+}
+
+@keyframes cb-blink {
+  to {
+    opacity: 0;
+  }
+}
+
+.cb-sources {
+  font-size: 11px;
+  color: var(--cb-subtle);
+  padding: 0 4px;
+}
+
+.cb-sources-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  font-size: 10px;
+  margin-bottom: 2px;
+}
+
+.cb-sources ul {
+  margin: 0;
+  padding-left: 14px;
+}
+
+.cb-sources li {
+  list-style: disc;
+}
+
+.cb-composer {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  padding: 8px;
+  border-top: 1px solid var(--cb-border);
+  background: var(--cb-bg);
+}
+
+.cb-composer textarea {
+  flex: 1;
+  resize: none;
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius);
+  padding: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.cb-composer textarea:focus {
+  border-color: var(--cb-indigo);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.cb-btn-primary,
+.cb-btn-ghost {
+  border: none;
+  border-radius: var(--cb-radius);
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cb-btn-primary {
+  background: var(--cb-indigo);
+  color: white;
+}
+
+.cb-btn-primary:hover:not(:disabled) {
+  background: var(--cb-indigo-strong);
+}
+
+.cb-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.cb-btn-sm {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+
+.cb-btn-ghost {
+  background: transparent;
+  color: var(--cb-subtle);
+}
+
+.cb-btn-ghost:hover {
+  color: var(--cb-text);
+}
+
+/* Login screen */
+.cb-screen {
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cb-screen .cb-brand h1 {
+  font-size: 16px;
+}
+
+.cb-subtle {
+  color: var(--cb-subtle);
+  margin: 0;
+}
+
+.cb-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cb-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.cb-form label span {
+  color: var(--cb-subtle);
+  font-weight: 500;
+}
+
+.cb-form input {
+  padding: 8px 10px;
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.cb-form input:focus {
+  outline: none;
+  border-color: var(--cb-indigo);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.cb-error {
+  background: var(--cb-error-bg);
+  color: var(--cb-error-fg);
+  padding: 6px 10px;
+  border-radius: var(--cb-radius);
+  font-size: 12px;
+}
+
+.cb-foot {
+  font-size: 12px;
+  color: var(--cb-subtle);
+  margin: 0;
+}
+
+.cb-foot a {
+  color: var(--cb-indigo-strong);
+  text-decoration: none;
+}
+
+.cb-foot a:hover {
+  text-decoration: underline;
+}

@@ -1,0 +1,27 @@
+{
+  "name": "company-brain-extension",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Company Brain — Chrome side-panel client for the AI knowledge base",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "zip": "cd dist && powershell Compress-Archive -Path * -DestinationPath ../company-brain-extension.zip -Force"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.5.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.0.0-beta.31",
+    "@types/chrome": "^0.0.270",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.5.3",
+    "vite": "^5.4.0"
+  }
+}
