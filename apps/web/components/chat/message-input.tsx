@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Send, Square } from "lucide-react";
+import { TemplatePopover } from "./template-popover";
 import { cn } from "@/lib/utils";
 
 interface MessageInputProps {
@@ -72,6 +73,16 @@ export function MessageInput({
             disabled && "opacity-60",
           )}
         >
+          {/* Template picker — pre-fills the textarea with a saved prompt. The
+              popover anchors above this button so it doesn't clip the input. */}
+          <div className="pb-1">
+            <TemplatePopover
+              onSelect={(text) => {
+                setValue((prev) => (prev ? `${prev.trimEnd()}\n${text}` : text));
+                ref.current?.focus();
+              }}
+            />
+          </div>
           <textarea
             ref={ref}
             value={value}

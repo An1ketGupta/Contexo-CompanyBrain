@@ -3,19 +3,25 @@
 import { useEffect, useState } from "react";
 import {
   AlertCircle,
+  BookmarkPlus,
   Brain,
+  ChevronLeft,
+  ChevronRight,
   Loader2,
   RefreshCw,
   ThumbsDown,
   ThumbsUp,
+  X,
 } from "lucide-react";
 import type { DisplayMessage, MessageError } from "@/hooks/use-chat";
-import type { MessageFeedback } from "@/lib/types";
+import type { MessageFeedback, QueryIntent } from "@/lib/types";
 import { Citations } from "./citations";
 import { ConfidenceBadge } from "./confidence-badge";
 import { CopyButton } from "./copy-button";
+import { CreateTemplateDialog } from "./create-template-dialog";
 import { Markdown } from "./markdown";
 import { SearchingIndicator } from "./searching-indicator";
+import { ShareButton } from "./share-button";
 import { cn } from "@/lib/utils";
 
 interface MessageItemProps {
@@ -23,14 +29,36 @@ interface MessageItemProps {
   isLast: boolean;
   onRetry?: (assistantLocalId: string) => void;
   onFeedback?: (assistantLocalId: string, feedback: MessageFeedback) => void;
+  onRegenerate?: (assistantLocalId: string, refinement?: string) => void;
+  onSwitchBranch?: (assistantLocalId: string, branchIndex: number) => void;
+  /** When a stream is in flight elsewhere, disable regenerate so we don't
+   *  fire concurrent SSE streams from the same hook. */
+  streamingDisabled?: boolean;
+  /** The user message that produced this assistant turn — used to pre-fill
+   *  "save as template". Undefined on user bubbles. */
+  priorUserText?: string;
 }
+
+const INTENT_LABELS: Record<QueryIntent, string> = {
+  factual_qa: "Answer mode",
+  task_generation: "Writing mode",
+  analysis: "Analysis mode",
+  search: "Search mode",
+};
 
 export function MessageItem({
   message,
   isLast,
   onRetry,
   onFeedback,
+  onRegenerate,
+  onSwitchBranch,
+  streamingDisabled,
+  priorUserText,
 }: MessageItemProps) {
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
+  const [showRefinement, setShowRefinement] = useState(false);
+  const [refinement, setRefinement] = useState("");
   if (message.role === "user") {
     return (
       <div className="flex justify-end px-1">
@@ -59,6 +87,12 @@ export function MessageItem({
 
         {!expandedSearches && showSearchPanel && (
           <SearchSummary count={message.searches.length} />
+        )}
+
+        {message.intent && (isStreaming || !hasContent) && (
+          <div className="mb-1.5 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+            {INTENT_LABELS[message.intent]}
+          </div>
         )}
 
         {message.confidence && !isError && (
@@ -101,10 +135,58 @@ export function MessageItem({
               "group-hover:opacity-100",
               // Always show the action row if the user has already rated —
               // otherwise the thumb state would silently disappear on mouse-out.
-              (isLast || message.feedback) && "opacity-100",
+              (isLast || message.feedback || message.total_branches > 1) &&
+                "opacity-100",
             )}
           >
+            {message.total_branches > 1 && onSwitchBranch && (
+              <BranchNavigator
+                currentIndex={message.active_branch_index}
+                total={message.total_branches}
+                onPrev={() =>
+                  onSwitchBranch(
+                    message.local_id,
+                    Math.max(0, message.active_branch_index - 1),
+                  )
+                }
+                onNext={() =>
+                  onSwitchBranch(
+                    message.local_id,
+                    Math.min(
+                      message.total_branches - 1,
+                      message.active_branch_index + 1,
+                    ),
+                  )
+                }
+              />
+            )}
             <CopyButton text={message.content} />
+            {priorUserText && (
+              <button
+                type="button"
+                onClick={() => setSaveTemplateOpen(true)}
+                className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                aria-label="Save prompt as template"
+                title="Save prompt as template"
+              >
+                <BookmarkPlus className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {onRegenerate && message.server_id && (
+              <button
+                type="button"
+                onClick={() => setShowRefinement((v) => !v)}
+                disabled={streamingDisabled}
+                className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Regenerate response"
+                title="Regenerate response"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {message.server_id && (
+              <ShareButton messageId={message.server_id} />
+            )}
             {onFeedback && message.server_id && (
               <FeedbackButtons
                 feedback={message.feedback}
@@ -113,7 +195,58 @@ export function MessageItem({
             )}
           </div>
         )}
+
+        {showRefinement && onRegenerate && message.server_id && (
+          <div className="mt-2 flex items-stretch gap-1.5">
+            <input
+              value={refinement}
+              onChange={(e) => setRefinement(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  onRegenerate(message.local_id, refinement.trim() || undefined);
+                  setRefinement("");
+                  setShowRefinement(false);
+                } else if (e.key === "Escape") {
+                  setShowRefinement(false);
+                }
+              }}
+              placeholder="Optional: make it more formal, focus on X, shorter…"
+              className="flex-1 rounded-md border border-input bg-background px-2.5 py-1.5 text-xs outline-none ring-offset-background focus:ring-1 focus:ring-ring"
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={() => {
+                onRegenerate(message.local_id, refinement.trim() || undefined);
+                setRefinement("");
+                setShowRefinement(false);
+              }}
+              disabled={streamingDisabled}
+              className="rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              Regenerate
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowRefinement(false);
+                setRefinement("");
+              }}
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-label="Cancel"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
       </div>
+      {priorUserText && (
+        <CreateTemplateDialog
+          open={saveTemplateOpen}
+          onOpenChange={setSaveTemplateOpen}
+          initialText={priorUserText}
+        />
+      )}
     </div>
   );
 }
@@ -155,6 +288,48 @@ function FeedbackButtons({
         )}
       >
         <ThumbsDown className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function BranchNavigator({
+  currentIndex,
+  total,
+  onPrev,
+  onNext,
+}: {
+  currentIndex: number;
+  total: number;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  const atStart = currentIndex <= 0;
+  const atEnd = currentIndex >= total - 1;
+  return (
+    <div className="mr-1 flex items-center gap-0.5 rounded-md bg-muted/60 px-1">
+      <button
+        type="button"
+        onClick={onPrev}
+        disabled={atStart}
+        className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-background disabled:opacity-40"
+        aria-label="Previous response"
+        title="Previous response"
+      >
+        <ChevronLeft className="h-3.5 w-3.5" />
+      </button>
+      <span className="px-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+        {currentIndex + 1}/{total}
+      </span>
+      <button
+        type="button"
+        onClick={onNext}
+        disabled={atEnd}
+        className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-background disabled:opacity-40"
+        aria-label="Next response"
+        title="Next response"
+      >
+        <ChevronRight className="h-3.5 w-3.5" />
       </button>
     </div>
   );

@@ -9,7 +9,9 @@ import type {
   MessageConfidence,
   MessageFeedback,
   MessageSource,
+  QueryIntent,
 } from "@/lib/types";
+import type { PersistedBranch } from "./use-conversation";
 
 export interface KnowledgeGap {
   topics: string[];
@@ -32,6 +34,18 @@ export interface MessageError {
   retry_after?: number;
 }
 
+/** One inactive sibling of an assistant turn — captured so the branch
+ *  navigator can flip back without a round trip. The active branch's data
+ *  always lives on the top-level DisplayMessage; this holds the rest. */
+export interface InactiveBranch {
+  server_id: string | null;
+  content: string;
+  sources: MessageSource[];
+  feedback: MessageFeedback | null;
+  confidence: MessageConfidence | null;
+  intent: QueryIntent | null;
+}
+
 export interface DisplayMessage {
   /**
    * Local id only — the real DB id arrives on the `done` event. We use the
@@ -49,6 +63,9 @@ export interface DisplayMessage {
   // Confidence band attached by the orchestrator once retrieval completes.
   // Null on user bubbles and on assistant turns that didn't trigger search.
   confidence: MessageConfidence | null;
+  // V3 Day 4 #51 — which prompt mode the orchestrator picked. UI shows
+  // "Writing mode" / "Analysis mode" while the answer streams.
+  intent: QueryIntent | null;
   error?: MessageError;
   /**
    * The text we sent to produce this assistant message — kept on the user
@@ -62,6 +79,18 @@ export interface DisplayMessage {
    */
   client_message_id?: string;
   created_at: string;
+  // ── V3 Day 3 #42: branching ────────────────────────────────────────────
+  // Server id of the user message that produced this assistant turn. Used
+  // to drive the regenerate flow (the FastAPI endpoint reverse-looks-up
+  // the prompt from this id).
+  parent_user_message_id?: string | null;
+  // Index of the branch currently shown (0 = original, 1 = first regen, ...).
+  active_branch_index: number;
+  // Total branches that exist for this turn. UI shows a navigator when > 1.
+  total_branches: number;
+  // Inactive siblings, keyed by branch_index. The active branch's content
+  // is on the top-level message; switching just swaps these.
+  other_branches: Record<number, InactiveBranch>;
 }
 
 export interface UseChatOptions {
@@ -71,6 +100,13 @@ export interface UseChatOptions {
    * creation; ignored once a conversation_id exists on the server.
    */
   scopedDocumentId?: string | null;
+  /**
+   * Pin every search to documents that carry any of these tags. Same
+   * lifecycle as scopedDocumentId — only honoured on the first send of a
+   * brand-new conversation. The two scope mechanisms are mutually exclusive
+   * in the UI (single-doc scope wins).
+   */
+  scopedTags?: string[];
   initialMessages?: Array<{
     id: string;
     role: DisplayRole;
@@ -78,8 +114,18 @@ export interface UseChatOptions {
     sources: MessageSource[] | null;
     feedback?: MessageFeedback | null;
     confidence?: MessageConfidence | null;
+    intent?: QueryIntent | null;
     created_at: string;
+    parent_user_message_id?: string | null;
+    branch_index?: number;
+    total_branches?: number;
   }>;
+  /**
+   * Inactive branches keyed by parent_user_message_id. Loaded from the
+   * conversation detail response so the navigator can flip back to an
+   * older regeneration without a fresh round trip.
+   */
+  initialBranches?: Record<string, PersistedBranch[]>;
   onConversationStarted?: (id: string) => void;
   onTurnComplete?: (conversationId: string) => void;
 }
@@ -104,7 +150,24 @@ function makeClientMessageId(): string {
 
 function persistedToDisplay(
   m: NonNullable<UseChatOptions["initialMessages"]>[number],
+  branchesByParent: Record<string, PersistedBranch[]> = {},
 ): DisplayMessage {
+  const parentId = m.parent_user_message_id ?? null;
+  const siblings = parentId ? branchesByParent[parentId] ?? [] : [];
+  const activeIdx = m.branch_index ?? 0;
+  const totalBranches = m.total_branches ?? (siblings.length || 1);
+  const other: Record<number, InactiveBranch> = {};
+  for (const b of siblings) {
+    if (b.branch_index === activeIdx) continue;
+    other[b.branch_index] = {
+      server_id: b.id,
+      content: b.content,
+      sources: b.sources ?? [],
+      feedback: b.feedback,
+      confidence: b.metadata?.confidence ?? null,
+      intent: b.metadata?.intent ?? null,
+    };
+  }
   return {
     local_id: m.id,
     server_id: m.id,
@@ -115,19 +178,28 @@ function persistedToDisplay(
     status: "complete",
     feedback: m.feedback ?? null,
     confidence: m.confidence ?? null,
+    intent: m.intent ?? null,
     created_at: m.created_at,
+    parent_user_message_id: parentId,
+    active_branch_index: activeIdx,
+    total_branches: totalBranches,
+    other_branches: other,
   };
 }
 
 export function useChat({
   conversationId,
   scopedDocumentId,
+  scopedTags,
   initialMessages,
+  initialBranches,
   onConversationStarted,
   onTurnComplete,
 }: UseChatOptions) {
   const [messages, setMessages] = useState<DisplayMessage[]>(() =>
-    (initialMessages ?? []).map(persistedToDisplay),
+    (initialMessages ?? []).map((m) =>
+      persistedToDisplay(m, initialBranches ?? {}),
+    ),
   );
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentConvoId, setCurrentConvoId] = useState<string | null>(
@@ -150,7 +222,11 @@ export function useChat({
     if (lastConvoIdRef.current !== conversationId) {
       lastConvoIdRef.current = conversationId;
       setCurrentConvoId(conversationId);
-      setMessages((initialMessages ?? []).map(persistedToDisplay));
+      setMessages(
+        (initialMessages ?? []).map((m) =>
+          persistedToDisplay(m, initialBranches ?? {}),
+        ),
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]);
@@ -159,9 +235,11 @@ export function useChat({
     if (!initialMessages || initialMessages.length === 0) return;
     setMessages((prev) => {
       if (prev.length > 0) return prev;
-      return initialMessages.map(persistedToDisplay);
+      return initialMessages.map((m) =>
+        persistedToDisplay(m, initialBranches ?? {}),
+      );
     });
-  }, [initialMessages]);
+  }, [initialMessages, initialBranches]);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
@@ -220,9 +298,13 @@ export function useChat({
           status: "complete",
           feedback: null,
           confidence: null,
+          intent: null,
           pending_text: trimmed,
           client_message_id: clientMessageId,
           created_at: new Date().toISOString(),
+          active_branch_index: 0,
+          total_branches: 1,
+          other_branches: {},
         };
         const assistantMsg: DisplayMessage = {
           local_id: assistantLocalId,
@@ -234,9 +316,13 @@ export function useChat({
           status: "streaming",
           feedback: null,
           confidence: null,
+          intent: null,
           pending_text: trimmed,
           client_message_id: clientMessageId,
           created_at: new Date().toISOString(),
+          active_branch_index: 0,
+          total_branches: 1,
+          other_branches: {},
         };
         setMessages((prev) => [...prev, userMsg, assistantMsg]);
       }
@@ -270,6 +356,13 @@ export function useChat({
               // honoured on the very first send of a brand-new conversation.
               scoped_document_id:
                 !convoIdRef.current && scopedDocumentId ? scopedDocumentId : undefined,
+              // Same lifecycle as scoped_document_id — only sent on the very
+              // first POST of a fresh conversation; backend ignores it once
+              // the conversation row exists.
+              scoped_tags:
+                !convoIdRef.current && scopedTags && scopedTags.length > 0
+                  ? scopedTags
+                  : undefined,
             }),
             signal: controller.signal,
           });
@@ -390,6 +483,252 @@ export function useChat({
   );
 
   /**
+   * V3 Day 3 #42 — regenerate the active branch in place.
+   *
+   * Stashes the current top-level branch into other_branches, sets
+   * status=streaming with empty content, then drives a fresh SSE stream
+   * against POST /api/chat/messages/{id}/regenerate. On success the new
+   * branch becomes active and total_branches bumps by 1.
+   */
+  const regenerate = useCallback(
+    async (assistantLocalId: string, refinement?: string): Promise<void> => {
+      if (isStreaming) return;
+      const target = messages.find((m) => m.local_id === assistantLocalId);
+      if (!target || target.role !== "assistant" || !target.server_id) return;
+
+      const previousBranchIndex = target.active_branch_index;
+      const previousSnapshot: InactiveBranch = {
+        server_id: target.server_id,
+        content: target.content,
+        sources: target.sources,
+        feedback: target.feedback,
+        confidence: target.confidence,
+        intent: target.intent,
+      };
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.local_id === assistantLocalId
+            ? {
+                ...m,
+                status: "streaming",
+                content: "",
+                sources: [],
+                searches: [],
+                feedback: null,
+                confidence: null,
+                intent: null,
+                error: undefined,
+                server_id: null,
+                other_branches: {
+                  ...m.other_branches,
+                  [previousBranchIndex]: previousSnapshot,
+                },
+              }
+            : m,
+        ),
+      );
+
+      setIsStreaming(true);
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      let stallTimer: ReturnType<typeof setTimeout> | null = null;
+      const armStall = () => {
+        if (stallTimer) clearTimeout(stallTimer);
+        stallTimer = setTimeout(
+          () => controller.abort("stall"),
+          STREAM_STALL_TIMEOUT_MS,
+        );
+      };
+      armStall();
+
+      try {
+        let res: Response;
+        try {
+          res = await fetch(
+            `/api/chat/messages/${encodeURIComponent(target.server_id)}/regenerate`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                [REQUEST_ID_HEADER]: newRequestId(),
+              },
+              body: JSON.stringify(refinement ? { refinement } : {}),
+              signal: controller.signal,
+            },
+          );
+        } catch (err) {
+          throw networkError(err);
+        }
+
+        if (!res.ok || !res.body) {
+          throw await parseApiError(res);
+        }
+
+        await consumeSseStream(res.body, (event) => {
+          armStall();
+          handleEvent(event, assistantLocalId, {
+            setMessages,
+            setCurrentConvoId,
+            setKnowledgeGap,
+            onConversationStarted,
+          });
+        });
+
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.local_id === assistantLocalId && m.status === "streaming"
+              ? { ...m, status: "complete" }
+              : m,
+          ),
+        );
+
+        const finalConvoId = convoIdRef.current;
+        if (finalConvoId) onTurnComplete?.(finalConvoId);
+        globalMutate("/api/usage/me");
+      } catch (err) {
+        const abortReason = (controller.signal as { reason?: unknown }).reason;
+        const isAbort = (err as Error)?.name === "AbortError";
+        const apiErr: ApiError =
+          isAbort && abortReason === "stall"
+            ? {
+                code: "stream_interrupted",
+                status: 0,
+                message:
+                  "The regeneration stalled — the connection probably dropped. Try again.",
+              }
+            : (err as ApiError);
+
+        // On any failure, swap the prior branch back into the top-level
+        // so the user doesn't lose the answer they had on screen.
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.local_id !== assistantLocalId) return m;
+            const rollback = m.other_branches[previousBranchIndex];
+            const nextOther = { ...m.other_branches };
+            delete nextOther[previousBranchIndex];
+            return {
+              ...m,
+              status: isAbort && abortReason !== "stall" ? "aborted" : "error",
+              server_id: rollback?.server_id ?? m.server_id,
+              content: rollback?.content ?? m.content,
+              sources: rollback?.sources ?? m.sources,
+              feedback: rollback?.feedback ?? m.feedback,
+              confidence: rollback?.confidence ?? m.confidence,
+              intent: rollback?.intent ?? m.intent,
+              other_branches: nextOther,
+              error:
+                isAbort && abortReason !== "stall"
+                  ? undefined
+                  : {
+                      code: apiErr.code,
+                      message: apiErr.message,
+                      request_id: apiErr.request_id,
+                      retry_after: apiErr.retry_after,
+                    },
+            };
+          }),
+        );
+      } finally {
+        if (stallTimer) clearTimeout(stallTimer);
+        setIsStreaming(false);
+        abortRef.current = null;
+      }
+    },
+    [isStreaming, messages, onConversationStarted, onTurnComplete],
+  );
+
+  /**
+   * Flip the active branch on an already-regenerated assistant turn.
+   * Optimistic; rolls back if the PATCH fails. Stashes the currently active
+   * branch into other_branches before swapping in the target.
+   */
+  const switchBranch = useCallback(
+    async (assistantLocalId: string, targetBranchIndex: number): Promise<void> => {
+      const target = messages.find((m) => m.local_id === assistantLocalId);
+      if (!target || target.role !== "assistant" || !target.server_id) return;
+      if (targetBranchIndex === target.active_branch_index) return;
+      const incoming = target.other_branches[targetBranchIndex];
+      if (!incoming) return;
+
+      const previousIndex = target.active_branch_index;
+      const previousSnapshot: InactiveBranch = {
+        server_id: target.server_id,
+        content: target.content,
+        sources: target.sources,
+        feedback: target.feedback,
+        confidence: target.confidence,
+        intent: target.intent,
+      };
+      const previousServerId = target.server_id;
+
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.local_id !== assistantLocalId) return m;
+          const nextOther = { ...m.other_branches };
+          delete nextOther[targetBranchIndex];
+          nextOther[previousIndex] = previousSnapshot;
+          return {
+            ...m,
+            server_id: incoming.server_id,
+            content: incoming.content,
+            sources: incoming.sources,
+            feedback: incoming.feedback,
+            confidence: incoming.confidence,
+            intent: incoming.intent,
+            active_branch_index: targetBranchIndex,
+            other_branches: nextOther,
+          };
+        }),
+      );
+
+      try {
+        const res = await fetch(
+          `/api/chat/messages/${encodeURIComponent(previousServerId)}/active-branch`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ branch_index: targetBranchIndex }),
+          },
+        );
+        if (!res.ok) throw new Error(`active-branch ${res.status}`);
+      } catch {
+        // Rollback the swap silently — branch position is low-stakes UI state.
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.local_id !== assistantLocalId) return m;
+            const stashedPrev = m.other_branches[previousIndex];
+            if (!stashedPrev) return m;
+            const nextOther = { ...m.other_branches };
+            delete nextOther[previousIndex];
+            nextOther[targetBranchIndex] = {
+              server_id: m.server_id,
+              content: m.content,
+              sources: m.sources,
+              feedback: m.feedback,
+              confidence: m.confidence,
+              intent: m.intent,
+            };
+            return {
+              ...m,
+              server_id: stashedPrev.server_id,
+              content: stashedPrev.content,
+              sources: stashedPrev.sources,
+              feedback: stashedPrev.feedback,
+              confidence: stashedPrev.confidence,
+              intent: stashedPrev.intent,
+              active_branch_index: previousIndex,
+              other_branches: nextOther,
+            };
+          }),
+        );
+      }
+    },
+    [messages],
+  );
+
+  /**
    * Optimistic feedback toggle. The bubble flips instantly; the PATCH is
    * fire-and-forget but rolls back on failure so a 500 doesn't leave the UI
    * lying about persisted state. Re-clicking the same thumb clears the vote.
@@ -449,6 +788,8 @@ export function useChat({
     stop,
     retry,
     setFeedback,
+    regenerate,
+    switchBranch,
   };
 }
 
@@ -470,6 +811,32 @@ function handleEvent(
     case "start": {
       setCurrentConvoId(event.conversation_id);
       onConversationStarted?.(event.conversation_id);
+      // Regenerate start carries parent_user_message_id + branch_index —
+      // attach them so the navigator can pick up the right counts even
+      // before `done` arrives.
+      if (event.parent_user_message_id !== undefined) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.local_id === assistantLocalId
+              ? {
+                  ...m,
+                  parent_user_message_id:
+                    event.parent_user_message_id ?? m.parent_user_message_id,
+                  active_branch_index:
+                    event.branch_index ?? m.active_branch_index,
+                }
+              : m,
+          ),
+        );
+      }
+      return;
+    }
+    case "intent": {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.local_id === assistantLocalId ? { ...m, intent: event.intent } : m,
+        ),
+      );
       return;
     }
     case "searching": {
@@ -559,7 +926,16 @@ function handleEvent(
       setMessages((prev) =>
         prev.map((m) =>
           m.local_id === assistantLocalId
-            ? { ...m, server_id: event.message_id, status: "complete" }
+            ? {
+                ...m,
+                server_id: event.message_id,
+                status: "complete",
+                active_branch_index:
+                  event.branch_index ?? m.active_branch_index,
+                total_branches: event.total_branches ?? m.total_branches,
+                parent_user_message_id:
+                  event.parent_user_message_id ?? m.parent_user_message_id,
+              }
             : m,
         ),
       );

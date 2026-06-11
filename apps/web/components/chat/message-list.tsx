@@ -9,9 +9,19 @@ interface MessageListProps {
   messages: DisplayMessage[];
   onRetry?: (assistantLocalId: string) => void;
   onFeedback?: (assistantLocalId: string, feedback: MessageFeedback) => void;
+  onRegenerate?: (assistantLocalId: string, refinement?: string) => void;
+  onSwitchBranch?: (assistantLocalId: string, branchIndex: number) => void;
+  isStreaming?: boolean;
 }
 
-export function MessageList({ messages, onRetry, onFeedback }: MessageListProps) {
+export function MessageList({
+  messages,
+  onRetry,
+  onFeedback,
+  onRegenerate,
+  onSwitchBranch,
+  isStreaming,
+}: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const lastLengthRef = useRef(0);
@@ -44,15 +54,33 @@ export function MessageList({ messages, onRetry, onFeedback }: MessageListProps)
       style={{ scrollbarGutter: "stable" }}
     >
       <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 md:px-6">
-        {messages.map((m, i) => (
-          <MessageItem
-            key={m.local_id}
-            message={m}
-            isLast={i === messages.length - 1}
-            onRetry={onRetry}
-            onFeedback={onFeedback}
-          />
-        ))}
+        {messages.map((m, i) => {
+          // Find the most recent user message above this one — that's the
+          // prompt that produced this assistant response, and the actual
+          // reusable artifact the user might want to save as a template.
+          let priorUserText: string | undefined;
+          if (m.role === "assistant") {
+            for (let j = i - 1; j >= 0; j--) {
+              if (messages[j].role === "user") {
+                priorUserText = messages[j].content;
+                break;
+              }
+            }
+          }
+          return (
+            <MessageItem
+              key={m.local_id}
+              message={m}
+              isLast={i === messages.length - 1}
+              onRetry={onRetry}
+              onFeedback={onFeedback}
+              onRegenerate={onRegenerate}
+              onSwitchBranch={onSwitchBranch}
+              streamingDisabled={!!isStreaming}
+              priorUserText={priorUserText}
+            />
+          );
+        })}
       </div>
     </div>
   );

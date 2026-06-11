@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { ChatMobileBar } from "@/components/chat/chat-mobile-bar";
+import { ChatScopeSelector } from "@/components/chat/chat-scope-selector";
 import { ConversationSidebar } from "@/components/chat/conversation-sidebar";
+import { DocumentStatusBanner } from "@/components/chat/document-status-banner";
 import { EmptyState } from "@/components/chat/empty-state";
 import { KnowledgeGapBanner } from "@/components/chat/knowledge-gap-banner";
 import { MessageInput } from "@/components/chat/message-input";
@@ -10,6 +13,7 @@ import { MessageList } from "@/components/chat/message-list";
 import { ScopeBanner } from "@/components/chat/scope-banner";
 import { useChat } from "@/hooks/use-chat";
 import { useConversations } from "@/hooks/use-conversations";
+import { useDocumentStatus } from "@/hooks/use-document-status";
 import { useDocuments } from "@/hooks/use-documents";
 
 /**
@@ -31,6 +35,11 @@ export default function ChatNewPage() {
   const { prepend, touch, refresh } = useConversations();
 
   const [pendingNavId, setPendingNavId] = useState<string | null>(null);
+  // Tag scope chosen on the new-chat surface. Locked into the conversation
+  // on the first send (backend writes it onto the conversations row), then
+  // ignored on follow-up turns. Single-doc scope (`?document_id=`) takes
+  // precedence — the UI hides the tag picker in that case.
+  const [scopedTags, setScopedTags] = useState<string[]>([]);
 
   const scopedDocument = useMemo(() => {
     if (!scopedDocumentId) return null;
@@ -65,6 +74,7 @@ export default function ChatNewPage() {
   } = useChat({
     conversationId: null,
     scopedDocumentId,
+    scopedTags: scopedDocumentId ? [] : scopedTags,
     onConversationStarted: handleConversationStarted,
     onTurnComplete: handleTurnComplete,
   });
@@ -77,13 +87,23 @@ export default function ChatNewPage() {
 
   const isEmpty = messages.length === 0;
   const hasDocuments = !loadingDocs && documents.length > 0;
+  const { status: docStatus } = useDocumentStatus();
+  const noReadyDocs = !!docStatus && !docStatus.has_ready;
 
   return (
     <>
       <ConversationSidebar activeId={null} />
       <main className="flex h-full min-h-0 flex-1 flex-col">
+        <ChatMobileBar activeId={null} />
         {scopedDocument && (
           <ScopeBanner documentName={scopedDocument.name} clearHref="/chat" />
+        )}
+        <DocumentStatusBanner />
+        {/* Tag scope only makes sense on the empty new-chat surface — once a
+            turn has been sent the conversation row has locked its scope, and
+            the scope is also a no-op if the user already pinned a doc. */}
+        {isEmpty && !scopedDocument && (
+          <ChatScopeSelector value={scopedTags} onChange={setScopedTags} />
         )}
         {isEmpty ? (
           <div className="flex-1 overflow-y-auto">
@@ -99,11 +119,16 @@ export default function ChatNewPage() {
           onSend={send}
           onStop={stop}
           isStreaming={isStreaming}
-          disabled={!hasDocuments && isEmpty}
+          disabled={noReadyDocs}
           disabledReason={
-            !hasDocuments && isEmpty
-              ? "Upload a document first so the AI has context to work with."
+            noReadyDocs
+              ? docStatus?.total === 0
+                ? "Upload a document first so the AI has context to work with."
+                : "Documents are still processing — chat unlocks once at least one is ready."
               : undefined
+          }
+          placeholder={
+            noReadyDocs ? "Upload documents to start asking…" : undefined
           }
         />
       </main>

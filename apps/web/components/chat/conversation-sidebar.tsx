@@ -3,7 +3,16 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { MessageSquarePlus, MoreHorizontal, Pencil, Search, Trash2, X } from "lucide-react";
+import {
+  MessageSquarePlus,
+  MoreHorizontal,
+  Pencil,
+  Pin,
+  PinOff,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useConversations, type ConversationSummary } from "@/hooks/use-conversations";
 import { useDebounced } from "@/hooks/use-debounced";
@@ -40,9 +49,19 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
   const debouncedSearch = useDebounced(searchInput, 300);
   const searching = debouncedSearch.trim().length > 0;
 
-  const { conversations, loading, error, rename, remove } = useConversations(
-    debouncedSearch,
-  );
+  const { conversations, loading, error, rename, remove, setPinned } =
+    useConversations(debouncedSearch);
+
+  const pinnedConvos = conversations.filter((c) => c.is_pinned);
+  const otherConvos = conversations.filter((c) => !c.is_pinned);
+
+  const togglePin = async (c: ConversationSummary) => {
+    try {
+      await setPinned(c.id, !c.is_pinned);
+    } catch (err) {
+      reportApiError(err as ApiError);
+    }
+  };
 
   const [renaming, setRenaming] = useState<ConversationSummary | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ConversationSummary | null>(null);
@@ -108,10 +127,6 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
         </div>
       </div>
 
-      <div className="px-3 pb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        {searching ? "Results" : "Recent"}
-      </div>
-
       <div className="flex-1 overflow-y-auto px-2 pb-3">
         {loading ? (
           <div className="space-y-1.5 px-1">
@@ -127,18 +142,62 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
               ? `No matches for "${debouncedSearch}".`
               : "No conversations yet."}
           </div>
+        ) : searching ? (
+          <>
+            <SectionLabel>Results</SectionLabel>
+            <ul className="space-y-0.5">
+              {conversations.map((c) => (
+                <ConversationRow
+                  key={c.id}
+                  convo={c}
+                  active={c.id === activeId}
+                  onRename={() => setRenaming(c)}
+                  onDelete={() => setConfirmDelete(c)}
+                  onTogglePin={() => togglePin(c)}
+                />
+              ))}
+            </ul>
+          </>
         ) : (
-          <ul className="space-y-0.5">
-            {conversations.map((c) => (
-              <ConversationRow
-                key={c.id}
-                convo={c}
-                active={c.id === activeId}
-                onRename={() => setRenaming(c)}
-                onDelete={() => setConfirmDelete(c)}
-              />
-            ))}
-          </ul>
+          <>
+            {pinnedConvos.length > 0 && (
+              <>
+                <SectionLabel>Pinned</SectionLabel>
+                <ul className="space-y-0.5">
+                  {pinnedConvos.map((c) => (
+                    <ConversationRow
+                      key={c.id}
+                      convo={c}
+                      active={c.id === activeId}
+                      onRename={() => setRenaming(c)}
+                      onDelete={() => setConfirmDelete(c)}
+                      onTogglePin={() => togglePin(c)}
+                    />
+                  ))}
+                </ul>
+                {otherConvos.length > 0 && (
+                  <div className="my-1.5 h-px bg-border/60" />
+                )}
+              </>
+            )}
+            {otherConvos.length > 0 && (
+              <>
+                <SectionLabel>Recent</SectionLabel>
+                <ul className="space-y-0.5">
+                  {otherConvos.map((c) => (
+                    <ConversationRow
+                      key={c.id}
+                      convo={c}
+                      active={c.id === activeId}
+                      onRename={() => setRenaming(c)}
+                      onDelete={() => setConfirmDelete(c)}
+                      onTogglePin={() => togglePin(c)}
+                    />
+                  ))}
+                </ul>
+              </>
+            )}
+          </>
         )}
       </div>
 
@@ -184,27 +243,49 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
   );
 }
 
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-2 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      {children}
+    </div>
+  );
+}
+
 interface ConversationRowProps {
   convo: ConversationSummary;
   active: boolean;
   onRename: () => void;
   onDelete: () => void;
+  onTogglePin: () => void;
 }
 
-function ConversationRow({ convo, active, onRename, onDelete }: ConversationRowProps) {
+function ConversationRow({
+  convo,
+  active,
+  onRename,
+  onDelete,
+  onTogglePin,
+}: ConversationRowProps) {
   const title = (convo.title ?? "").trim() || "Untitled";
+  const isPinned = !!convo.is_pinned;
 
   return (
     <li className="group relative">
       <Link
         href={`/chat/${convo.id}`}
         className={cn(
-          "flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors",
+          "flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs transition-colors",
           active
             ? "bg-accent text-accent-foreground"
             : "text-muted-foreground hover:bg-muted hover:text-foreground",
         )}
       >
+        {isPinned && (
+          <Pin
+            className="h-3 w-3 shrink-0 fill-current text-primary"
+            aria-label="Pinned"
+          />
+        )}
         <span className="line-clamp-1 flex-1 pr-6">{title}</span>
       </Link>
 
@@ -224,7 +305,20 @@ function ConversationRow({ convo, active, onRename, onDelete }: ConversationRowP
             <MoreHorizontal className="h-3.5 w-3.5" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-36">
+        <DropdownMenuContent align="end" className="w-40">
+          <DropdownMenuItem onClick={onTogglePin}>
+            {isPinned ? (
+              <>
+                <PinOff className="h-3.5 w-3.5" />
+                Unpin
+              </>
+            ) : (
+              <>
+                <Pin className="h-3.5 w-3.5" />
+                Pin
+              </>
+            )}
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={onRename}>
             <Pencil className="h-3.5 w-3.5" />
             Rename

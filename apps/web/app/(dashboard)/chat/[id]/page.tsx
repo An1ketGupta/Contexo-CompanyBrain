@@ -3,7 +3,10 @@
 import { use, useCallback, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { ChatMobileBar } from "@/components/chat/chat-mobile-bar";
 import { ConversationSidebar } from "@/components/chat/conversation-sidebar";
+import { DocumentStatusBanner } from "@/components/chat/document-status-banner";
+import { ExportButton } from "@/components/chat/export-button";
 import { KnowledgeGapBanner } from "@/components/chat/knowledge-gap-banner";
 import { MessageInput } from "@/components/chat/message-input";
 import { MessageList } from "@/components/chat/message-list";
@@ -12,6 +15,7 @@ import { ScopeBanner } from "@/components/chat/scope-banner";
 import { useChat } from "@/hooks/use-chat";
 import { useConversation } from "@/hooks/use-conversation";
 import { useConversations } from "@/hooks/use-conversations";
+import { useDocumentStatus } from "@/hooks/use-document-status";
 import { useDocuments } from "@/hooks/use-documents";
 
 export default function ChatConversationPage({
@@ -25,6 +29,7 @@ export default function ChatConversationPage({
   const {
     conversation,
     messages: persistedMessages,
+    branches: persistedBranches,
     loading,
     error,
   } = useConversation(id);
@@ -47,7 +52,11 @@ export default function ChatConversationPage({
         sources: m.sources,
         feedback: m.feedback ?? null,
         confidence: m.metadata?.confidence ?? m.confidence ?? null,
+        intent: m.metadata?.intent ?? null,
         created_at: m.created_at,
+        parent_user_message_id: m.parent_user_message_id ?? null,
+        branch_index: m.branch_index ?? 0,
+        total_branches: m.total_branches ?? 1,
       })),
     [persistedMessages],
   );
@@ -69,9 +78,12 @@ export default function ChatConversationPage({
     stop,
     retry,
     setFeedback,
+    regenerate,
+    switchBranch,
   } = useChat({
     conversationId: id,
     initialMessages,
+    initialBranches: persistedBranches,
     onTurnComplete: handleTurnComplete,
   });
 
@@ -84,13 +96,62 @@ export default function ChatConversationPage({
     }
   }, [error, router]);
 
+  // V4 #39 — auto-send a prefilled prompt if the previous route (e.g. the
+  // meeting-prep form) stashed one in sessionStorage. The key is keyed by
+  // conversation id so a stale prefill from another conversation never fires
+  // here, and we delete it on use to enforce one-shot semantics. We wait for
+  // the conversation to load AND for messages to actually be empty — sending
+  // again on a thread that already has turns would just be confusing.
+  useEffect(() => {
+    if (loading || !conversation || messages.length > 0 || isStreaming) return;
+    if (typeof window === "undefined") return;
+    const key = `chat-prefill:${id}`;
+    const stashed = window.sessionStorage.getItem(key);
+    if (!stashed) return;
+    window.sessionStorage.removeItem(key);
+    void send(stashed);
+    // We don't list `send` in deps — useChat returns a stable function but
+    // listing it would risk re-firing if the hook ever changes identity. The
+    // `messages.length > 0` guard above prevents a double-send regardless.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, conversation, id, isStreaming]);
+
   const hasDocuments = !loadingDocs && documents.length > 0;
   const noContent = !loading && messages.length === 0;
+  const { status: docStatus } = useDocumentStatus();
+  // Disable input whenever no document has reached `ready` yet — without one,
+  // any answer the LLM produces is hallucinated. The doc-status banner above
+  // already explains the situation.
+  const noReadyDocs = !!docStatus && !docStatus.has_ready;
 
   return (
     <>
       <ConversationSidebar activeId={id} />
       <main className="flex h-full min-h-0 flex-1 flex-col">
+        <ChatMobileBar
+          activeId={id}
+          trailing={
+            conversation && messages.length > 0 ? (
+              <ExportButton
+                conversationId={id}
+                title={conversation.title ?? "Conversation"}
+              />
+            ) : null
+          }
+        />
+        {messages.length > 0 && (
+          <div className="hidden items-center justify-between border-b border-border bg-background px-6 py-2.5 md:flex">
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-sm font-semibold tracking-tight text-foreground">
+                {conversation?.title ?? "Conversation"}
+              </h1>
+            </div>
+            <ExportButton
+              conversationId={id}
+              title={conversation?.title ?? "Conversation"}
+            />
+          </div>
+        )}
         {(scopedDocument || conversation?.scoped_document_id) && (
           <ScopeBanner
             documentName={
@@ -98,6 +159,10 @@ export default function ChatConversationPage({
             }
           />
         )}
+        {conversation?.scoped_tags && conversation.scoped_tags.length > 0 && (
+          <ScopeBanner tags={conversation.scoped_tags} />
+        )}
+        <DocumentStatusBanner />
         {loading && messages.length === 0 ? (
           <ChatMessagesSkeleton />
         ) : noContent ? (
@@ -108,7 +173,14 @@ export default function ChatConversationPage({
             </p>
           </div>
         ) : (
-          <MessageList messages={messages} onRetry={retry} onFeedback={setFeedback} />
+          <MessageList
+            messages={messages}
+            onRetry={retry}
+            onFeedback={setFeedback}
+            onRegenerate={regenerate}
+            onSwitchBranch={switchBranch}
+            isStreaming={isStreaming}
+          />
         )}
 
         <div className="px-4 md:px-6">
@@ -119,11 +191,16 @@ export default function ChatConversationPage({
           onSend={send}
           onStop={stop}
           isStreaming={isStreaming}
-          disabled={!hasDocuments && noContent}
+          disabled={noReadyDocs}
           disabledReason={
-            !hasDocuments && noContent
-              ? "Upload a document first so the AI has context to work with."
+            noReadyDocs
+              ? docStatus?.total === 0
+                ? "Upload a document first so the AI has context to work with."
+                : "Documents are still processing — chat unlocks once at least one is ready."
               : undefined
+          }
+          placeholder={
+            noReadyDocs ? "Upload documents to start asking…" : undefined
           }
         />
       </main>

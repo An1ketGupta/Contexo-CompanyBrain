@@ -7,6 +7,7 @@ import { networkError, parseApiError, type ApiError } from "@/lib/errors";
 export interface ConversationSummary {
   id: string;
   title: string | null;
+  is_pinned: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -57,7 +58,7 @@ export function useConversations(query?: string) {
           const now = new Date().toISOString();
           return {
             conversations: [
-              { id, title, created_at: now, updated_at: now },
+              { id, title, is_pinned: false, created_at: now, updated_at: now },
               ...list,
             ],
           };
@@ -66,6 +67,46 @@ export function useConversations(query?: string) {
       );
     },
     [mutate],
+  );
+
+  // Toggle the pinned flag. Optimistic — rolls back on PATCH failure.
+  // We sort pinned-first locally too so the row jumps into the right
+  // section without waiting for the SWR refetch.
+  const setPinned = useCallback(
+    async (id: string, isPinned: boolean): Promise<void> => {
+      const previous = data;
+      mutate(
+        (current) => {
+          if (!current) return current;
+          const next = current.conversations.map((c) =>
+            c.id === id ? { ...c, is_pinned: isPinned } : c,
+          );
+          next.sort((a, b) => {
+            if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
+            return (b.updated_at ?? "").localeCompare(a.updated_at ?? "");
+          });
+          return { conversations: next };
+        },
+        { revalidate: false },
+      );
+
+      let res: Response;
+      try {
+        res = await fetch(`/api/chat/conversations/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_pinned: isPinned }),
+        });
+      } catch (err) {
+        await mutate(previous, { revalidate: false });
+        throw networkError(err);
+      }
+      if (!res.ok) {
+        await mutate(previous, { revalidate: false });
+        throw await parseApiError(res);
+      }
+    },
+    [data, mutate],
   );
 
   const rename = useCallback(
@@ -159,5 +200,6 @@ export function useConversations(query?: string) {
     rename,
     remove,
     touch,
+    setPinned,
   };
 }
