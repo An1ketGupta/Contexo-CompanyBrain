@@ -107,6 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_chunk_citations_message
 -- RLS — read for org members, writes only via service role.
 ALTER TABLE chunk_citations ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "chunk_citations_select" ON chunk_citations;
 CREATE POLICY "chunk_citations_select" ON chunk_citations
   FOR SELECT USING (org_id = auth_org_id());
 
