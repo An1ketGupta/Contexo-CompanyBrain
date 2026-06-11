@@ -34,11 +34,18 @@ async def ingest_text_document(
     doc_id: str,
     org_id: str,
     text: str,
+    title: str | None = None,
+    source_url: str | None = None,
 ) -> dict[str, Any]:
     """Chunk + embed + persist already-extracted text.
 
     Idempotent w.r.t. doc_id: the documents row must already exist (typically
     upserted by the integration's sync function before queueing the event).
+
+    `title` / `source_url` are propagated onto each segment's section_heading
+    and metadata so retrieval-side citations can label the source even though
+    no Storage file exists. Set by the Chrome extension's "Add to Brain" flow
+    (V4 #32); legacy callers omit them and we fall back to no-context chunks.
     """
     text = (text or "").strip()
     if not text:
@@ -50,10 +57,19 @@ async def ingest_text_document(
     await mark_status(doc_id, "processing")
 
     try:
+        seg_metadata: dict[str, Any] = {}
+        if source_url:
+            seg_metadata["source_url"] = source_url
         # One synthetic segment — the chunker handles overflow via its own
         # token-aware splitter, so a 50 KB Notion page chunks identically to
         # a 50 KB extracted-from-PDF body.
-        segments = [RawSegment(content=text)]
+        segments = [
+            RawSegment(
+                content=text,
+                section_heading=title or None,
+                metadata=seg_metadata,
+            )
+        ]
         chunks = chunk_segments(segments)
         if not chunks:
             raise PipelineError("Chunker produced no output.")
@@ -75,6 +91,11 @@ async def ingest_text_document(
 
         stats = {"embedded": embedded, "failed": failed, "total": len(persisted)} if failed else None
         await mark_status(doc_id, "ready", chunk_count=len(persisted), embedding_stats=stats)
+        # Drop the coverage cache: a freshly-ingested Notion/email/webpage doc
+        # may close a category gap, and we don't want the admin page to lag.
+        # Lazy import dodges a cycle (coverage → embedder → ingestion).
+        from app.services.coverage import invalidate_coverage
+        await invalidate_coverage(org_id, client=svc)
         return {
             "status": "ok",
             "embedded": embedded,

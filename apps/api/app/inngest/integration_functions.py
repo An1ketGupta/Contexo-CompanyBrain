@@ -92,6 +92,11 @@ async def process_text_document(ctx: inngest.Context) -> dict[str, Any]:
             doc_id=data["doc_id"],
             org_id=data["org_id"],
             text=data["text"],
+            # Optional context fields (V4 #32 / Chrome Extension). The Notion
+            # + email-forward paths can omit them; .get() preserves their
+            # original event shape.
+            title=data.get("title"),
+            source_url=data.get("source_url"),
         ),
     )
     return result

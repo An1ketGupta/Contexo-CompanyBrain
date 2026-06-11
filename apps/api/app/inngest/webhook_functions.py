@@ -290,29 +290,30 @@ async def _notify_org_admins(
     ]
     total_due = len(docs)
 
+    # Disabled: using browser notifications instead (placeholder for later)
     enqueued = 0
-    for admin_id, admin_email in admins:
-        try:
-            await send_email_event(
-                event_type="knowledge_refresh",  # type: ignore[arg-type]
-                to=admin_email,
-                user_id=admin_id,
-                org_id=org_id,
-                dedupe_key=iso_week,
-                data={
-                    "docs": docs_payload,
-                    "total_due": total_due,
-                    "app_url": settings.app_url,
-                },
-            )
-            enqueued += 1
-        except Exception as exc:
-            log.warning(
-                "review_reminder_enqueue_failed",
-                admin_id=admin_id,
-                org_id=org_id,
-                error=str(exc),
-            )
+    # for admin_id, admin_email in admins:
+    #     try:
+    #         await send_email_event(
+    #             event_type="knowledge_refresh",  # type: ignore[arg-type]
+    #             to=admin_email,
+    #             user_id=admin_id,
+    #             org_id=org_id,
+    #             dedupe_key=iso_week,
+    #             data={
+    #                 "docs": docs_payload,
+    #                 "total_due": total_due,
+    #                 "app_url": settings.app_url,
+    #             },
+    #         )
+    #         enqueued += 1
+    #     except Exception as exc:
+    #         log.warning(
+    #             "review_reminder_enqueue_failed",
+    #             admin_id=admin_id,
+    #             org_id=org_id,
+    #             error=str(exc),
+    #         )
 
     return enqueued
 
