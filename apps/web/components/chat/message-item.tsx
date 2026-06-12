@@ -160,7 +160,7 @@ export function MessageItem({
                 }
               />
             )}
-            <CopyButton text={message.content} />
+            <CopyButton text={message.content} messageId={message.server_id} />
             {priorUserText && (
               <button
                 type="button"

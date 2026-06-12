@@ -285,24 +285,82 @@ async def get_admin_analytics(
                 top_documents.append({"name": doc_names[did], "citations": cites})
 
     # ── Intent breakdown — read from messages.metadata->'intent' ──────────
+    # We also fold in copy_count and time_saved_minutes here so the dashboard
+    # gets V5 quality + ROI signals in one round-trip per period.
     intent_res = await asyncio.to_thread(
         lambda: svc.table("messages")
-        .select("metadata")
+        .select("id, metadata, copy_count, time_saved_minutes, content, conversation_id")
         .eq("org_id", org_id)
         .eq("role", "assistant")
         .gte("created_at", cutoff.isoformat())
         .limit(50000)
         .execute()
     )
+    assistant_rows = intent_res.data or []
     intent_counts: dict[str, int] = {}
-    for row in (intent_res.data or []):
-        intent = (row.get("metadata") or {}).get("intent")
+    intent_copied: dict[str, int] = {}
+    intent_total: dict[str, int] = {}
+    total_assistant = 0
+    total_copied = 0
+    total_minutes_saved = 0
+    for row in assistant_rows:
+        meta = row.get("metadata") or {}
+        intent = meta.get("intent")
+        copied = (row.get("copy_count") or 0) > 0
+        total_assistant += 1
+        if copied:
+            total_copied += 1
+        total_minutes_saved += int(row.get("time_saved_minutes") or 0)
         if intent:
             intent_counts[intent] = intent_counts.get(intent, 0) + 1
+            intent_total[intent] = intent_total.get(intent, 0) + 1
+            if copied:
+                intent_copied[intent] = intent_copied.get(intent, 0) + 1
     intent_breakdown = [
-        {"intent": k, "count": v}
+        {
+            "intent": k,
+            "count": v,
+            "copy_rate": (
+                round(intent_copied.get(k, 0) / intent_total[k] * 100, 1)
+                if intent_total.get(k) else None
+            ),
+        }
         for k, v in sorted(intent_counts.items(), key=lambda kv: kv[1], reverse=True)
     ]
+
+    # ── V5 #59 — Top copied messages ──────────────────────────────────────
+    top_copied_rows = sorted(
+        (r for r in assistant_rows if (r.get("copy_count") or 0) > 0),
+        key=lambda r: r.get("copy_count") or 0,
+        reverse=True,
+    )[:5]
+    top_copied: list[dict[str, Any]] = []
+    if top_copied_rows:
+        conv_ids_for_titles = list({r["conversation_id"] for r in top_copied_rows if r.get("conversation_id")})
+        title_lookup: dict[str, str] = {}
+        if conv_ids_for_titles:
+            tres = await asyncio.to_thread(
+                lambda: svc.table("conversations")
+                .select("id, title")
+                .in_("id", conv_ids_for_titles)
+                .execute()
+            )
+            for trow in (tres.data or []):
+                title_lookup[trow["id"]] = trow.get("title") or "Untitled"
+        for r in top_copied_rows:
+            preview = (r.get("content") or "").strip().replace("\n", " ")
+            if len(preview) > 120:
+                preview = preview[:120].rstrip() + "…"
+            top_copied.append({
+                "message_id": r["id"],
+                "conversation_id": r.get("conversation_id"),
+                "conversation_title": title_lookup.get(r.get("conversation_id") or "", "Untitled"),
+                "copy_count": int(r.get("copy_count") or 0),
+                "preview": preview,
+                "intent": (r.get("metadata") or {}).get("intent"),
+            })
+
+    copy_rate = round(total_copied / total_assistant * 100, 1) if total_assistant else None
 
     return {
         "period": period,
@@ -313,10 +371,16 @@ async def get_admin_analytics(
             "feedback_score": feedback_score,
             "total_docs": total_docs,
             "docs_accessed": docs_accessed,
+            # V5 additions — small enough that adding them here saves a second
+            # network round-trip from the dashboard.
+            "copy_rate": copy_rate,
+            "total_minutes_saved": total_minutes_saved,
+            "total_hours_saved": round(total_minutes_saved / 60, 1),
         },
         "daily_queries": daily_queries,
         "user_breakdown": user_breakdown,
         "top_documents": top_documents,
+        "top_copied": top_copied,
         "intent_breakdown": intent_breakdown,
     }
 

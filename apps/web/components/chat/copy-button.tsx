@@ -8,9 +8,14 @@ interface CopyButtonProps {
   text: string;
   className?: string;
   label?: string;
+  /** Persisted assistant-message id. When supplied, every successful copy
+   *  pings POST /chat/messages/{id}/copied as a non-blocking quality signal
+   *  (V5 #59). Optional so other call sites (sharing, public pages) can
+   *  reuse this button without firing the signal. */
+  messageId?: string | null;
 }
 
-export function CopyButton({ text, className, label = "Copy" }: CopyButtonProps) {
+export function CopyButton({ text, className, label = "Copy", messageId }: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
 
   const onCopy = useCallback(async () => {
@@ -18,11 +23,20 @@ export function CopyButton({ text, className, label = "Copy" }: CopyButtonProps)
       await navigator.clipboard.writeText(text);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
+      // V5 #59 — fire-and-forget. We deliberately don't await so a slow
+      // backend doesn't delay the "Copied" affordance; failures are silent
+      // because this is a side-channel signal, not user-facing state.
+      if (messageId) {
+        void fetch(`/api/chat/messages/${messageId}/copied`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }).catch(() => {});
+      }
     } catch {
       // Clipboard can fail in insecure contexts — silently no-op rather than
       // showing a scary toast. User can always select + copy manually.
     }
-  }, [text]);
+  }, [text, messageId]);
 
   return (
     <button

@@ -78,6 +78,10 @@ class ChatRequest(BaseModel):
     # / omitted = unscoped. Capped to keep the doc-id resolution cheap and the
     # system-prompt note readable.
     scoped_tags: list[str] | None = Field(default=None, max_length=10)
+    # V5 #35 — pick a saved Collection by id; the chat router resolves it to
+    # its current tag_filters and reuses scoped_tags plumbing. Stored on the
+    # conversation row so the chat UI can render "Pinned to <Collection>".
+    scoped_collection_id: str | None = Field(default=None, min_length=8, max_length=64)
 
 
 class UpdateConversationRequest(BaseModel):
@@ -155,6 +159,7 @@ async def chat(
         client, body.conversation_id, org_id, user_id, body.message,
         scoped_document_id=body.scoped_document_id,
         scoped_tags=body.scoped_tags,
+        scoped_collection_id=body.scoped_collection_id,
     )
     history = await _load_history(client, conversation_id)
     summary = await load_conversation_summary(conversation_id, client=client)
@@ -305,6 +310,7 @@ async def chat_stream(
         client, body.conversation_id, org_id, user_id, body.message,
         scoped_document_id=body.scoped_document_id,
         scoped_tags=body.scoped_tags,
+        scoped_collection_id=body.scoped_collection_id,
     )
     history = await _load_history(client, conversation_id)
     summary = await load_conversation_summary(conversation_id, client=client)
@@ -567,7 +573,7 @@ async def get_conversation(
         lambda: client.table("conversations")
         .select(
             "id, title, is_pinned, created_at, updated_at, "
-            "scoped_document_id, scoped_tags"
+            "scoped_document_id, scoped_tags, scoped_collection_id"
         )
         .eq("id", conversation_id)
         .maybe_single()
@@ -812,6 +818,86 @@ async def update_message_feedback(
         )
 
     return {"feedback": body.feedback}
+
+
+# ── V5 #59 — Copy = used (implicit quality signal) ──────────────────────────
+
+@router.post("/messages/{message_id}/copied")
+async def record_message_copy(
+    message_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Fire-and-forget signal from the assistant-message Copy button.
+
+    Each click increments `messages.copy_count` and forwards an `output_used`
+    score onto the Langfuse trace so we can slice retrieval quality by what
+    users actually used. RLS keeps cross-org calls from working; the user
+    sees a 404 (instead of 403) on those because that's what their session
+    is allowed to know.
+
+    The endpoint is intentionally idempotent-feeling but additive — repeated
+    copies of the same message are still useful signal (very high counts
+    correlate with templates / boilerplate the user is iterating on).
+    """
+    if not _is_uuid(message_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid message id.")
+
+    org_id, _user_id, token = _require_org(current_user)
+    client = get_user_client(token)
+
+    msg_res = await asyncio.to_thread(
+        lambda: client.table("messages")
+        .select("id, role, copy_count, langfuse_trace_id")
+        .eq("id", message_id)
+        .maybe_single()
+        .execute()
+    )
+    if not msg_res or not msg_res.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found.")
+    msg = msg_res.data
+    if msg.get("role") != "assistant":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only assistant messages can be marked as copied.",
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    next_count = int(msg.get("copy_count") or 0) + 1
+    patch: dict[str, Any] = {
+        "copy_count": next_count,
+        "last_copied_at": now_iso,
+    }
+    # Set first_copied_at only on the first hit — the column has no UPSERT
+    # semantics from Postgres' perspective so we conditionally include it.
+    if next_count == 1:
+        patch["first_copied_at"] = now_iso
+
+    await asyncio.to_thread(
+        lambda: client.table("messages")
+        .update(patch)
+        .eq("id", message_id)
+        .execute()
+    )
+
+    # Forward to Langfuse. Score is 1 — the trace's name `output_used` is
+    # what matters; a multi-copy session shows up as multiple score events.
+    trace_id = msg.get("langfuse_trace_id")
+    if trace_id:
+        try:
+            from app.services.langfuse import langfuse_client
+
+            if langfuse_client is not None:
+                langfuse_client.create_score(
+                    trace_id=trace_id,
+                    name="output_used",
+                    value=1,
+                    comment="User copied the assistant output",
+                    data_type="NUMERIC",
+                )
+        except Exception as exc:
+            log.debug("langfuse_copy_score_failed", error=str(exc))
+
+    return {"copy_count": next_count, "org_id": org_id}
 
 
 # ── Branching (V3 Day 3 #42) ────────────────────────────────────────────────
@@ -1272,6 +1358,7 @@ async def _ensure_conversation(
     first_message: str,
     scoped_document_id: str | None = None,
     scoped_tags: list[str] | None = None,
+    scoped_collection_id: str | None = None,
 ) -> tuple[str, str | None, list[str]]:
     """Look up or create the conversation; return (id, scoped_document_id, scoped_tags).
 
@@ -1283,6 +1370,12 @@ async def _ensure_conversation(
     mutually exclusive at the schema level, but the chat UI never sets both
     at once — doc-pinning is a per-document affordance, tag-pinning is a
     multi-tag affordance from the new-chat surface.
+
+    V5 #35: when `scoped_collection_id` is supplied, we resolve it to its
+    current tag_filters and treat the resolved tags as scoped_tags. We also
+    persist the collection id alongside so the UI can render the collection
+    label on subsequent loads. If a collection is later deleted, the tag
+    snapshot on the conversation row keeps working.
     """
     if conversation_id:
         check = await asyncio.to_thread(
@@ -1316,18 +1409,34 @@ async def _ensure_conversation(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scoped document not found.")
         persisted_scope = scoped_document_id
 
+    # Resolve collection → tag snapshot. If the caller passed both an explicit
+    # `scoped_tags` AND a `scoped_collection_id`, the collection wins — the UI
+    # only ever sets one of the two and we'd rather trust the saved view than
+    # a stale tag list cached on the client.
+    persisted_collection_id: str | None = None
+    collection_tags: list[str] = []
+    if scoped_collection_id:
+        if not _is_uuid(scoped_collection_id):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid collection id.")
+        # Lazy import to keep chat.py's cold-start light.
+        from app.routers.collections import resolve_collection_tags
+
+        persisted_collection_id, collection_tags = await resolve_collection_tags(
+            client=client, org_id=org_id, collection_id=scoped_collection_id,
+        )
+
     # Normalize tag scope at the API boundary so what we persist matches what
     # `documents.tags` stores — saves us a normalization step inside the
     # retrieval path on every search call.
+    tag_source = collection_tags if collection_tags else (scoped_tags or [])
     persisted_tags: list[str] = []
-    if scoped_tags:
-        seen: set[str] = set()
-        for raw in scoped_tags:
-            cleaned = (raw or "").strip().lower()
-            if not cleaned or cleaned in seen:
-                continue
-            seen.add(cleaned)
-            persisted_tags.append(cleaned)
+    seen: set[str] = set()
+    for raw in tag_source:
+        cleaned = (raw or "").strip().lower()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        persisted_tags.append(cleaned)
 
     new_id = str(uuid.uuid4())
     title = _derive_title(first_message)
@@ -1341,6 +1450,8 @@ async def _ensure_conversation(
         row["scoped_document_id"] = persisted_scope
     if persisted_tags:
         row["scoped_tags"] = persisted_tags
+    if persisted_collection_id:
+        row["scoped_collection_id"] = persisted_collection_id
     await asyncio.to_thread(
         lambda: client.table("conversations").insert(row).execute()
     )
@@ -1469,6 +1580,15 @@ async def _save_message(
         row["parent_user_message_id"] = parent_user_message_id
         row["branch_index"] = branch_index
         row["is_active_branch"] = is_active_branch
+    # V5 #73 — stamp the per-turn time-saved estimate on the assistant row
+    # only. User rows always stay at 0 so we can SUM the column for a clean
+    # "minutes saved" total without double-counting either side of the turn.
+    if role == "assistant":
+        from app.services.time_savings import estimate_minutes
+
+        row["time_saved_minutes"] = estimate_minutes(
+            intent=intent, response_length=len(content or ""),
+        )
     await asyncio.to_thread(
         lambda: client.table("messages").insert(row).execute()
     )

@@ -5,6 +5,7 @@ import { CommandPalette } from "@/components/command-palette/command-palette";
 import { CommandPaletteProvider } from "@/components/command-palette/command-palette-context";
 import { ShortcutsPanel } from "@/components/ui/shortcuts-panel";
 import { ShortcutsPanelProvider } from "@/components/ui/shortcuts-panel-context";
+import { EnrichmentModal } from "@/components/onboarding/enrichment-modal";
 
 export default function DashboardLayout({
   children,
@@ -22,6 +23,7 @@ export default function DashboardLayout({
         </div>
         <CommandPalette />
         <ShortcutsPanel />
+        <EnrichmentModal />
       </CommandPaletteProvider>
     </ShortcutsPanelProvider>
   );

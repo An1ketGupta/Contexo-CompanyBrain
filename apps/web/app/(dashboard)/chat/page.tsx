@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChatMobileBar } from "@/components/chat/chat-mobile-bar";
 import { ChatScopeSelector } from "@/components/chat/chat-scope-selector";
+import { CollectionSelector } from "@/components/chat/collection-selector";
 import { ConversationSidebar } from "@/components/chat/conversation-sidebar";
 import { DocumentStatusBanner } from "@/components/chat/document-status-banner";
 import { EmptyState } from "@/components/chat/empty-state";
@@ -44,6 +45,10 @@ export default function ChatNewPage() {
   // ignored on follow-up turns. Single-doc scope (`?document_id=`) takes
   // precedence — the UI hides the tag picker in that case.
   const [scopedTags, setScopedTags] = useState<string[]>([]);
+  // V5 #35 — collection scope is mutually exclusive with raw tag scope. The
+  // collection picker shows when the org has any collections; otherwise the
+  // tag chip row is the only narrowing affordance.
+  const [scopedCollectionId, setScopedCollectionId] = useState<string | null>(null);
 
   const scopedDocument = useMemo(() => {
     if (!scopedDocumentId) return null;
@@ -78,7 +83,11 @@ export default function ChatNewPage() {
   } = useChat({
     conversationId: null,
     scopedDocumentId,
-    scopedTags: scopedDocumentId ? [] : scopedTags,
+    // Collection wins over raw tags when both are set; backend hard-codes
+    // that priority too. We still send scoped_tags as a fallback so the V3
+    // chip row keeps working on orgs without collections.
+    scopedTags: scopedDocumentId || scopedCollectionId ? [] : scopedTags,
+    scopedCollectionId: scopedDocumentId ? null : scopedCollectionId,
     onConversationStarted: handleConversationStarted,
     onTurnComplete: handleTurnComplete,
   });
@@ -112,11 +121,25 @@ export default function ChatNewPage() {
           <ScopeBanner documentName={scopedDocument.name} clearHref="/chat" />
         )}
         <DocumentStatusBanner />
-        {/* Tag scope only makes sense on the empty new-chat surface — once a
-            turn has been sent the conversation row has locked its scope, and
-            the scope is also a no-op if the user already pinned a doc. */}
+        {/* Tag / collection scope only makes sense on the empty new-chat
+            surface — once a turn has been sent the conversation row has
+            locked its scope, and the scope is a no-op if the user already
+            pinned a doc. We show the CollectionSelector unconditionally;
+            it self-hides when the org has no collections, and the tag chips
+            only render if the user hasn't picked a collection. */}
         {isEmpty && !scopedDocument && (
-          <ChatScopeSelector value={scopedTags} onChange={setScopedTags} />
+          <>
+            <CollectionSelector
+              value={scopedCollectionId}
+              onChange={(id) => {
+                setScopedCollectionId(id);
+                if (id) setScopedTags([]);
+              }}
+            />
+            {!scopedCollectionId && (
+              <ChatScopeSelector value={scopedTags} onChange={setScopedTags} />
+            )}
+          </>
         )}
         {isEmpty ? (
           <div className="flex-1 overflow-y-auto">

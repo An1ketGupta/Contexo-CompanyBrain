@@ -12,6 +12,7 @@ from app.routers import (
     admin as admin_router,
     auth as auth_router,
     chat,
+    collections as collections_router,
     document_versions as document_versions_router,
     documents,
     health,
@@ -26,6 +27,7 @@ from app.routers import (
     slack_router,
     team as team_router,
     templates as templates_router,
+    time_savings as time_savings_router,
     usage as usage_router,
     webhooks as webhooks_router,
 )
@@ -103,6 +105,8 @@ app.include_router(admin_router.router)
 app.include_router(team_router.router)
 app.include_router(document_versions_router.router)
 app.include_router(meeting_prep_router.router)
+app.include_router(collections_router.router)
+app.include_router(time_savings_router.router)
 
 # Inngest serve endpoint — webhook the Inngest server hits to invoke our functions.
 # Mounts at /api/inngest by default.

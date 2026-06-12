@@ -2,11 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { proxyJson } from "@/lib/api-proxy";
 import { REQUEST_ID_HEADER, coerceRequestId } from "@/lib/request-id";
 
-export async function GET(req: NextRequest): Promise<Response> {
-  return proxyJson(req, "/organizations/me", { method: "GET" });
-}
-
-export async function PATCH(req: NextRequest): Promise<Response> {
+export async function POST(req: NextRequest): Promise<Response> {
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object") {
     const requestId = coerceRequestId(req.headers.get(REQUEST_ID_HEADER));
@@ -15,5 +11,5 @@ export async function PATCH(req: NextRequest): Promise<Response> {
       { status: 400, headers: { [REQUEST_ID_HEADER]: requestId } },
     );
   }
-  return proxyJson(req, "/organizations/me", { method: "PATCH", body });
+  return proxyJson(req, "/organizations/enrich", { method: "POST", body });
 }

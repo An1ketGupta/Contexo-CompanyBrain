@@ -559,6 +559,77 @@ async def recompute_document_health_fn(ctx: inngest.Context) -> dict[str, Any]:
     return {"orgs": len(org_ids), "documents_updated": total_updated}
 
 
+# ── V5 #97 — Post-enrichment defaulting ─────────────────────────────────────
+# Fires once after an admin completes the enrichment modal. Seeds AI
+# instructions if the org hasn't set any yet — we never overwrite a customized
+# instruction. Templates are not seeded here because the templates table
+# already ships with built-in entries (see migration 018); we just want the
+# tone of the assistant to match the org's primary use case from turn one.
+
+_DEFAULT_AI_INSTRUCTIONS: dict[str, str] = {
+    "hr_policies": (
+        "This organization uses Company Brain primarily for HR / People Ops "
+        "questions. Quote the exact policy when possible, cite the document "
+        "it came from, and never speculate about pay, benefits, or legal "
+        "matters where the answer isn't in the retrieved context."
+    ),
+    "sales_enablement": (
+        "This organization uses Company Brain for sales enablement. Outputs "
+        "should be persuasive, customer-focused, and grounded in the product "
+        "positioning, pricing, and objection-handling docs we've uploaded."
+    ),
+    "customer_support": (
+        "This organization uses Company Brain for customer support. Replies "
+        "should be empathetic, solution-focused, and reference the support "
+        "policies and runbooks we've uploaded. Avoid making promises about "
+        "refunds or SLAs that aren't already documented."
+    ),
+    "engineering": (
+        "This organization uses Company Brain for engineering. Outputs should "
+        "be precise, technical, and reference the runbooks, postmortems, and "
+        "architecture docs we've uploaded. Prefer terse, actionable answers."
+    ),
+}
+
+
+@_inngest_client.create_function(
+    fn_id="org-post-enrichment",
+    trigger=inngest.TriggerEvent(event="org/post-enrichment"),
+    retries=1,
+)
+async def org_post_enrichment_fn(ctx: inngest.Context) -> dict[str, Any]:
+    data = ctx.event.data
+    org_id: str = data["org_id"]
+    use_case: str = (data.get("primary_use_case") or "").strip()
+
+    async def _seed_ai_instructions() -> dict[str, Any]:
+        instruction = _DEFAULT_AI_INSTRUCTIONS.get(use_case)
+        if not instruction:
+            return {"seeded": False, "reason": "no_default_for_use_case"}
+        svc = get_service_client()
+        # Only seed if the org hasn't already written something; never clobber
+        # a hand-tuned instruction.
+        row = await asyncio.to_thread(
+            lambda: svc.table("organizations")
+            .select("ai_instructions")
+            .eq("id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        existing = (row.data or {}).get("ai_instructions") if row else None
+        if existing and existing.strip():
+            return {"seeded": False, "reason": "already_set"}
+        await asyncio.to_thread(
+            lambda: svc.table("organizations")
+            .update({"ai_instructions": instruction})
+            .eq("id", org_id)
+            .execute()
+        )
+        return {"seeded": True, "use_case": use_case}
+
+    return await ctx.step.run("seed-ai-instructions", _seed_ai_instructions)
+
+
 FUNCTIONS: list = [
     process_document,
     retry_failed_chunks,
@@ -566,4 +637,5 @@ FUNCTIONS: list = [
     recompute_document_health_fn,
     rebuild_doc_summary_fn,
     rebuild_doc_toc_fn,
+    org_post_enrichment_fn,
 ]

@@ -107,6 +107,12 @@ export interface UseChatOptions {
    * in the UI (single-doc scope wins).
    */
   scopedTags?: string[];
+  /**
+   * V5 #35 — Pick a saved Collection by id; the backend resolves it to the
+   * collection's current tag_filters and reuses scoped_tags plumbing. Same
+   * "only on first send" lifecycle. Wins over scopedTags when both are set.
+   */
+  scopedCollectionId?: string | null;
   initialMessages?: Array<{
     id: string;
     role: DisplayRole;
@@ -191,6 +197,7 @@ export function useChat({
   conversationId,
   scopedDocumentId,
   scopedTags,
+  scopedCollectionId,
   initialMessages,
   initialBranches,
   onConversationStarted,
@@ -363,6 +370,11 @@ export function useChat({
                 !convoIdRef.current && scopedTags && scopedTags.length > 0
                   ? scopedTags
                   : undefined,
+              // V5 #35 — collection wins over scoped_tags when both are
+              // present (backend hard-codes that priority too). Only sent on
+              // a brand-new conversation; backend ignores it once persisted.
+              scoped_collection_id:
+                !convoIdRef.current && scopedCollectionId ? scopedCollectionId : undefined,
             }),
             signal: controller.signal,
           });
