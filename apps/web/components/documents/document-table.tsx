@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  ChevronDown,
+  ChevronRight,
   Loader2,
   MessageSquare,
   Pencil,
@@ -14,6 +16,7 @@ import { formatDistanceToNow } from "@/lib/date";
 import type { Document } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { cn } from "@/lib/utils";
 import { FileIcon } from "./file-icon";
 import { StatusBadge } from "./status-badge";
 import { HealthBadge } from "./health-badge";
@@ -21,6 +24,9 @@ import { DeleteDocumentDialog } from "./delete-document-dialog";
 import { ProcessingIndicator } from "./processing-indicator";
 import { TagDialog } from "./tag-dialog";
 import { UploadVersionButton } from "./upload-version-button";
+import { DocumentSummary } from "./document-summary";
+import { TableOfContents } from "./table-of-contents";
+import { hasInsights, readDocumentInsights } from "./document-metadata";
 import { useCurrentUser } from "@/hooks/use-user";
 
 interface DocumentTableProps {
@@ -120,6 +126,9 @@ export function DocumentTable({
                 }
               />
             </th>
+            <th className="w-7 px-1 py-2.5">
+              <span className="sr-only">Expand</span>
+            </th>
             <th className="px-4 py-2.5 text-left font-medium">Name</th>
             <th className="hidden px-4 py-2.5 text-left font-medium md:table-cell">
               Tags
@@ -171,10 +180,15 @@ function Row({
 }) {
   const [tagOpen, setTagOpen] = useState(false);
   const [savingTags, setSavingTags] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const { user } = useCurrentUser();
   const isAdmin = user?.role === "admin";
 
+  const insights = readDocumentInsights(doc);
+  const canExpand = doc.status === "ready" && hasInsights(insights);
+
   return (
+    <>
     <tr
       className={
         selected
@@ -188,6 +202,35 @@ function Row({
           onCheckedChange={onSelect}
           aria-label={`Select ${doc.name}`}
         />
+      </td>
+      <td className="w-7 px-1 py-3">
+        <button
+          type="button"
+          onClick={() => canExpand && setExpanded((v) => !v)}
+          disabled={!canExpand}
+          aria-expanded={expanded}
+          aria-label={
+            !canExpand
+              ? doc.status === "ready"
+                ? "Summary generating…"
+                : "Available once processing completes"
+              : expanded
+                ? `Hide ${doc.name} summary`
+                : `Show ${doc.name} summary`
+          }
+          className={cn(
+            "flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors",
+            canExpand
+              ? "hover:bg-muted hover:text-foreground"
+              : "cursor-default opacity-30",
+          )}
+        >
+          {expanded ? (
+            <ChevronDown className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5" />
+          )}
+        </button>
       </td>
       <td className="px-4 py-3">
         <div className="flex min-w-0 items-center gap-3">
@@ -306,6 +349,33 @@ function Row({
         }}
       />
     </tr>
+    {expanded && canExpand && (
+      <tr className="bg-muted/30">
+        <td colSpan={8} className="border-t border-border/60 px-4 py-4 md:px-12">
+          <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            {insights.summary && (
+              <div>
+                <DocumentSummary
+                  summary={insights.summary}
+                  keyTopics={insights.keyTopics}
+                />
+              </div>
+            )}
+            {insights.toc.length > 0 && (
+              <div className="max-h-72 overflow-y-auto pr-2">
+                <TableOfContents entries={insights.toc} />
+              </div>
+            )}
+            {!insights.summary && insights.toc.length === 0 && (
+              <p className="text-xs text-muted-foreground">
+                Summary still generating — check back in a few seconds.
+              </p>
+            )}
+          </div>
+        </td>
+      </tr>
+    )}
+    </>
   );
 }
 

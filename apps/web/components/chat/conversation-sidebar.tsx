@@ -113,6 +113,7 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
             placeholder="Search conversations…"
             className="h-8 pl-8 pr-7 text-xs"
             aria-label="Search conversations"
+            data-conversation-search
           />
           {searchInput && (
             <button

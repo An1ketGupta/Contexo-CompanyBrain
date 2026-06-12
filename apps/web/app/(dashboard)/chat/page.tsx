@@ -15,6 +15,10 @@ import { useChat } from "@/hooks/use-chat";
 import { useConversations } from "@/hooks/use-conversations";
 import { useDocumentStatus } from "@/hooks/use-document-status";
 import { useDocuments } from "@/hooks/use-documents";
+import {
+  copyToClipboardWithToast,
+  useKeyboardShortcuts,
+} from "@/hooks/use-keyboard-shortcuts";
 
 /**
  * `/chat` — start a new conversation. The send() call carries no
@@ -84,6 +88,15 @@ export default function ChatNewPage() {
       router.replace(`/chat/${pendingNavId}`);
     }
   }, [pendingNavId, isStreaming, router]);
+
+  useKeyboardShortcuts({
+    isStreaming,
+    onStopGeneration: stop,
+    onCopyLastResponse: () => {
+      const last = [...messages].reverse().find((m) => m.role === "assistant");
+      void copyToClipboardWithToast(last?.content ?? null);
+    },
+  });
 
   const isEmpty = messages.length === 0;
   const hasDocuments = !loadingDocs && documents.length > 0;

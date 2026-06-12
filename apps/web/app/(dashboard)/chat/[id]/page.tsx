@@ -17,6 +17,10 @@ import { useConversation } from "@/hooks/use-conversation";
 import { useConversations } from "@/hooks/use-conversations";
 import { useDocumentStatus } from "@/hooks/use-document-status";
 import { useDocuments } from "@/hooks/use-documents";
+import {
+  copyToClipboardWithToast,
+  useKeyboardShortcuts,
+} from "@/hooks/use-keyboard-shortcuts";
 
 export default function ChatConversationPage({
   params,
@@ -115,6 +119,15 @@ export default function ChatConversationPage({
     // `messages.length > 0` guard above prevents a double-send regardless.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, conversation, id, isStreaming]);
+
+  useKeyboardShortcuts({
+    isStreaming,
+    onStopGeneration: stop,
+    onCopyLastResponse: () => {
+      const last = [...messages].reverse().find((m) => m.role === "assistant");
+      void copyToClipboardWithToast(last?.content ?? null);
+    },
+  });
 
   const hasDocuments = !loadingDocs && documents.length > 0;
   const noContent = !loading && messages.length === 0;

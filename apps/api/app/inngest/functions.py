@@ -11,6 +11,7 @@ Outcome mapping for `process-document`:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -24,8 +25,10 @@ from app.services.ingestion import (
     reembed_failed_chunks,
 )
 from app.database import get_service_client
+from app.services.document_summary import generate_document_summary
 from app.services.health_score import recompute_org_health
 from app.services.summarization import summarize_conversation
+from app.services.toc_extractor import extract_toc, to_json as toc_to_json
 from app.services.webhooks import trigger_event as trigger_webhook_event
 
 from .client import get_inngest_client
@@ -136,6 +139,22 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
                     org_id=org_id, doc_id=doc_id, event="document.processed",
                     chunks_embedded=e, chunks_total=t,
                 ),
+            )
+            # V5 #107 — structural TOC. Zero LLM cost, runs after `ready` so
+            # users can already chat while it computes. Best-effort: errors are
+            # swallowed inside _extract_doc_toc — never fail the function.
+            await step.run(
+                "extract-toc",
+                lambda fp=file_path, ft=file_type: _extract_doc_toc(
+                    doc_id=doc_id, file_path=fp, file_type=ft,
+                ),
+            )
+            # V5 #24 — auto-summary + key topics. One LLM call, capped input.
+            # Fires last so the doc is queryable immediately and the summary
+            # chips simply appear a few seconds later via Supabase Realtime.
+            await step.run(
+                "generate-summary",
+                lambda: _generate_doc_summary(doc_id=doc_id),
             )
     else:
         await step.run(
@@ -347,6 +366,109 @@ async def _notify_document_ready(*, doc_id: str, chunk_count: int) -> None:
         log.warning("[inngest] document_ready notify failed: %s", exc)
 
 
+async def _extract_doc_toc(*, doc_id: str, file_path: str, file_type: str) -> dict[str, Any]:
+    """Re-download the file, run structural TOC extraction, persist into metadata.
+
+    Best-effort: a parse failure or storage hiccup logs a warning and returns
+    a no-op status — the document is already 'ready' and queryable. Never raises
+    so Inngest doesn't retry the whole ingest run on a TOC-only failure.
+    """
+    try:
+        if file_type.lower() not in ("pdf", "docx"):
+            return {"status": "skipped", "reason": "unsupported_type"}
+        file_bytes = await download_from_storage(file_path)
+        entries = await asyncio.to_thread(lambda: extract_toc(file_bytes, file_type))
+        if not entries:
+            return {"status": "skipped", "reason": "no_headings"}
+
+        svc = get_service_client()
+        # Re-read metadata to merge so we never clobber summary/embedding state
+        # that another concurrent step may have just written.
+        doc = await asyncio.to_thread(
+            lambda: svc.table("documents")
+            .select("metadata")
+            .eq("id", doc_id)
+            .maybe_single()
+            .execute()
+        )
+        existing = (doc.data.get("metadata") if doc and doc.data else None) or {}
+        if not isinstance(existing, dict):
+            existing = {}
+        next_metadata = {
+            **existing,
+            "toc": toc_to_json(entries),
+            "toc_generated_at": _utcnow_iso(),
+        }
+        await asyncio.to_thread(
+            lambda: svc.table("documents")
+            .update({"metadata": next_metadata})
+            .eq("id", doc_id)
+            .execute()
+        )
+        return {"status": "ok", "entries": len(entries)}
+    except Exception as exc:
+        log.warning("[inngest] TOC extraction failed: doc=%s err=%s", doc_id, exc)
+        return {"status": "failed", "reason": str(exc)[:200]}
+
+
+async def _generate_doc_summary(*, doc_id: str) -> dict[str, Any]:
+    """Wrapper around services.document_summary so Inngest gets a serializable dict.
+
+    `generate_document_summary` already swallows LLM errors and returns its own
+    status dict, but we add one more try/except for paranoia — a single bad
+    document should never cascade into an Inngest retry storm.
+    """
+    try:
+        return await generate_document_summary(document_id=doc_id)
+    except Exception as exc:
+        log.warning("[inngest] summary generation failed: doc=%s err=%s", doc_id, exc)
+        return {"status": "failed", "reason": str(exc)[:200]}
+
+
+def _utcnow_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+# ── Standalone retrigger endpoints (called by admin UI / backfill scripts) ──
+
+@_inngest_client.create_function(
+    fn_id="rebuild-doc-summary",
+    trigger=inngest.TriggerEvent(event="doc/rebuild-summary"),
+    retries=1,
+    concurrency=[
+        inngest.Concurrency(limit=4, key="event.data.org_id", scope="fn"),
+    ],
+)
+async def rebuild_doc_summary_fn(ctx: inngest.Context) -> dict[str, Any]:
+    """Hand-fired event used by the admin backfill script and the document
+    detail page's 'regenerate summary' action. Runs the same summarizer the
+    upload pipeline uses, against an already-ready document."""
+    data = ctx.event.data
+    doc_id: str = data["doc_id"]
+    return await ctx.step.run("summarize", lambda: _generate_doc_summary(doc_id=doc_id))
+
+
+@_inngest_client.create_function(
+    fn_id="rebuild-doc-toc",
+    trigger=inngest.TriggerEvent(event="doc/rebuild-toc"),
+    retries=1,
+    concurrency=[
+        inngest.Concurrency(limit=4, key="event.data.org_id", scope="fn"),
+    ],
+)
+async def rebuild_doc_toc_fn(ctx: inngest.Context) -> dict[str, Any]:
+    data = ctx.event.data
+    doc_id: str = data["doc_id"]
+    file_path: str = data["file_path"]
+    file_type: str = data["file_type"]
+    return await ctx.step.run(
+        "extract-toc",
+        lambda: _extract_doc_toc(doc_id=doc_id, file_path=file_path, file_type=file_type),
+    )
+
+
 async def _try_ingest(
     *,
     doc_id: str,
@@ -442,4 +564,6 @@ FUNCTIONS: list = [
     retry_failed_chunks,
     summarize_conversation_fn,
     recompute_document_health_fn,
+    rebuild_doc_summary_fn,
+    rebuild_doc_toc_fn,
 ]

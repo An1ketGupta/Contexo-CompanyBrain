@@ -6,6 +6,7 @@ import { SidebarNav } from "./sidebar-nav";
 import { UserMenu } from "./user-menu";
 import { QuotaMeter } from "./quota-meter";
 import { ActivityFeed } from "./activity-feed";
+import { CommandPaletteTrigger } from "./command-palette-trigger";
 import { OnboardingChecklist } from "@/components/onboarding/onboarding-checklist";
 import { useCurrentUser } from "@/hooks/use-user";
 
@@ -23,6 +24,10 @@ export function Sidebar() {
           Company Brain
         </span>
       </Link>
+
+      <div className="pt-2">
+        <CommandPaletteTrigger />
+      </div>
 
       <div className="flex-1 overflow-y-auto py-2">
         <SidebarNav />
