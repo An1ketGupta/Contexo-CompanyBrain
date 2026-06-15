@@ -7,7 +7,6 @@ import { UserMenu } from "./user-menu";
 import { QuotaMeter } from "./quota-meter";
 import { ActivityFeed } from "./activity-feed";
 import { CommandPaletteTrigger } from "./command-palette-trigger";
-import { TimeSavingsCard } from "./time-savings-card";
 import { OnboardingChecklist } from "@/components/onboarding/onboarding-checklist";
 import { useCurrentUser } from "@/hooks/use-user";
 
@@ -41,8 +40,6 @@ export function Sidebar() {
       <OnboardingChecklist />
 
       <ActivityFeed />
-
-      <TimeSavingsCard />
 
       <QuotaMeter />
 

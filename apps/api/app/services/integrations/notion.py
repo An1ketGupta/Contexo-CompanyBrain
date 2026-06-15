@@ -301,3 +301,115 @@ def _page_title(page: dict[str, Any]) -> str:
             if t:
                 return t
     return "Untitled"
+
+
+# ── Write surface (Agent Day 4): create a page under a parent ───────────────
+
+# Notion caps a single rich_text run at 2000 characters. Anything longer
+# becomes multiple paragraph blocks. We don't try to detect headings or
+# preserve markdown structure — the chat output is plain prose, and a faithful
+# 1:1 dump beats a half-formatted render that misplaces emphasis.
+_NOTION_TEXT_RUN_CAP = 2000
+
+
+def _text_to_blocks(text: str) -> list[dict[str, Any]]:
+    """Convert plain text → Notion paragraph blocks.
+
+    Each blank-line-separated paragraph becomes one block. Paragraphs longer
+    than 2000 chars get split (Notion's per-run limit), with the splits kept
+    inside one block via multiple rich_text runs so the rendered paragraph
+    stays visually intact.
+    """
+    paragraphs = [p.strip() for p in (text or "").split("\n\n") if p.strip()]
+    if not paragraphs:
+        # Notion requires at least one block on page create; an empty page is
+        # a footgun on the API side. Insert a single empty paragraph.
+        return [
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": []},
+            }
+        ]
+    out: list[dict[str, Any]] = []
+    for para in paragraphs:
+        runs: list[dict[str, Any]] = []
+        for i in range(0, len(para), _NOTION_TEXT_RUN_CAP):
+            chunk = para[i : i + _NOTION_TEXT_RUN_CAP]
+            runs.append({"type": "text", "text": {"content": chunk}})
+        out.append(
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": runs},
+            }
+        )
+    return out
+
+
+async def create_page(
+    *,
+    org_id: str,
+    parent_page_id: str,
+    title: str,
+    content: str,
+) -> dict[str, Any]:
+    """Create a Notion page under `parent_page_id` with the given content.
+
+    The bot needs to have been shared on the parent page in Notion — Notion
+    doesn't let an integration write to a page it can't see. If that's not
+    the case the API returns 404 "Could not find page with ID", which we
+    translate to PermissionError so the worker doesn't waste retries.
+    """
+    token = await _access_token(org_id)
+    if not token:
+        raise PermissionError("notion_not_connected")
+
+    blocks = _text_to_blocks(content)
+    payload: dict[str, Any] = {
+        "parent": {"page_id": parent_page_id},
+        "properties": {
+            "title": {
+                "title": [{"type": "text", "text": {"content": (title or "Untitled")[:200]}}]
+            }
+        },
+        # Notion caps children on create at 100 blocks. For a generated email
+        # / SOP / announcement that's plenty; if we ever push longer outputs
+        # we'll need to follow up with PATCH /blocks/{id}/children.
+        "children": blocks[:100],
+    }
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        resp = await client.post(
+            f"{_NOTION_API}/pages",
+            headers=_headers(token),
+            json=payload,
+        )
+
+    if resp.status_code in (401, 403):
+        raise PermissionError("notion_token_revoked")
+    if resp.status_code == 404:
+        # Bot can't see this parent page — the user needs to share the page
+        # with the integration. Surface a distinct code so the UI can prompt.
+        raise PermissionError("notion_parent_not_shared")
+    if resp.status_code >= 400:
+        raise RuntimeError(f"notion_create_failed: {resp.status_code} {resp.text[:200]}")
+
+    body = resp.json()
+    return {
+        "page_id": body.get("id"),
+        "url": body.get("url"),
+        "title": title,
+    }
+
+
+async def list_write_targets(*, org_id: str, query: str | None = None) -> list[dict[str, Any]]:
+    """Return pages the integration can use as a parent for new pages.
+
+    This is just `list_accessible_pages` — Notion's permission model means
+    any page the bot can read, it can also create children under. We keep
+    the function name distinct from `list_accessible_pages` because the
+    UI semantics differ: this list is the parent picker for "create page",
+    not the doc-selection list for the sync flow.
+    """
+    return await list_accessible_pages(org_id=org_id, query=query)

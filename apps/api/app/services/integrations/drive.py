@@ -42,7 +42,24 @@ _SUPPORTED_MIME = {
     "application/vnd.google-apps.spreadsheet": "xlsx",  # export to xlsx
 }
 
-_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+# Drive ingestion only needs read. The Docs write surface (Agent Day 4) needs
+# `documents` AND `drive.file` so we can both create the doc and share it back
+# with the requesting user. `drive.file` is the minimum-trust write scope —
+# it only sees files the app creates, NOT the user's existing Drive. That
+# matches the "create AI output as a new doc" UX exactly.
+DOCS_WRITE_SCOPE = "https://www.googleapis.com/auth/documents"
+DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
+_SCOPES = [
+    "https://www.googleapis.com/auth/drive.readonly",
+    DOCS_WRITE_SCOPE,
+    DRIVE_FILE_SCOPE,
+]
+
+
+def has_docs_write_scope(scopes: list[str] | None) -> bool:
+    if not scopes:
+        return False
+    return DOCS_WRITE_SCOPE in scopes and DRIVE_FILE_SCOPE in scopes
 
 
 # ── OAuth flow ──────────────────────────────────────────────────────────────
@@ -50,7 +67,14 @@ _SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 def build_auth_url(*, state: str) -> str:
     """Construct Google's consent URL. `state` is an HMAC-signed JWT that
     encodes the calling user's id + org id; we verify on callback to prevent
-    CSRF + to bind the resulting tokens to the right tenant."""
+    CSRF + to bind the resulting tokens to the right tenant.
+
+    Scopes requested: drive.readonly (existing ingest path), documents +
+    drive.file (Agent Day 4 — Docs export). `include_granted_scopes=true`
+    means Google folds previously-granted scopes into the new token, so a
+    user who only had drive.readonly before getting Day 4 doesn't lose their
+    existing ingest while gaining Docs write.
+    """
     settings = get_settings()
     params = {
         "client_id": settings.google_client_id,
@@ -59,6 +83,7 @@ def build_auth_url(*, state: str) -> str:
         "scope": " ".join(_SCOPES),
         "access_type": "offline",
         "prompt": "consent",  # force refresh_token issuance on every install
+        "include_granted_scopes": "true",
         "state": state,
     }
     return f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
@@ -89,7 +114,12 @@ async def store_credentials(
     user_id: str,
     token_payload: dict[str, Any],
 ) -> None:
-    """Upsert the drive_integrations row with the issued tokens."""
+    """Upsert the drive_integrations row with the issued tokens.
+
+    Also persists the granted scope list so the UI can decide whether to
+    show Docs-write affordances (Agent Day 4). When Google omits the scope
+    field on token refresh, we fall back to whatever the row already had.
+    """
     svc = get_service_client()
     expires_in = int(token_payload.get("expires_in") or 0)
     expiry = (
@@ -99,6 +129,9 @@ async def store_credentials(
         else None
     )
 
+    granted_scope = token_payload.get("scope") or ""
+    scopes = [s for s in granted_scope.split() if s]
+
     row = {
         "org_id": org_id,
         "connected_by": user_id,
@@ -107,17 +140,21 @@ async def store_credentials(
         # refresh_token rather than wiping it.
         "refresh_token": token_payload.get("refresh_token") or "",
         "token_expiry": expiry.isoformat() if expiry else None,
+        "scopes": scopes,
     }
 
     def _run() -> None:
         existing = (
-            svc.table("drive_integrations").select("id, refresh_token").eq("org_id", org_id)
+            svc.table("drive_integrations").select("id, refresh_token, scopes").eq("org_id", org_id)
             .maybe_single().execute()
         )
         if existing and existing.data:
             # Preserve old refresh_token when Google didn't issue a new one.
             if not row["refresh_token"]:
                 row["refresh_token"] = existing.data.get("refresh_token") or ""
+            # Preserve prior scopes if the refresh response didn't carry them.
+            if not row["scopes"]:
+                row["scopes"] = existing.data.get("scopes") or []
             svc.table("drive_integrations").update(row).eq("id", existing.data["id"]).execute()
         else:
             if not row["refresh_token"]:
@@ -367,6 +404,149 @@ async def _download_raw(access_token: str, file_id: str) -> str:
 
 
 # ── Folder management (called by the integrations router) ───────────────────
+
+# ── Org credentials helper (used by Docs write surface) ─────────────────────
+
+
+async def get_org_credentials(org_id: str) -> dict[str, Any] | None:
+    """Return {access_token, scopes} for an org's Drive install, refreshing
+    if expired. None if Drive isn't connected.
+
+    The Docs write path (create_document) uses this — it needs a fresh
+    access_token + the granted scope list so it can fail fast if the
+    documents scope wasn't granted.
+    """
+    svc = get_service_client()
+    row = await asyncio.to_thread(
+        lambda: svc.table("drive_integrations")
+        .select("org_id, access_token, refresh_token, token_expiry, scopes")
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not row or not row.data:
+        return None
+    data = row.data
+    fresh = await _ensure_fresh_token(data)
+    return {
+        "access_token": fresh,
+        "scopes": data.get("scopes") or [],
+    }
+
+
+# ── Google Docs write (Agent Day 4) ─────────────────────────────────────────
+#
+# We POST directly to the Docs + Drive REST APIs rather than pulling
+# google-api-python-client. Two endpoints:
+#   1. POST https://docs.googleapis.com/v1/documents — create empty doc
+#   2. POST https://docs.googleapis.com/v1/documents/{id}:batchUpdate — insert
+#      text via an insertText request. (`documents.create` doesn't accept body
+#      content; you create empty then batchUpdate to fill.)
+# Optional:
+#   3. POST https://www.googleapis.com/drive/v3/files/{id}/permissions — share
+#      the doc back to the requesting user as writer so it shows up in their
+#      "Shared with me" without an extra step.
+
+
+async def create_document(
+    *,
+    org_id: str,
+    title: str,
+    content: str,
+    share_with_email: str | None = None,
+) -> dict[str, Any]:
+    """Create a Google Doc, fill it with `content`, optionally share back.
+
+    Raises PermissionError on missing-scope / revoked-token so the Inngest
+    worker can fail fast instead of burning retry budget. The "share with
+    requester" step is best-effort — a failure there doesn't roll back the
+    doc, because the user can always open the doc URL.
+    """
+    creds = await get_org_credentials(org_id)
+    if not creds:
+        raise PermissionError("drive_not_connected")
+    if not has_docs_write_scope(creds.get("scopes")):
+        raise PermissionError("docs_write_scope_missing")
+
+    access_token = creds["access_token"]
+    title = (title or "Untitled").strip() or "Untitled"
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        # Step 1: create empty doc.
+        create_resp = await client.post(
+            "https://docs.googleapis.com/v1/documents",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json={"title": title[:512]},  # Docs caps title at ~512 chars
+        )
+        if create_resp.status_code in (401, 403):
+            raise PermissionError("docs_unauthorized")
+        if create_resp.status_code >= 400:
+            raise RuntimeError(
+                f"docs_create_failed: {create_resp.status_code} {create_resp.text[:200]}"
+            )
+        doc = create_resp.json()
+        doc_id = doc.get("documentId")
+        if not doc_id:
+            raise RuntimeError("docs_create_missing_id")
+
+        # Step 2: insert content via batchUpdate. Index 1 = right after the
+        # auto-inserted "title heading" Docs starts every doc with.
+        body_text = content or ""
+        if body_text:
+            update_resp = await client.post(
+                f"https://docs.googleapis.com/v1/documents/{doc_id}:batchUpdate",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "requests": [
+                        {
+                            "insertText": {
+                                "location": {"index": 1},
+                                "text": body_text,
+                            }
+                        }
+                    ]
+                },
+            )
+            if update_resp.status_code >= 400:
+                # Doc exists but the insert failed — surface as RuntimeError
+                # so the worker retries. (The doc itself can be reused on
+                # retry — we'll just append again, which is acceptable for a
+                # failure mode that essentially never fires.)
+                raise RuntimeError(
+                    f"docs_insert_failed: {update_resp.status_code} {update_resp.text[:200]}"
+                )
+
+        # Step 3: optionally share with the requesting user. Best-effort.
+        if share_with_email:
+            try:
+                await client.post(
+                    f"https://www.googleapis.com/drive/v3/files/{doc_id}/permissions",
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json",
+                    },
+                    params={"sendNotificationEmail": "false"},
+                    json={
+                        "type": "user",
+                        "role": "writer",
+                        "emailAddress": share_with_email,
+                    },
+                )
+            except Exception as exc:
+                log.warning("docs_share_failed", doc_id=doc_id, error=str(exc))
+
+    return {
+        "doc_id": doc_id,
+        "url": f"https://docs.google.com/document/d/{doc_id}/edit",
+        "title": title,
+    }
+
 
 async def add_folder(*, org_id: str, folder_id: str, folder_name: str | None) -> list[str]:
     svc = get_service_client()

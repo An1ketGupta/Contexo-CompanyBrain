@@ -23,6 +23,12 @@ EventType = Literal[
     "quota_exceeded",
     "weekly_digest",
     "knowledge_refresh",
+    "knowledge_gap_alert",
+    "approval_request",
+    "approval_resolved",
+    "approval_reminder",
+    "onboarding_welcome",
+    "acknowledgement_reminder",
 ]
 
 

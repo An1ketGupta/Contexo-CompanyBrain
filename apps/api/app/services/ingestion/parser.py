@@ -60,6 +60,8 @@ def parse_document(file_bytes: bytes, file_type: str) -> list[RawSegment]:
         segments = list(_parse_html(file_bytes))
     elif file_type == "csv":
         segments = list(_parse_csv(file_bytes))
+    elif file_type in ("vtt", "teams_transcript"):
+        segments = list(_parse_meeting_transcript(_decode_bytes(file_bytes), file_type=file_type))
     else:
         raise ParseError(f"Unsupported file type: {file_type}")
 
@@ -234,6 +236,44 @@ def _parse_text(text: str) -> Iterator[RawSegment]:
         para = para.strip()
         if para:
             yield RawSegment(content=para)
+
+
+# ── Meeting transcripts (Zoom VTT / Teams JSON) ───────────────────────────────
+
+def _parse_meeting_transcript(text: str, *, file_type: str) -> Iterator[RawSegment]:
+    """Project a transcript to `Speaker: text` paragraph segments.
+
+    We chunk by speaker turn rather than blank-line paragraphs so retrieval
+    surfaces utterance-level matches ("what did Alice say about X") with
+    the speaker label intact. Empty transcripts raise EmptyDocumentError
+    via the outer parse_document validation, same as scanned PDFs.
+    """
+    from app.services.parsers.meeting_transcript import parse_transcript
+
+    parsed = parse_transcript(file_type=file_type, content=text)
+    if parsed.is_empty():
+        return
+    # Group consecutive utterances by the same speaker into a single segment.
+    # Improves retrieval: a single contiguous answer reads better than 8
+    # fragmented "Alice: …" lines, and the chunker re-splits if needed.
+    cur_speaker: str | None = None
+    cur_lines: list[str] = []
+    for u in parsed.utterances:
+        if u.speaker == cur_speaker:
+            cur_lines.append(u.text)
+            continue
+        if cur_speaker and cur_lines:
+            yield RawSegment(
+                content=f"{cur_speaker}: " + " ".join(cur_lines).strip(),
+                section_heading=cur_speaker,
+            )
+        cur_speaker = u.speaker
+        cur_lines = [u.text]
+    if cur_speaker and cur_lines:
+        yield RawSegment(
+            content=f"{cur_speaker}: " + " ".join(cur_lines).strip(),
+            section_heading=cur_speaker,
+        )
 
 
 # ── XLSX ──────────────────────────────────────────────────────────────────────

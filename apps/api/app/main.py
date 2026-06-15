@@ -10,11 +10,14 @@ from app.middleware.request_context import RequestContextMiddleware
 from app.observability import init_observability
 from app.routers import (
     admin as admin_router,
+    approvals as approvals_router,
     auth as auth_router,
     chat,
     collections as collections_router,
+    compliance as compliance_router,
     document_versions as document_versions_router,
     documents,
+    gmail_router,
     health,
     integrations as integrations_router,
     invitations,
@@ -25,6 +28,7 @@ from app.routers import (
     settings as settings_router,
     sharing as sharing_router,
     slack_router,
+    support as support_router,
     team as team_router,
     templates as templates_router,
     time_savings as time_savings_router,
@@ -98,6 +102,7 @@ app.include_router(webhooks_router.router)
 app.include_router(integrations_router.router)
 app.include_router(public_api.router)
 app.include_router(slack_router.router)
+app.include_router(gmail_router.router)
 app.include_router(organizations_router.router)
 app.include_router(templates_router.router)
 app.include_router(sharing_router.router)
@@ -107,6 +112,9 @@ app.include_router(document_versions_router.router)
 app.include_router(meeting_prep_router.router)
 app.include_router(collections_router.router)
 app.include_router(time_savings_router.router)
+app.include_router(approvals_router.router)
+app.include_router(compliance_router.router)
+app.include_router(support_router.router)
 
 # Inngest serve endpoint — webhook the Inngest server hits to invoke our functions.
 # Mounts at /api/inngest by default.

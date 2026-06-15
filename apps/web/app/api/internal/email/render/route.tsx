@@ -37,6 +37,41 @@ import {
   knowledgeRefreshSubject,
   type KnowledgeRefreshEmailProps,
 } from "@/emails/knowledge-refresh";
+import {
+  KnowledgeGapAlertEmail,
+  knowledgeGapAlertSubject,
+  type KnowledgeGapAlertEmailProps,
+} from "@/emails/knowledge-gap-alert";
+import {
+  ApprovalRequestEmail,
+  approvalRequestSubject,
+  type ApprovalRequestEmailProps,
+} from "@/emails/approval-request";
+import {
+  ApprovalResolvedEmail,
+  approvalResolvedSubject,
+  type ApprovalResolvedEmailProps,
+} from "@/emails/approval-resolved";
+import {
+  ApprovalReminderEmail,
+  approvalReminderSubject,
+  type ApprovalReminderEmailProps,
+} from "@/emails/approval-reminder";
+import {
+  OnboardingWelcomeEmail,
+  onboardingWelcomeSubject,
+  type OnboardingWelcomeEmailProps,
+} from "@/emails/onboarding-welcome";
+import {
+  AcknowledgementReminderEmail,
+  acknowledgementReminderSubject,
+  type AcknowledgementReminderEmailProps,
+} from "@/emails/acknowledgement-reminder";
+import {
+  FeedbackThresholdAlertEmail,
+  feedbackThresholdAlertSubject,
+  type FeedbackThresholdAlertEmailProps,
+} from "@/emails/feedback-threshold-alert";
 
 /**
  * Server-to-server email rendering. The FastAPI Inngest worker calls this
@@ -83,6 +118,34 @@ const TEMPLATES = {
     Component: KnowledgeRefreshEmail,
     subject: knowledgeRefreshSubject,
   } satisfies Template<KnowledgeRefreshEmailProps>,
+  knowledge_gap_alert: {
+    Component: KnowledgeGapAlertEmail,
+    subject: knowledgeGapAlertSubject,
+  } satisfies Template<KnowledgeGapAlertEmailProps>,
+  approval_request: {
+    Component: ApprovalRequestEmail,
+    subject: approvalRequestSubject,
+  } satisfies Template<ApprovalRequestEmailProps>,
+  approval_resolved: {
+    Component: ApprovalResolvedEmail,
+    subject: approvalResolvedSubject,
+  } satisfies Template<ApprovalResolvedEmailProps>,
+  approval_reminder: {
+    Component: ApprovalReminderEmail,
+    subject: approvalReminderSubject,
+  } satisfies Template<ApprovalReminderEmailProps>,
+  onboarding_welcome: {
+    Component: OnboardingWelcomeEmail,
+    subject: onboardingWelcomeSubject,
+  } satisfies Template<OnboardingWelcomeEmailProps>,
+  acknowledgement_reminder: {
+    Component: AcknowledgementReminderEmail,
+    subject: acknowledgementReminderSubject,
+  } satisfies Template<AcknowledgementReminderEmailProps>,
+  feedback_threshold_alert: {
+    Component: FeedbackThresholdAlertEmail,
+    subject: feedbackThresholdAlertSubject,
+  } satisfies Template<FeedbackThresholdAlertEmailProps>,
 };
 
 type TemplateName = keyof typeof TEMPLATES;

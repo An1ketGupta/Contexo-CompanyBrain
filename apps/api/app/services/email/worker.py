@@ -299,21 +299,30 @@ async def _collect_active_orgs() -> list[dict[str, Any]]:
     one_week_ago = (datetime.now(timezone.utc) - _ONE_WEEK).isoformat()
 
     def _query() -> list[dict[str, Any]]:
-        # Orgs that had at least one message in the last week. Cheap join via
-        # IN clause — for a small product like ours (<1k orgs) this is fine.
+        # Orgs with ANY signal in the last week: a message OR a new document.
+        # Day 11 expanded this from messages-only because the digest now
+        # surfaces new-doc activity even when chat has been quiet (e.g. the
+        # admin uploaded a policy on Friday, no one queried yet).
         msgs = (
             svc.table("messages")
             .select("org_id")
             .gte("created_at", one_week_ago)
             .execute()
         )
-        org_ids = list({row["org_id"] for row in (msgs.data or []) if row.get("org_id")})
+        docs = (
+            svc.table("documents")
+            .select("org_id")
+            .gte("created_at", one_week_ago)
+            .execute()
+        )
+        org_ids = {row["org_id"] for row in (msgs.data or []) if row.get("org_id")}
+        org_ids |= {row["org_id"] for row in (docs.data or []) if row.get("org_id")}
         if not org_ids:
             return []
         orgs = (
             svc.table("organizations")
             .select("id, name")
-            .in_("id", org_ids)
+            .in_("id", list(org_ids))
             .execute()
         )
         return orgs.data or []
@@ -322,70 +331,27 @@ async def _collect_active_orgs() -> list[dict[str, Any]]:
 
 
 async def _enqueue_org_digest(org: dict[str, Any], iso_week: str) -> None:
-    """Compute weekly stats + fan one digest email per admin in the org."""
-    svc = get_service_client()
+    """Compute weekly stats + fan one digest email per admin in the org.
+
+    Day 11 expanded the digest to cover the full value-prop surface area:
+    queries, time saved, knowledge gaps, low-confidence answers, new docs,
+    and ack compliance. All sourced from existing analytics tables — no
+    new instrumentation. We skip the email if NOTHING happened (zero
+    queries AND zero new docs) so an idle org doesn't get spam.
+    """
     settings = get_settings()
-    one_week_ago = (datetime.now(timezone.utc) - _ONE_WEEK).isoformat()
+    stats = await asyncio.to_thread(lambda: _gather_weekly_stats(org["id"]))
 
-    def _stats() -> dict[str, Any]:
-        msgs = (
-            svc.table("messages")
-            .select("id", count="exact", head=True)
-            .eq("org_id", org["id"])
-            .eq("role", "assistant")
-            .gte("created_at", one_week_ago)
-            .execute()
-        )
-        active = (
-            svc.table("conversations")
-            .select("user_id")
-            .eq("org_id", org["id"])
-            .gte("updated_at", one_week_ago)
-            .execute()
-        )
-        docs = (
-            svc.table("documents")
-            .select("id", count="exact", head=True)
-            .eq("org_id", org["id"])
-            .eq("status", "ready")
-            .execute()
-        )
-        unique_users = len({r["user_id"] for r in (active.data or []) if r.get("user_id")})
-        return {
-            "query_count": msgs.count or 0,
-            "doc_count": docs.count or 0,
-            "active_users": unique_users,
-        }
+    if stats["query_count"] == 0 and stats["new_document_count"] == 0:
+        return
 
-    stats = await asyncio.to_thread(_stats)
-    if stats["query_count"] == 0:
-        return  # nothing happened; skip the email rather than mailing a "0 queries" report
+    admins = await asyncio.to_thread(lambda: _digest_recipients(org["id"]))
+    if not admins:
+        return
 
-    # Send to all admins. Each gets their own dedupe key so we don't email the
-    # same admin twice if they're somehow in multiple orgs (future-proofing).
-    def _admins() -> list[str]:
-        users = (
-            svc.table("users")
-            .select("id")
-            .eq("org_id", org["id"])
-            .eq("role", "admin")
-            .execute()
-        )
-        out: list[str] = []
-        for row in users.data or []:
-            try:
-                au = svc.auth.admin.get_user_by_id(row["id"])
-                email = getattr(getattr(au, "user", None), "email", None)
-                if email:
-                    out.append((row["id"], email))  # type: ignore[arg-type]
-            except Exception:
-                continue
-        return out  # type: ignore[return-value]
-
-    admins = await asyncio.to_thread(_admins)
     from app.services.email import send_email_event
 
-    for admin_id, admin_email in admins:  # type: ignore[misc]
+    for admin_id, admin_email in admins:
         await send_email_event(
             event_type="weekly_digest",
             to=admin_email,
@@ -394,13 +360,244 @@ async def _enqueue_org_digest(org: dict[str, Any], iso_week: str) -> None:
             dedupe_key=iso_week,
             data={
                 "org_name": org["name"],
-                "query_count": stats["query_count"],
-                "doc_count": stats["doc_count"],
-                "active_users": stats["active_users"],
-                "top_doc": None,  # TODO: compute from sources jsonb when we instrument it
                 "app_url": settings.app_url,
+                **stats,
             },
         )
 
 
-FUNCTIONS = [email_send, weekly_digest]
+def _gather_weekly_stats(org_id: str) -> dict[str, Any]:
+    """Single source of truth for the digest's contents.
+
+    Why centralised: the admin "preview / send now" route on Day 11 reuses
+    this same function so what they see in-app matches the email exactly.
+    """
+    svc = get_service_client()
+    now = datetime.now(timezone.utc)
+    one_week_ago = (now - _ONE_WEEK).isoformat()
+
+    # ── Messages: count, time saved, feedback, low-confidence ──
+    msgs_res = (
+        svc.table("messages")
+        .select("id, role, time_saved_minutes, feedback, confidence_score, intent")
+        .eq("org_id", org_id)
+        .eq("role", "assistant")
+        .gte("created_at", one_week_ago)
+        .limit(50000)
+        .execute()
+    )
+    assistant_messages = msgs_res.data or []
+    query_count = len(assistant_messages)
+    time_saved = sum((m.get("time_saved_minutes") or 0) for m in assistant_messages)
+    negative_count = sum(
+        1 for m in assistant_messages if (m.get("feedback") or "").lower() in {"negative", "down"}
+    )
+    positive_count = sum(
+        1 for m in assistant_messages if (m.get("feedback") or "").lower() in {"positive", "up"}
+    )
+    low_conf_count = sum(
+        1
+        for m in assistant_messages
+        if (m.get("confidence_score") is not None and float(m["confidence_score"]) < 5.0)
+    )
+
+    # Active users from conversations updated in the window.
+    active = (
+        svc.table("conversations")
+        .select("user_id")
+        .eq("org_id", org_id)
+        .gte("updated_at", one_week_ago)
+        .execute()
+    )
+    active_users = len({r["user_id"] for r in (active.data or []) if r.get("user_id")})
+
+    # Total doc count (corpus health) + NEW docs this week.
+    total_docs = (
+        svc.table("documents")
+        .select("id", count="exact", head=True)
+        .eq("org_id", org_id)
+        .eq("status", "ready")
+        .execute()
+    )
+    new_docs_res = (
+        svc.table("documents")
+        .select("id, name, file_type, requires_acknowledgement")
+        .eq("org_id", org_id)
+        .gte("created_at", one_week_ago)
+        .order("created_at", desc=True)
+        .limit(20)
+        .execute()
+    )
+    new_docs = new_docs_res.data or []
+    new_doc_titles = [d.get("name") for d in new_docs if d.get("name")][:5]
+
+    # Knowledge gaps surfaced this week — Counter the topics.
+    gaps_count = 0
+    top_gap_topics: list[dict[str, Any]] = []
+    try:
+        gaps_res = (
+            svc.table("knowledge_gaps")
+            .select("topic")
+            .eq("org_id", org_id)
+            .gte("created_at", one_week_ago)
+            .limit(2000)
+            .execute()
+        )
+        gap_rows = gaps_res.data or []
+        gaps_count = len(gap_rows)
+        from collections import Counter
+
+        counter = Counter(
+            (g.get("topic") or "").strip()
+            for g in gap_rows
+            if (g.get("topic") or "").strip()
+        )
+        top_gap_topics = [
+            {"topic": topic, "count": count}
+            for topic, count in counter.most_common(3)
+        ]
+    except Exception as exc:
+        log.warning("digest_gaps_query_failed", org_id=org_id, error=str(exc))
+
+    # Acknowledgement compliance — count outstanding pending older than 7d.
+    ack_pending = 0
+    ack_completion_pct: float | None = None
+    try:
+        ack_res = (
+            svc.table("acknowledgements")
+            .select("status")
+            .eq("org_id", org_id)
+            .limit(20000)
+            .execute()
+        )
+        ack_rows = ack_res.data or []
+        if ack_rows:
+            total = len(ack_rows)
+            acknowledged = sum(1 for r in ack_rows if r.get("status") == "acknowledged")
+            ack_pending = sum(1 for r in ack_rows if r.get("status") == "pending")
+            ack_completion_pct = round((acknowledged / total) * 100, 1) if total else 0.0
+    except Exception as exc:
+        log.warning("digest_ack_query_failed", org_id=org_id, error=str(exc))
+
+    # Top intents — simple Counter for the "what was the team using this for"
+    # bar on the digest. Skip blank/None intents.
+    try:
+        from collections import Counter
+
+        intent_counter = Counter(
+            (m.get("intent") or "").strip()
+            for m in assistant_messages
+            if (m.get("intent") or "").strip()
+        )
+        top_intents = [
+            {"intent": intent, "count": count}
+            for intent, count in intent_counter.most_common(3)
+        ]
+    except Exception:
+        top_intents = []
+
+    return {
+        "query_count": query_count,
+        "doc_count": (total_docs.count or 0),
+        "active_users": active_users,
+        "time_saved_minutes": round(time_saved, 1),
+        "time_saved_hours": round(time_saved / 60, 1) if time_saved else 0,
+        "negative_feedback_count": negative_count,
+        "positive_feedback_count": positive_count,
+        "low_confidence_count": low_conf_count,
+        "knowledge_gaps_count": gaps_count,
+        "top_gap_topics": top_gap_topics,
+        "new_document_count": len(new_docs),
+        "new_document_titles": new_doc_titles,
+        "ack_pending_count": ack_pending,
+        "ack_completion_pct": ack_completion_pct,
+        "top_intents": top_intents,
+        # Kept for backwards compatibility with the legacy email template;
+        # we no longer compute top_doc here.
+        "top_doc": None,
+    }
+
+
+def _digest_recipients(org_id: str) -> list[tuple[str, str]]:
+    svc = get_service_client()
+    users = (
+        svc.table("users")
+        .select("id")
+        .eq("org_id", org_id)
+        .eq("role", "admin")
+        .execute()
+    )
+    out: list[tuple[str, str]] = []
+    for row in users.data or []:
+        try:
+            au = svc.auth.admin.get_user_by_id(row["id"])
+            email = getattr(getattr(au, "user", None), "email", None)
+            if email:
+                out.append((row["id"], email))
+        except Exception:
+            continue
+    return out
+
+
+# Public helper for the Day-11 manual trigger route.
+async def gather_weekly_stats(org_id: str) -> dict[str, Any]:
+    return await asyncio.to_thread(lambda: _gather_weekly_stats(org_id))
+
+
+@_inngest_client.create_function(
+    fn_id="weekly-digest-send-now",
+    trigger=inngest.TriggerEvent(event="email/weekly-digest-now"),
+    retries=1,
+)
+async def weekly_digest_send_now(ctx: inngest.Context) -> dict[str, Any]:
+    """Manual trigger fired by the Settings page (Day 11).
+
+    Bypasses the iso-week dedupe key — admins testing the digest want to
+    see fresh output each time. We mint a unique dedupe per send so the
+    email_events guard doesn't swallow follow-up tests.
+    """
+    data = ctx.event.data
+    org_id: str = data["org_id"]
+    settings = get_settings()
+
+    org_res = await ctx.step.run(
+        "load-org",
+        lambda: get_service_client()
+        .table("organizations")
+        .select("id, name")
+        .eq("id", org_id)
+        .maybe_single()
+        .execute()
+        .data,
+    )
+    if not org_res:
+        return {"status": "skipped", "reason": "org_not_found"}
+
+    stats = await ctx.step.run("gather-stats", lambda: _gather_weekly_stats(org_id))
+    admins = await ctx.step.run("recipients", lambda: _digest_recipients(org_id))
+
+    if not admins:
+        return {"status": "skipped", "reason": "no_admins"}
+
+    from app.services.email import send_email_event
+
+    sent = 0
+    nonce = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    for admin_id, admin_email in admins:
+        await send_email_event(
+            event_type="weekly_digest",
+            to=admin_email,
+            user_id=admin_id,
+            org_id=org_id,
+            dedupe_key=f"manual-{nonce}",
+            data={
+                "org_name": org_res["name"],
+                "app_url": settings.app_url,
+                **stats,
+            },
+        )
+        sent += 1
+    return {"status": "sent", "recipients": sent}
+
+
+FUNCTIONS = [email_send, weekly_digest, weekly_digest_send_now]

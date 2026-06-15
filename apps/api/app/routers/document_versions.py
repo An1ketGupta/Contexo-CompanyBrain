@@ -47,6 +47,43 @@ class VersionCompleteRequest(BaseModel):
     version_id: str
 
 
+@router.get("/{doc_id}/diffs")
+async def list_diffs(
+    doc_id: str,
+    limit: int = 5,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """What-changed summaries between successive versions of this document.
+
+    Read via the user client so RLS on `document_diffs` keeps org boundaries
+    honest. Default limit of 5 = ~5 prior version transitions is enough for
+    the UI; admins who want full history can paginate.
+    """
+    _require_uuid(doc_id)
+    org_id = current_user.get("org_id")
+    if not org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No organization found.",
+        )
+    if limit < 1 or limit > 25:
+        limit = 5
+
+    client = get_user_client(current_user["token"])
+    res = await asyncio.to_thread(
+        lambda: client.table("document_diffs")
+        .select(
+            "id, from_version, to_version, diff_summary, created_at, "
+            "from_version_id, to_version_id"
+        )
+        .eq("document_id", doc_id)
+        .order("to_version", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return {"diffs": res.data or []}
+
+
 @router.get("/{doc_id}/versions")
 async def list_versions(
     doc_id: str,

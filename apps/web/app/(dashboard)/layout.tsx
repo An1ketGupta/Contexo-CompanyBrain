@@ -6,6 +6,7 @@ import { CommandPaletteProvider } from "@/components/command-palette/command-pal
 import { ShortcutsPanel } from "@/components/ui/shortcuts-panel";
 import { ShortcutsPanelProvider } from "@/components/ui/shortcuts-panel-context";
 import { EnrichmentModal } from "@/components/onboarding/enrichment-modal";
+import { AcknowledgementBanner } from "@/components/compliance/acknowledgement-banner";
 
 export default function DashboardLayout({
   children,
@@ -19,7 +20,10 @@ export default function DashboardLayout({
           <GlobalDocumentToaster />
           <Sidebar />
           <MobileHeader />
-          <div className="flex-1 overflow-y-auto bg-muted/30">{children}</div>
+          <div className="flex-1 overflow-y-auto bg-muted/30">
+            <AcknowledgementBanner />
+            {children}
+          </div>
         </div>
         <CommandPalette />
         <ShortcutsPanel />

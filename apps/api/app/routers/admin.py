@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field, field_validator
 
 from app.auth import verify_jwt
 from app.database import get_service_client, get_user_client
@@ -483,3 +484,470 @@ async def get_coverage_score(
 
     org_id = await _require_admin(current_user)
     return await get_or_compute_coverage(org_id, force_refresh=refresh)
+
+
+# ── Confidence thresholds (Agent Day 3) ──────────────────────────────────────
+#
+# The chat confidence badge is computed from raw vector cosine on the cited
+# chunks. The default 0.75/0.45 cutoffs work for most orgs, but two patterns
+# motivate per-org tuning:
+#   1) Heterogeneous corpora (PDFs + meeting notes + scraped wiki) produce
+#      lower average cosines than uniform corpora. The default may show too
+#      many "low" badges; admin lowers `medium` to widen the green zone.
+#   2) Tight, deeply-redundant corpora (legal templates, SOPs) produce
+#      uniformly high cosines. The default may render too many "high"; admin
+#      raises `high` so the badge stays meaningful.
+
+
+@router.get("/config/confidence-thresholds")
+async def get_confidence_thresholds_endpoint(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    org_id = await _require_admin(current_user)
+    from app.services.org_config import (
+        DEFAULT_CONFIDENCE_HIGH,
+        DEFAULT_CONFIDENCE_MEDIUM,
+        get_confidence_thresholds,
+    )
+
+    thresholds = await get_confidence_thresholds(org_id)
+    return {
+        "high": thresholds.high,
+        "medium": thresholds.medium,
+        "defaults": {
+            "high": DEFAULT_CONFIDENCE_HIGH,
+            "medium": DEFAULT_CONFIDENCE_MEDIUM,
+        },
+    }
+
+
+class ConfidenceThresholdsBody(BaseModel):
+    # Cosine cutoffs in [0, 1]. The UI shows them as 0–10 sliders (cosine × 10)
+    # and converts back, but on the wire we keep the raw cosine so the unit
+    # is unambiguous.
+    high: float = Field(..., ge=0.0, le=1.0)
+    medium: float = Field(..., ge=0.0, le=1.0)
+
+    @field_validator("high")
+    @classmethod
+    def _high_ge_medium(cls, v: float, info: Any) -> float:
+        # Pydantic v2 — `info.data` carries already-validated fields. `medium`
+        # is declared after `high`, so we can't validate ordering on `high`
+        # directly. We attach the constraint to `medium` instead (below).
+        return v
+
+    @field_validator("medium")
+    @classmethod
+    def _medium_le_high(cls, v: float, info: Any) -> float:
+        high = info.data.get("high")
+        if high is not None and v > high:
+            raise ValueError("medium threshold must be <= high threshold")
+        return v
+
+
+@router.put("/config/confidence-thresholds")
+async def update_confidence_thresholds_endpoint(
+    body: ConfidenceThresholdsBody,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    org_id = await _require_admin(current_user)
+    from app.services.org_config import update_confidence_thresholds
+
+    saved = await update_confidence_thresholds(
+        org_id=org_id, high=body.high, medium=body.medium
+    )
+    return {"high": saved.high, "medium": saved.medium, "updated": True}
+
+
+# ── Knowledge gaps (Agent Day 5) ─────────────────────────────────────────────
+
+
+@router.get("/knowledge-gaps")
+async def list_knowledge_gaps(
+    days: int = Query(default=30, ge=1, le=180),
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Aggregate gap rows by topic for the admin panel.
+
+    Returns one row per distinct topic, with occurrence count + last-asked
+    timestamp + whether an AI draft is available. We aggregate server-side
+    (instead of the UI doing it) so the response stays small even on orgs
+    with thousands of zero-result queries.
+    """
+    org_id = await _require_admin(current_user)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    svc = get_service_client()
+
+    gaps_res = await asyncio.to_thread(
+        lambda: svc.table("knowledge_gaps")
+        .select("topic, query, created_at")
+        .eq("org_id", org_id)
+        .gte("created_at", cutoff)
+        .order("created_at", desc=True)
+        .limit(5000)
+        .execute()
+    )
+    rows = gaps_res.data or []
+
+    # Bucket by topic — simple, fast, and predictable. If/when a single org
+    # blows past 5k rows in a window, we'll push this to a SQL view.
+    buckets: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        topic = (row.get("topic") or "").strip()
+        if not topic:
+            continue
+        bucket = buckets.setdefault(
+            topic,
+            {"topic": topic, "count": 0, "last_asked": row["created_at"], "sample_queries": []},
+        )
+        bucket["count"] += 1
+        if row["created_at"] > bucket["last_asked"]:
+            bucket["last_asked"] = row["created_at"]
+        if len(bucket["sample_queries"]) < 3 and row.get("query"):
+            bucket["sample_queries"].append(row["query"])
+
+    # Pull draft availability in one shot rather than N queries.
+    draft_topics = await asyncio.to_thread(
+        lambda: svc.table("document_drafts")
+        .select("gap_topic, id, status")
+        .eq("org_id", org_id)
+        .eq("source", "knowledge_gap_autoflow")
+        .execute()
+    )
+    drafts_by_topic: dict[str, dict[str, Any]] = {}
+    for d in (draft_topics.data or []):
+        t = d.get("gap_topic")
+        if t and t not in drafts_by_topic:
+            drafts_by_topic[t] = {"draft_id": d["id"], "draft_status": d.get("status")}
+
+    items = []
+    for bucket in buckets.values():
+        draft = drafts_by_topic.get(bucket["topic"])
+        items.append({**bucket, "draft": draft})
+
+    items.sort(key=lambda i: (-i["count"], i["topic"]))
+    return {"days": days, "items": items, "total_topics": len(items)}
+
+
+@router.get("/document-drafts/{draft_id}")
+async def get_document_draft(
+    draft_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    org_id = await _require_admin(current_user)
+    svc = get_service_client()
+    row = await asyncio.to_thread(
+        lambda: svc.table("document_drafts")
+        .select("*")
+        .eq("id", draft_id)
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not row or not row.data:
+        raise HTTPException(status_code=404, detail="draft_not_found")
+    return row.data
+
+
+class DraftDecisionBody(BaseModel):
+    # Optional edits — if present, replaces the stub before ingest.
+    title: str | None = Field(default=None, max_length=200)
+    content: str | None = Field(default=None, max_length=200_000)
+
+
+@router.post("/document-drafts/{draft_id}/approve")
+async def approve_document_draft(
+    draft_id: str,
+    body: DraftDecisionBody,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Approve a knowledge-gap stub: ingest it as a real document.
+
+    The draft is persisted (status='approved' + reviewer) and a regular
+    `doc/process-text` event is fired against the same pipeline that
+    handles Notion/Drive ingest. Once it lands in `documents`, the next
+    chat that asks about the topic will find it via hybrid_search.
+    """
+    org_id = await _require_admin(current_user)
+    user_id = current_user["user_id"]
+    svc = get_service_client()
+
+    row = await asyncio.to_thread(
+        lambda: svc.table("document_drafts")
+        .select("id, title, content, status, gap_topic")
+        .eq("id", draft_id)
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not row or not row.data:
+        raise HTTPException(status_code=404, detail="draft_not_found")
+    if row.data.get("status") not in (None, "pending_review"):
+        raise HTTPException(status_code=409, detail="draft_already_resolved")
+
+    title = (body.title or row.data["title"]).strip() or "Untitled knowledge stub"
+    content = (body.content or row.data["content"]).strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="empty_content")
+
+    # Insert documents row in 'processing' state — same shape the rest of the
+    # ingest pipeline expects.
+    doc_row = await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .insert({
+            "org_id": org_id,
+            "name": title,
+            "file_type": "md",
+            "status": "processing",
+            "uploaded_by": user_id,
+            "source": "knowledge_gap_stub",
+        })
+        .execute()
+    )
+    if not doc_row.data:
+        raise HTTPException(status_code=500, detail="document_insert_failed")
+    new_doc_id = doc_row.data[0]["id"]
+
+    # Mark draft approved + link to the created document.
+    await asyncio.to_thread(
+        lambda: svc.table("document_drafts")
+        .update({
+            "status": "approved",
+            "reviewed_by": user_id,
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "ingested_document_id": new_doc_id,
+            "title": title,
+            "content": content,
+        })
+        .eq("id", draft_id)
+        .execute()
+    )
+
+    # Queue the standard process-text pipeline (chunk + embed + ready flip).
+    import inngest as _inngest_pkg
+
+    from app.inngest.client import get_inngest_client
+
+    client = get_inngest_client()
+    await client.send(
+        _inngest_pkg.Event(
+            name="doc/process-text",
+            data={"doc_id": new_doc_id, "org_id": org_id, "text": content},
+            id=f"draft-{draft_id}-{new_doc_id}",
+        )
+    )
+
+    return {"approved": True, "document_id": new_doc_id}
+
+
+@router.post("/document-drafts/{draft_id}/reject")
+async def reject_document_draft(
+    draft_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    org_id = await _require_admin(current_user)
+    user_id = current_user["user_id"]
+    svc = get_service_client()
+    res = await asyncio.to_thread(
+        lambda: svc.table("document_drafts")
+        .update({
+            "status": "rejected",
+            "reviewed_by": user_id,
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        })
+        .eq("id", draft_id)
+        .eq("org_id", org_id)
+        .execute()
+    )
+    if not res.data:
+        raise HTTPException(status_code=404, detail="draft_not_found")
+    return {"rejected": True}
+
+
+# ── Agent Roadmap Day 7: agent runs audit trail ─────────────────────────────
+
+
+@router.get("/agent-runs")
+async def list_agent_runs(
+    agent_type: str | None = Query(default=None, max_length=64),
+    status_filter: str | None = Query(default=None, alias="status", max_length=32),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0, le=10_000),
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """List agent runs for the admin audit trail.
+
+    Returns a slimmed-down view (no `steps`, no `output`, no `input`) so
+    the listing fetches stay cheap. The detail endpoint returns the full
+    row including step-by-step execution log.
+    """
+    org_id = await _require_admin(current_user)
+    svc = get_service_client()
+
+    def _query():
+        q = (
+            svc.table("agent_runs")
+            .select(
+                "id, agent_type, triggered_by, triggered_by_user_id, status, "
+                "llm_tokens_used, confidence_scores, error, created_at, "
+                "started_at, completed_at, approval_id",
+                count="exact",
+            )
+            .eq("org_id", org_id)
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+        )
+        if agent_type:
+            q = q.eq("agent_type", agent_type)
+        if status_filter:
+            q = q.eq("status", status_filter)
+        return q.execute()
+
+    res = await asyncio.to_thread(_query)
+    rows = res.data or []
+
+    # Hydrate display names for the triggering user (best-effort).
+    user_ids = {r["triggered_by_user_id"] for r in rows if r.get("triggered_by_user_id")}
+    name_map: dict[str, str | None] = {}
+    if user_ids:
+        users = await asyncio.to_thread(
+            lambda: svc.table("users")
+            .select("id, display_name")
+            .in_("id", list(user_ids))
+            .execute()
+        )
+        name_map = {u["id"]: u.get("display_name") for u in (users.data or [])}
+
+    for r in rows:
+        r["triggered_by_name"] = name_map.get(r.get("triggered_by_user_id") or "")
+        # Compact summary the listing UI needs: step count + avg confidence.
+        scores = r.get("confidence_scores") or []
+        r["avg_confidence"] = (
+            round(sum(scores) / len(scores), 1) if scores else None
+        )
+
+    return {
+        "runs": rows,
+        "total": res.count or len(rows),
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/agent-runs/{run_id}")
+async def get_agent_run(
+    run_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Full run detail including step-by-step execution log."""
+    org_id = await _require_admin(current_user)
+    svc = get_service_client()
+    row = await asyncio.to_thread(
+        lambda: svc.table("agent_runs")
+        .select("*")
+        .eq("id", run_id)
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not row or not row.data:
+        raise HTTPException(status_code=404, detail="agent_run_not_found")
+
+    data = row.data
+    # Hydrate user name + approval status if linked.
+    if data.get("triggered_by_user_id"):
+        u = await asyncio.to_thread(
+            lambda: svc.table("users")
+            .select("display_name")
+            .eq("id", data["triggered_by_user_id"])
+            .maybe_single()
+            .execute()
+        )
+        data["triggered_by_name"] = (u.data or {}).get("display_name") if u else None
+    if data.get("approval_id"):
+        ap = await asyncio.to_thread(
+            lambda: svc.table("approvals")
+            .select("id, status, resolved_at")
+            .eq("id", data["approval_id"])
+            .maybe_single()
+            .execute()
+        )
+        data["approval"] = ap.data if ap else None
+    return data
+
+
+@router.get("/agent-runs/stats/summary")
+async def agent_runs_summary(
+    period: str = Query(default="30d", pattern="^(7d|30d|90d)$"),
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Counts by agent_type + status for the period — drives the audit
+    page's filter chips and a header strip showing volume at a glance."""
+    org_id = await _require_admin(current_user)
+    days = _PERIOD_DAYS[period]
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    svc = get_service_client()
+
+    rows = await asyncio.to_thread(
+        lambda: svc.table("agent_runs")
+        .select("agent_type, status")
+        .eq("org_id", org_id)
+        .gte("created_at", cutoff)
+        .limit(10000)
+        .execute()
+    )
+    items = rows.data or []
+    by_type: dict[str, int] = {}
+    by_status: dict[str, int] = {}
+    for r in items:
+        by_type[r["agent_type"]] = by_type.get(r["agent_type"], 0) + 1
+        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+    return {
+        "period": period,
+        "total_runs": len(items),
+        "by_agent_type": by_type,
+        "by_status": by_status,
+    }
+
+
+# ── Weekly digest (Day 11) ──────────────────────────────────────────────────
+
+
+@router.get("/weekly-digest/preview")
+async def preview_weekly_digest(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
+    """Render the same stats the email would contain, in JSON.
+
+    Used by the Settings page so admins can see what a fresh digest looks
+    like without sending an email. Stays in sync with the cron because both
+    paths call `gather_weekly_stats` on the worker side.
+    """
+    org_id = await _require_admin(current_user)
+    from app.services.email.worker import gather_weekly_stats
+
+    stats = await gather_weekly_stats(org_id)
+    return {"org_id": org_id, "stats": stats}
+
+
+@router.post("/weekly-digest/send-now")
+async def send_weekly_digest_now(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Fire a digest email to every admin in the org right now.
+
+    Bypasses the iso-week dedupe gate so admins can test the email after
+    tuning their data. Hands off to Inngest so the route returns quickly.
+    """
+    org_id = await _require_admin(current_user)
+    from app.inngest.client import get_inngest_client
+    import inngest as _inngest
+    import uuid as _uuid
+
+    client = get_inngest_client()
+    await client.send(
+        _inngest.Event(
+            name="email/weekly-digest-now",
+            data={"org_id": org_id, "triggered_by": current_user["user_id"]},
+            id=f"weekly-digest-now-{org_id}-{_uuid.uuid4().hex[:8]}",
+        )
+    )
+    return {"queued": True}

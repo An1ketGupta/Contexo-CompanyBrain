@@ -470,6 +470,10 @@ function TeamCard({
 
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"admin" | "member">("member");
+  const [roleTitle, setRoleTitle] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [managerUserId, setManagerUserId] = useState("");
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [sending, setSending] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
   const [removeBusy, setRemoveBusy] = useState(false);
@@ -485,7 +489,13 @@ function TeamCard({
       const res = await fetch("/api/organizations/invitations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: trimmed, role }),
+        body: JSON.stringify({
+          email: trimmed,
+          role,
+          role_title: roleTitle.trim() || null,
+          start_date: startDate || null,
+          manager_user_id: managerUserId || null,
+        }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         message?: string;
@@ -498,6 +508,10 @@ function TeamCard({
       toast.success(`Invite sent to ${trimmed}.`);
       setEmail("");
       setRole("member");
+      setRoleTitle("");
+      setStartDate("");
+      setManagerUserId("");
+      setShowOnboarding(false);
       invites.mutate();
     } finally {
       setSending(false);
@@ -719,6 +733,68 @@ function TeamCard({
               Send invite
             </Button>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setShowOnboarding((v) => !v)}
+            className="text-[11px] font-medium text-muted-foreground underline-offset-2 hover:underline"
+          >
+            {showOnboarding ? "Hide onboarding details" : "Add onboarding details (optional)"}
+          </button>
+
+          {showOnboarding && (
+            <div className="grid grid-cols-1 gap-2 rounded-md border border-border bg-background p-3 sm:grid-cols-3">
+              <div>
+                <Label htmlFor="invite-role-title" className="text-[11px]">
+                  Role title
+                </Label>
+                <Input
+                  id="invite-role-title"
+                  value={roleTitle}
+                  onChange={(e) => setRoleTitle(e.target.value)}
+                  placeholder="Senior Engineer"
+                  disabled={sending}
+                />
+              </div>
+              <div>
+                <Label htmlFor="invite-start-date" className="text-[11px]">
+                  Start date
+                </Label>
+                <Input
+                  id="invite-start-date"
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  disabled={sending}
+                />
+              </div>
+              <div>
+                <Label htmlFor="invite-manager" className="text-[11px]">
+                  Manager
+                </Label>
+                <select
+                  id="invite-manager"
+                  value={managerUserId}
+                  onChange={(e) => setManagerUserId(e.target.value)}
+                  disabled={sending}
+                  className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  <option value="">None</option>
+                  {(members.data?.members ?? [])
+                    .filter((m) => m.id !== currentUserId || true)
+                    .map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.display_name ?? m.email ?? m.id}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <p className="col-span-full text-[11px] text-muted-foreground">
+                These fields drive the onboarding agent — they personalise the
+                welcome email, the Notion plan, and the Slack DM to the manager.
+              </p>
+            </div>
+          )}
         </div>
       )}
     </Card>

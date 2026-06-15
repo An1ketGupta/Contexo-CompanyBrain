@@ -19,10 +19,55 @@ import { Citations } from "./citations";
 import { ConfidenceBadge } from "./confidence-badge";
 import { CopyButton } from "./copy-button";
 import { CreateTemplateDialog } from "./create-template-dialog";
+import { ExportGDocsButton } from "./export-gdocs-button";
+import { ExportNotionButton } from "./export-notion-button";
+import { SubmitApprovalButton } from "./submit-approval-button";
 import { Markdown } from "./markdown";
+import { PostSlackButton } from "./post-slack-button";
 import { SearchingIndicator } from "./searching-indicator";
+import { SendGmailButton } from "./send-gmail-button";
 import { ShareButton } from "./share-button";
 import { cn } from "@/lib/utils";
+
+/**
+ * Heuristic: does this assistant turn look like an email draft?
+ *  - It must be a writing-mode turn (intent === task_generation).
+ *  - The body should either start with a "Subject:" line or contain a
+ *    salutation+sign-off pair. We keep the test loose because the AI's
+ *    output varies; false positives just mean the user sees a Gmail button
+ *    they can ignore.
+ */
+function looksLikeEmail(intent: QueryIntent | null, body: string): boolean {
+  if (intent !== "task_generation") return false;
+  if (/^\s*(\*\*)?subject\s*:/i.test(body)) return true;
+  const hasSalutation = /\b(hi|hello|dear|hey)\b[^\n]*,/i.test(body.slice(0, 200));
+  const hasSignoff =
+    /\b(best|regards|cheers|thanks|sincerely|warmly)\b[^\n]{0,50}(,|\n)/i.test(
+      body.slice(-300),
+    );
+  return hasSalutation && hasSignoff;
+}
+
+/**
+ * Heuristic title — strip markdown noise and quote characters off the first
+ * non-empty line, cap at 80 chars. Used to pre-fill the title field in the
+ * Notion / Google Docs export dialogs. Falls back to "Untitled" so the
+ * dialog never opens with an empty input.
+ */
+function deriveTitle(body: string): string {
+  const first = body
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  if (!first) return "Untitled";
+  const cleaned = first
+    .replace(/^#+\s*/, "")
+    .replace(/^\*+\s*/, "")
+    .replace(/^subject\s*:\s*/i, "")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .trim();
+  return cleaned.length > 80 ? `${cleaned.slice(0, 77)}…` : cleaned || "Untitled";
+}
 
 interface MessageItemProps {
   message: DisplayMessage;
@@ -161,6 +206,32 @@ export function MessageItem({
               />
             )}
             <CopyButton text={message.content} messageId={message.server_id} />
+            {message.server_id && looksLikeEmail(message.intent, message.content) && (
+              <SendGmailButton messageId={message.server_id} body={message.content} />
+            )}
+            {message.server_id && (
+              <PostSlackButton messageId={message.server_id} body={message.content} />
+            )}
+            {message.server_id && (
+              <ExportNotionButton
+                messageId={message.server_id}
+                body={message.content}
+                suggestedTitle={deriveTitle(message.content)}
+              />
+            )}
+            {message.server_id && (
+              <ExportGDocsButton
+                messageId={message.server_id}
+                body={message.content}
+                suggestedTitle={deriveTitle(message.content)}
+              />
+            )}
+            {message.server_id && (
+              <SubmitApprovalButton
+                messageId={message.server_id}
+                body={message.content}
+              />
+            )}
             {priorUserText && (
               <button
                 type="button"

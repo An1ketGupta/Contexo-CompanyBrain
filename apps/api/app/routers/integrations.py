@@ -116,14 +116,14 @@ async def _require_admin(user_id: str, token: str) -> None:
 async def integrations_status(
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
-    org_id, _, token = _require_org(current_user)
+    org_id, user_id, token = _require_org(current_user)
     settings = get_settings()
     client = get_user_client(token)
 
-    drive_row, notion_row, slack_row, inbound = await asyncio.gather(
+    drive_row, notion_row, slack_row, gmail_row, inbound = await asyncio.gather(
         asyncio.to_thread(
             lambda: client.table("drive_integrations")
-            .select("folder_ids, last_synced_at, created_at")
+            .select("folder_ids, last_synced_at, created_at, scopes")
             .maybe_single().execute()
         ),
         asyncio.to_thread(
@@ -136,8 +136,20 @@ async def integrations_status(
             .select("slack_team_name, installed_at")
             .maybe_single().execute()
         ),
+        asyncio.to_thread(
+            lambda: client.table("gmail_integrations")
+            .select("email_address, scopes, connected_at, last_used_at")
+            .eq("user_id", user_id)
+            .maybe_single().execute()
+        ),
         email_forward.get_inbound_address(org_id=org_id),
     )
+
+    gmail_data = (gmail_row.data or {}) if gmail_row else {}
+    gmail_scopes = gmail_data.get("scopes") or []
+    gmail_send_scope = "https://www.googleapis.com/auth/gmail.send"
+
+    drive_scopes = (drive_row.data or {}).get("scopes") or [] if drive_row else []
 
     return {
         "drive": {
@@ -145,6 +157,9 @@ async def integrations_status(
             "connected": bool(drive_row and drive_row.data),
             "folder_ids": (drive_row.data or {}).get("folder_ids", []) if drive_row else [],
             "last_synced_at": (drive_row.data or {}).get("last_synced_at") if drive_row else None,
+            # Agent Day 4 — UI shows a "Reconnect to enable Docs export" banner
+            # when this is False on a connected install.
+            "has_docs_write_scope": drive.has_docs_write_scope(drive_scopes),
         },
         "notion": {
             "available": bool(settings.notion_client_id),
@@ -162,6 +177,14 @@ async def integrations_status(
             "connected": bool(slack_row and slack_row.data),
             "workspace_name": (slack_row.data or {}).get("slack_team_name") if slack_row else None,
             "installed_at": (slack_row.data or {}).get("installed_at") if slack_row else None,
+        },
+        "gmail": {
+            "available": bool(settings.google_client_id),
+            "connected": bool(gmail_row and gmail_row.data),
+            "has_send_scope": gmail_send_scope in gmail_scopes,
+            "email_address": gmail_data.get("email_address"),
+            "connected_at": gmail_data.get("connected_at"),
+            "last_used_at": gmail_data.get("last_used_at"),
         },
     }
 
@@ -356,6 +379,217 @@ async def email_inbound_webhook(
 
     envelope = email_forward.parse_envelope(payload)
     return await email_forward.ingest_email(envelope)
+
+
+# ── Outbound writes: Notion create page (Agent Day 4) ───────────────────────
+
+
+@router.get("/integrations/notion/write-targets")
+async def notion_list_write_targets(
+    q: str | None = Query(default=None),
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Pages the bot can use as a parent for new pages.
+
+    Any org member can list — picking a destination is a chat-time
+    affordance, not an admin one. The bot itself has already been gated
+    on the parent-page level by the Notion sharing model.
+    """
+    org_id, _, _ = _require_org(current_user)
+    pages = await notion.list_write_targets(org_id=org_id, query=q)
+    return {"pages": pages}
+
+
+class CreateNotionPageBody(BaseModel):
+    message_id: str = Field(..., min_length=1, max_length=64)
+    parent_page_id: str = Field(..., min_length=1, max_length=64)
+    parent_page_title: str | None = Field(default=None, max_length=200)
+    title: str = Field(..., min_length=1, max_length=200)
+    content: str = Field(..., min_length=1, max_length=200_000)
+
+
+@router.post("/integrations/notion/create-page")
+async def notion_create_page(
+    body: CreateNotionPageBody,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    org_id, _, _ = _require_org(current_user)
+
+    import uuid
+    from datetime import datetime, timezone
+
+    from app.database import get_service_client as _svc
+
+    import inngest as _inngest_pkg
+
+    from app.inngest.client import get_inngest_client
+
+    svc = _svc()
+
+    # Same idempotency rails as Gmail/Slack: confirm the message exists in
+    # this org and hasn't already been delivered.
+    msg = await asyncio.to_thread(
+        lambda: svc.table("messages")
+        .select("id, org_id, delivery_status")
+        .eq("id", body.message_id)
+        .maybe_single()
+        .execute()
+    )
+    if not msg or not msg.data or msg.data.get("org_id") != org_id:
+        raise HTTPException(status_code=404, detail="message_not_found")
+    existing = msg.data.get("delivery_status") or {}
+    if existing.get("status") == "sent":
+        raise HTTPException(status_code=409, detail="message_already_sent")
+
+    connected = await asyncio.to_thread(
+        lambda: svc.table("notion_integrations")
+        .select("id")
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not connected or not connected.data:
+        raise HTTPException(status_code=400, detail="notion_not_connected")
+
+    job_id = str(uuid.uuid4())
+    queued_at = datetime.now(timezone.utc).isoformat()
+    parent_title = body.parent_page_title or "Notion"
+
+    await asyncio.to_thread(
+        lambda: svc.table("messages")
+        .update({
+            "delivery_status": {
+                "channel": "notion",
+                "status": "queued",
+                "destination": parent_title,
+                "job_id": job_id,
+                "queued_at": queued_at,
+            }
+        })
+        .eq("id", body.message_id)
+        .execute()
+    )
+
+    client = get_inngest_client()
+    await client.send(
+        _inngest_pkg.Event(
+            name="notion/create-page",
+            data={
+                "job_id": job_id,
+                "message_id": body.message_id,
+                "org_id": org_id,
+                "parent_page_id": body.parent_page_id,
+                "parent_page_title": parent_title,
+                "title": body.title,
+                "content": body.content,
+            },
+            id=f"notion-create-{job_id}",
+        )
+    )
+    return {"queued": True, "job_id": job_id}
+
+
+# ── Outbound writes: Google Docs export (Agent Day 4) ───────────────────────
+
+
+class CreateGoogleDocBody(BaseModel):
+    message_id: str = Field(..., min_length=1, max_length=64)
+    title: str = Field(..., min_length=1, max_length=200)
+    content: str = Field(..., min_length=1, max_length=200_000)
+    # When true, the doc is shared back to the requesting user as writer
+    # so it lands in their "Shared with me" without an extra step.
+    share_with_me: bool = Field(default=True)
+
+
+@router.post("/integrations/gdocs/create-doc")
+async def gdocs_create_doc(
+    body: CreateGoogleDocBody,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    org_id, user_id, _ = _require_org(current_user)
+
+    import uuid
+    from datetime import datetime, timezone
+
+    from app.database import get_service_client as _svc
+
+    import inngest as _inngest_pkg
+
+    from app.inngest.client import get_inngest_client
+
+    svc = _svc()
+
+    # Drive must be connected AND carry the docs-write scope.
+    integ = await asyncio.to_thread(
+        lambda: svc.table("drive_integrations")
+        .select("id, scopes")
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not integ or not integ.data:
+        raise HTTPException(status_code=400, detail="drive_not_connected")
+    if not drive.has_docs_write_scope(integ.data.get("scopes") or []):
+        # Same shape as gmail_send_scope_missing — UI pattern-matches on this.
+        raise HTTPException(status_code=403, detail="docs_write_scope_missing")
+
+    msg = await asyncio.to_thread(
+        lambda: svc.table("messages")
+        .select("id, org_id, delivery_status")
+        .eq("id", body.message_id)
+        .maybe_single()
+        .execute()
+    )
+    if not msg or not msg.data or msg.data.get("org_id") != org_id:
+        raise HTTPException(status_code=404, detail="message_not_found")
+    existing = msg.data.get("delivery_status") or {}
+    if existing.get("status") == "sent":
+        raise HTTPException(status_code=409, detail="message_already_sent")
+
+    # Resolve the requesting user's email server-side (don't trust the JWT
+    # claim — it can be stale and we want the canonical address).
+    share_with_email: str | None = None
+    if body.share_with_me:
+        try:
+            au = await asyncio.to_thread(lambda: svc.auth.admin.get_user_by_id(user_id))
+            share_with_email = getattr(getattr(au, "user", None), "email", None)
+        except Exception:
+            share_with_email = None
+
+    job_id = str(uuid.uuid4())
+    queued_at = datetime.now(timezone.utc).isoformat()
+
+    await asyncio.to_thread(
+        lambda: svc.table("messages")
+        .update({
+            "delivery_status": {
+                "channel": "gdocs",
+                "status": "queued",
+                "destination": "Google Docs",
+                "job_id": job_id,
+                "queued_at": queued_at,
+            }
+        })
+        .eq("id", body.message_id)
+        .execute()
+    )
+
+    client = get_inngest_client()
+    await client.send(
+        _inngest_pkg.Event(
+            name="gdocs/create-doc",
+            data={
+                "job_id": job_id,
+                "message_id": body.message_id,
+                "org_id": org_id,
+                "title": body.title,
+                "content": body.content,
+                "share_with_email": share_with_email,
+            },
+            id=f"gdocs-create-{job_id}",
+        )
+    )
+    return {"queued": True, "job_id": job_id}
 
 
 # ── Internal helpers ────────────────────────────────────────────────────────

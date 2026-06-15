@@ -3,16 +3,22 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Activity,
   BarChart3,
   CalendarDays,
+  CheckCircle2,
+  FileQuestion,
   FileText,
+  Gauge,
   HeartPulse,
   HelpCircle,
+  Inbox,
   LineChart,
   MessageSquare,
   PieChart,
   Settings,
   Shield,
+  ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/hooks/use-user";
@@ -29,6 +35,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/chat/meeting-prep", label: "Meeting prep", icon: CalendarDays },
   { href: "/documents", label: "Documents", icon: FileText },
+  { href: "/approvals", label: "Approvals", icon: CheckCircle2 },
   { href: "/insights", label: "Insights", icon: LineChart, adminOnly: true },
   {
     href: "/admin/analytics",
@@ -52,6 +59,36 @@ const NAV_ITEMS: NavItem[] = [
     href: "/admin/moderation",
     label: "Moderation",
     icon: Shield,
+    adminOnly: true,
+  },
+  {
+    href: "/admin/knowledge-gaps",
+    label: "Knowledge gaps",
+    icon: FileQuestion,
+    adminOnly: true,
+  },
+  {
+    href: "/admin/confidence",
+    label: "Confidence",
+    icon: Gauge,
+    adminOnly: true,
+  },
+  {
+    href: "/admin/support",
+    label: "Support inbox",
+    icon: Inbox,
+    adminOnly: true,
+  },
+  {
+    href: "/admin/agent-runs",
+    label: "Agent runs",
+    icon: Activity,
+    adminOnly: true,
+  },
+  {
+    href: "/admin/compliance",
+    label: "Compliance",
+    icon: ShieldCheck,
     adminOnly: true,
   },
   { href: "/settings", label: "Settings", icon: Settings },

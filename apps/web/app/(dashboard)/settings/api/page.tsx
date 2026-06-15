@@ -108,6 +108,8 @@ export default function ApiKeysPage() {
 
       <CurlExample />
 
+      <AgentTriggerDocs />
+
       <CreateDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
@@ -139,6 +141,99 @@ function CurlExample() {
         Returns <code>{`{ output, sources, tool_calls }`}</code>. Rate-limited per
         key per minute, and against your plan&apos;s monthly quota.
       </p>
+    </section>
+  );
+}
+
+function AgentTriggerDocs() {
+  const origin = typeof window !== "undefined" ? window.location.origin : "https://your-app.app";
+  return (
+    <section className="space-y-3 rounded-lg border border-border bg-background p-4">
+      <header>
+        <p className="text-sm font-medium">Agent triggers</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Kick off an autonomous agent run from your own scripts, webhooks, or
+          HR systems. Each run lands in <code>/admin/agent-runs</code> with a
+          full audit trail.
+        </p>
+      </header>
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground">
+          Discover available agents
+        </p>
+        <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">
+{`curl ${origin}/v1/agents \\
+  -H "Authorization: Bearer cb_live_…"`}
+        </pre>
+      </div>
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground">
+          Trigger an onboarding agent (e.g. from a BambooHR webhook)
+        </p>
+        <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">
+{`curl -X POST ${origin}/v1/agents/onboarding/run \\
+  -H "Authorization: Bearer cb_live_…" \\
+  -H "Content-Type: application/json" \\
+  -H "Idempotency-Key: bamboo-evt-12345" \\
+  -d '{
+    "input": {
+      "name": "Sarah Chen",
+      "email": "sarah@acme.com",
+      "role": "Senior Product Designer",
+      "start_date": "2026-07-01",
+      "manager_email": "john@acme.com"
+    },
+    "output_channels": ["email", "slack", "notion"],
+    "webhook_url": "https://your-app.com/hooks/cb-agent"
+  }'`}
+        </pre>
+        <p className="text-xs text-muted-foreground">
+          Returns <code>{`{ agent_run_id, status, poll_url }`}</code>.{" "}
+          <code>Idempotency-Key</code> makes retries safe — the same key
+          produces the same <code>agent_run_id</code>.
+        </p>
+      </div>
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground">
+          Require approval before running
+        </p>
+        <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">
+{`# Add approver_email to gate the run behind a human approval.
+# The approver must be a workspace member; they get an email + Slack DM
+# with magic-link approve/reject buttons. The agent fires on approve.
+
+# ... same request as above, plus:
+# "approver_email": "ops-lead@acme.com"`}
+        </pre>
+      </div>
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground">
+          Poll for status
+        </p>
+        <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">
+{`curl ${origin}/v1/agent-runs/<agent_run_id> \\
+  -H "Authorization: Bearer cb_live_…"`}
+        </pre>
+        <p className="text-xs text-muted-foreground">
+          Status values: <code>running</code>, <code>pending_approval</code>,{" "}
+          <code>completed</code>, <code>failed</code>.
+        </p>
+      </div>
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground">
+          Webhook signature (per-request callback)
+        </p>
+        <p className="text-xs text-muted-foreground">
+          When <code>webhook_url</code> is set, we POST{" "}
+          <code>{`{ event, data, delivered_at, attempt }`}</code> on
+          completion. The body is signed in the{" "}
+          <code>X-NirnayaIQ-Signature</code> header as{" "}
+          <code>sha256=&lt;hex&gt;</code>. The secret is{" "}
+          <code>HMAC(INTERNAL_EMAIL_SECRET, api_key_id)</code> — the{" "}
+          <code>X-NirnayaIQ-Api-Key-Id</code> header echoes the key id so your
+          receiver can derive the same value server-side.
+        </p>
+      </div>
     </section>
   );
 }

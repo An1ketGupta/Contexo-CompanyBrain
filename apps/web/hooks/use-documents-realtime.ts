@@ -51,6 +51,20 @@ export function useDocumentsRealtime({
   // an actionable "welcome back" surface instead of a buried notification.
   const queuedRef = useRef<PendingToast[]>([]);
 
+  // Handlers are stored in refs so the subscribe effect only re-runs when
+  // orgId actually changes. Otherwise inline callbacks from the parent would
+  // tear down/rebuild the channel on every render, and Supabase's per-topic
+  // channel cache would hand back a still-subscribed channel — `.on()` after
+  // `.subscribe()` throws.
+  const onUpsertRef = useRef(onUpsert);
+  const onRemoveRef = useRef(onRemove);
+  const silentToastsRef = useRef(silentToasts);
+  useEffect(() => {
+    onUpsertRef.current = onUpsert;
+    onRemoveRef.current = onRemove;
+    silentToastsRef.current = silentToasts;
+  }, [onUpsert, onRemove, silentToasts]);
+
   useEffect(() => {
     if (typeof document === "undefined") return;
     const drain = () => {
@@ -71,8 +85,13 @@ export function useDocumentsRealtime({
     if (!orgId) return;
 
     const supabase = createClient();
+    // Per-mount suffix avoids supabase-js's channel-by-topic dedupe. Without
+    // it, React StrictMode's double-mount returns the previous (still
+    // unsubscribing) channel from `.channel()` and `.on()` throws because
+    // bindings can't change after `subscribe()`.
+    const channelKey = `documents:org:${orgId}:${Math.random().toString(36).slice(2)}`;
     const channel = supabase
-      .channel(`documents:org:${orgId}`)
+      .channel(channelKey)
       .on(
         "postgres_changes",
         {
@@ -85,7 +104,7 @@ export function useDocumentsRealtime({
           if (payload.eventType === "DELETE") {
             const id = (payload.old as { id?: string }).id;
             if (id) {
-              onRemove(id);
+              onRemoveRef.current(id);
               lastStatusRef.current.delete(id);
             }
             return;
@@ -106,7 +125,7 @@ export function useDocumentsRealtime({
                   : row.status === "failed" && prev !== "failed"
                     ? { name: row.name, kind: "failed" }
                     : null;
-              if (pending && !silentToasts) {
+              if (pending && !silentToastsRef.current) {
                 if (
                   typeof document !== "undefined" &&
                   document.hidden
@@ -123,7 +142,7 @@ export function useDocumentsRealtime({
             lastStatusRef.current.set(row.id, row.status);
           }
 
-          onUpsert(row);
+          onUpsertRef.current(row);
         },
       )
       .subscribe();
@@ -131,7 +150,7 @@ export function useDocumentsRealtime({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [orgId, onUpsert, onRemove]);
+  }, [orgId]);
 }
 
 function emitDocStatusToast(pending: PendingToast) {

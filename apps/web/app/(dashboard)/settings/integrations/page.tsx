@@ -11,6 +11,7 @@ import {
   Copy,
   Folder,
   Loader2,
+  Mail,
   MessageSquare,
   Plus,
   RefreshCw,
@@ -43,11 +44,20 @@ interface SlackStatus {
   workspace_name: string | null;
   installed_at: string | null;
 }
+interface GmailStatus {
+  available: boolean;
+  connected: boolean;
+  has_send_scope: boolean;
+  email_address: string | null;
+  connected_at: string | null;
+  last_used_at: string | null;
+}
 interface StatusResponse {
   drive: DriveStatus;
   notion: NotionStatus;
   email: EmailStatus;
   slack?: SlackStatus;
+  gmail?: GmailStatus;
 }
 
 const fetcher = async (url: string) => {
@@ -92,6 +102,7 @@ export default function IntegrationsPage() {
       ) : (
         <div className="space-y-4">
           <DriveCard status={data.drive} onChanged={mutate} />
+          <GmailCard status={data.gmail} onChanged={mutate} />
           <NotionCard status={data.notion} onChanged={mutate} />
           <EmailCard status={data.email} onChanged={mutate} />
           <SlackCard status={data.slack} onChanged={mutate} />
@@ -519,6 +530,105 @@ function EmailCard({
           Generate inbound address
         </Button>
       )}
+    </Card>
+  );
+}
+
+function GmailCard({
+  status,
+  onChanged,
+}: {
+  status?: GmailStatus;
+  onChanged: () => void;
+}) {
+  const startConnect = async () => {
+    const res = await fetch("/api/integrations/gmail/connect");
+    if (!res.ok) return toast.error("Could not start Gmail OAuth");
+    const { auth_url } = await res.json();
+    window.location.href = auth_url;
+  };
+
+  if (!status || !status.available) {
+    return (
+      <Card
+        icon={<Mail className="h-4 w-4" />}
+        title="Gmail (send)"
+        description="Not configured. Ask your operator to set GOOGLE_CLIENT_ID."
+      >
+        <p className="text-xs text-muted-foreground">Unavailable on this deploy.</p>
+      </Card>
+    );
+  }
+
+  if (!status.connected) {
+    return (
+      <Card
+        icon={<Mail className="h-4 w-4" />}
+        title="Gmail (send)"
+        description="Send AI-drafted emails directly from your own Gmail address. Connect is per-user — each teammate connects their own mailbox."
+      >
+        <Button size="sm" onClick={startConnect}>Connect Gmail</Button>
+      </Card>
+    );
+  }
+
+  if (!status.has_send_scope) {
+    return (
+      <Card
+        icon={<Mail className="h-4 w-4" />}
+        title={`Gmail · ${status.email_address ?? ""}`}
+        description="Send permission was not granted. Reconnect to enable Send via Gmail."
+      >
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={startConnect}>Reconnect Gmail</Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={async () => {
+              if (!confirm("Disconnect Gmail?")) return;
+              const res = await fetch("/api/integrations/gmail", { method: "DELETE" });
+              if (!res.ok) return toast.error("Disconnect failed");
+              toast.success("Disconnected");
+              onChanged();
+            }}
+          >
+            <Unplug className="h-3.5 w-3.5" /> Disconnect
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card
+      icon={<Mail className="h-4 w-4" />}
+      title={`Gmail · ${status.email_address ?? ""}`}
+      description={
+        status.last_used_at
+          ? `Last send ${new Date(status.last_used_at).toLocaleString()}`
+          : status.connected_at
+            ? `Connected ${new Date(status.connected_at).toLocaleString()}`
+            : "Connected"
+      }
+    >
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={async () => {
+            if (!confirm("Disconnect Gmail?")) return;
+            const res = await fetch("/api/integrations/gmail", { method: "DELETE" });
+            if (!res.ok) return toast.error("Disconnect failed");
+            toast.success("Disconnected");
+            onChanged();
+          }}
+        >
+          <Unplug className="h-3.5 w-3.5" /> Disconnect
+        </Button>
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        On any email-style assistant reply, click the Gmail icon in the action row to send.
+      </p>
     </Card>
   );
 }

@@ -1,8 +1,14 @@
 """Per-org configuration cache.
 
-Today the only knob is `ai_instructions` (Day 9 / #67) — admin-supplied
-text prepended to the LLM system prompt on every chat turn. We expect:
+What lives here:
+  * `ai_instructions` (Day 9 / #67) — admin-supplied text prepended to the
+    LLM system prompt on every chat turn.
+  * `confidence_thresholds` (Agent Day 3) — admin-tunable cosine cutoffs for
+    the high/medium bands shown on the message confidence badge. Stored in
+    `organizations.metadata.confidence_thresholds`; defaults baked in so a
+    brand-new org never sees a "not configured" state.
 
+We expect:
   * Hot-path read on every chat call (must stay <1ms).
   * Cold-path write from settings UI (a few times per org per year).
 
@@ -20,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from app.database import get_service_client
 from app.observability import get_logger
@@ -35,11 +42,37 @@ ORG_CONFIG_TTL_SECONDS = 60.0
 # the system prompt.
 INSTRUCTIONS_MAX_CHARS = 500
 
+# Default confidence thresholds — calibrated on Google `text-embedding-004`
+# cosine similarity. 0.75+ is "this chunk is unambiguously about the query";
+# 0.45+ is "topically related"; below that is noise. These are the values
+# used before Day 3 made them per-org-tunable.
+DEFAULT_CONFIDENCE_HIGH = 0.75
+DEFAULT_CONFIDENCE_MEDIUM = 0.45
+
+
+@dataclass(frozen=True)
+class ConfidenceThresholds:
+    """Two cutoffs that partition the cosine range into high/medium/low.
+
+    Stored on `organizations.metadata.confidence_thresholds` as
+    `{"high": 0.75, "medium": 0.45}`. `high >= medium` is enforced at write
+    time so the bands stay well-ordered (otherwise a typo could make every
+    answer "low confidence").
+    """
+
+    high: float
+    medium: float
+
+    @classmethod
+    def default(cls) -> "ConfidenceThresholds":
+        return cls(high=DEFAULT_CONFIDENCE_HIGH, medium=DEFAULT_CONFIDENCE_MEDIUM)
+
 
 @dataclass(frozen=True)
 class OrgConfig:
     org_id: str
     ai_instructions: str | None
+    confidence: ConfidenceThresholds
     fetched_at: float
 
 
@@ -55,6 +88,28 @@ def invalidate(org_id: str) -> None:
 def invalidate_all() -> None:
     """Test/dev hook — wipe the entire cache."""
     _cache.clear()
+
+
+def _parse_confidence(meta: dict[str, Any] | None) -> ConfidenceThresholds:
+    """Read thresholds out of metadata JSONB, falling back to defaults.
+
+    Defensive against partial / corrupt rows: anything we can't parse as a
+    float in [0, 1] reverts to default. The admin UI validates on write, but
+    a hand-edited row shouldn't poison every chat call.
+    """
+    if not meta:
+        return ConfidenceThresholds.default()
+    raw = meta.get("confidence_thresholds")
+    if not isinstance(raw, dict):
+        return ConfidenceThresholds.default()
+    try:
+        high = float(raw.get("high"))
+        medium = float(raw.get("medium"))
+    except (TypeError, ValueError):
+        return ConfidenceThresholds.default()
+    if not (0.0 <= medium <= high <= 1.0):
+        return ConfidenceThresholds.default()
+    return ConfidenceThresholds(high=high, medium=medium)
 
 
 async def get_org_config(org_id: str) -> OrgConfig:
@@ -74,7 +129,7 @@ async def get_org_config(org_id: str) -> OrgConfig:
         try:
             result = await asyncio.to_thread(
                 lambda: svc.table("organizations")
-                .select("ai_instructions")
+                .select("ai_instructions, metadata")
                 .eq("id", org_id)
                 .maybe_single()
                 .execute()
@@ -84,11 +139,22 @@ async def get_org_config(org_id: str) -> OrgConfig:
             # Fail open — we'd rather chat without org context than block on
             # a transient DB blip. Don't poison the cache with the failure.
             log.warning("org_config_fetch_failed", org_id=org_id, error=str(exc))
-            return OrgConfig(org_id=org_id, ai_instructions=None, fetched_at=now)
+            return OrgConfig(
+                org_id=org_id,
+                ai_instructions=None,
+                confidence=ConfidenceThresholds.default(),
+                fetched_at=now,
+            )
 
         raw = (row.get("ai_instructions") or "").strip()
         instructions = raw[:INSTRUCTIONS_MAX_CHARS] or None
-        cfg = OrgConfig(org_id=org_id, ai_instructions=instructions, fetched_at=time.monotonic())
+        confidence = _parse_confidence(row.get("metadata"))
+        cfg = OrgConfig(
+            org_id=org_id,
+            ai_instructions=instructions,
+            confidence=confidence,
+            fetched_at=time.monotonic(),
+        )
         _cache[org_id] = cfg
         return cfg
 
@@ -97,3 +163,41 @@ async def get_org_instructions(org_id: str) -> str | None:
     """Convenience: just the instructions string (or None)."""
     cfg = await get_org_config(org_id)
     return cfg.ai_instructions
+
+
+async def get_confidence_thresholds(org_id: str) -> ConfidenceThresholds:
+    """Convenience: just the confidence thresholds."""
+    cfg = await get_org_config(org_id)
+    return cfg.confidence
+
+
+async def update_confidence_thresholds(
+    *, org_id: str, high: float, medium: float
+) -> ConfidenceThresholds:
+    """Persist new thresholds to organizations.metadata and bust the cache.
+
+    Validates ordering + range here as defense-in-depth even though the
+    router does the same — anyone calling this directly (CLI, tests) gets
+    the same guard.
+    """
+    if not (0.0 <= medium <= high <= 1.0):
+        raise ValueError("Thresholds must satisfy 0 <= medium <= high <= 1.")
+
+    svc = get_service_client()
+
+    def _run() -> dict[str, Any]:
+        existing = (
+            svc.table("organizations")
+            .select("metadata")
+            .eq("id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        meta = (existing.data or {}).get("metadata") or {} if existing else {}
+        meta = {**meta, "confidence_thresholds": {"high": high, "medium": medium}}
+        svc.table("organizations").update({"metadata": meta}).eq("id", org_id).execute()
+        return meta
+
+    await asyncio.to_thread(_run)
+    invalidate(org_id)
+    return ConfidenceThresholds(high=high, medium=medium)

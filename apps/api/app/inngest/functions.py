@@ -156,6 +156,44 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
                 "generate-summary",
                 lambda: _generate_doc_summary(doc_id=doc_id),
             )
+            # Agent Day 12 — auto-tagging from a fixed taxonomy. Runs after
+            # mark-ready so the document is queryable while tag chips
+            # populate via Realtime. Skipped if the user manually tagged
+            # already (handled inside auto_tag_document). Best-effort.
+            await step.run(
+                "auto-tag-document",
+                lambda: _auto_tag_doc(doc_id=doc_id),
+            )
+            # Agent Day 13 — meeting-transcript routing. If the file
+            # extension says it's a meeting transcript we fan out a
+            # dedicated event for the MeetingNotesAgent. Cheap inline
+            # check; non-transcript docs are a no-op.
+            await step.run(
+                "maybe-route-meeting-transcript",
+                lambda ft=file_type: _maybe_route_meeting_transcript(
+                    doc_id=doc_id, org_id=org_id, file_type=ft,
+                ),
+            )
+            # Agent Day 9 — fan out a policy-propagation event if this doc
+            # carries the `policy` tag OR is marked requires_acknowledgement.
+            # We do the cheap eligibility check inline so non-policy docs
+            # (the common case) never enqueue a no-op agent run.
+            await step.run(
+                "maybe-propagate-policy",
+                lambda v=version_id: _maybe_trigger_policy_propagation(
+                    doc_id=doc_id, org_id=org_id, version_id=v,
+                ),
+            )
+            # Agent Day 15 — generic "what changed" diff for non-policy
+            # versioned uploads. Skipped automatically for first uploads
+            # and for policy-tagged docs (those are handled above by the
+            # policy propagation agent which already writes document_diffs).
+            await step.run(
+                "maybe-run-version-diff",
+                lambda v=version_id: _maybe_trigger_version_diff(
+                    doc_id=doc_id, org_id=org_id, version_id=v,
+                ),
+            )
     else:
         await step.run(
             "mark-failed",
@@ -411,6 +449,76 @@ async def _extract_doc_toc(*, doc_id: str, file_path: str, file_type: str) -> di
         return {"status": "failed", "reason": str(exc)[:200]}
 
 
+async def _maybe_trigger_version_diff(
+    *, doc_id: str, org_id: str, version_id: str | None,
+) -> dict[str, Any]:
+    """Fire `doc/version-diff` when this is a non-first, non-policy version.
+
+    The gate inside `should_run_diff` makes this safe to call for every doc;
+    we only enqueue when there's actually work to do.
+    """
+    try:
+        from app.services.agents.version_diff_agent import should_run_diff
+
+        if not await should_run_diff(document_id=doc_id, org_id=org_id):
+            return {"status": "skipped", "reason": "not_eligible"}
+
+        client = get_inngest_client()
+        event_id = f"version-diff-{doc_id}-{version_id or 'current'}"
+        await client.send(
+            inngest.Event(
+                name="doc/version-diff",
+                data={
+                    "document_id": doc_id,
+                    "org_id": org_id,
+                    "version_id": version_id,
+                },
+                id=event_id,
+            )
+        )
+        return {"status": "fired", "event_id": event_id}
+    except Exception as exc:
+        log.warning("[inngest] version diff trigger failed: %s", exc)
+        return {"status": "failed", "reason": str(exc)[:200]}
+
+
+async def _maybe_trigger_policy_propagation(
+    *, doc_id: str, org_id: str, version_id: str | None,
+) -> dict[str, Any]:
+    """Fire `agent/policy-propagate` for policy-tagged or ack-required docs.
+
+    Why inline this gate (rather than always fire and let the agent skip):
+    every fired event costs us an Inngest run + audit row. The vast majority
+    of doc uploads are non-policy; gating here keeps the audit log clean and
+    saves an LLM round-trip on the skip path.
+    """
+    try:
+        from app.services.agents.policy_propagation_agent import should_propagate
+
+        if not await should_propagate(document_id=doc_id, org_id=org_id):
+            return {"status": "skipped", "reason": "not_policy"}
+
+        client = get_inngest_client()
+        # Idempotency: one event per (doc, version). Re-fires of the same
+        # version (Inngest retry) collapse into one agent run.
+        event_id = f"policy-propagate-{doc_id}-{version_id or 'current'}"
+        await client.send(
+            inngest.Event(
+                name="agent/policy-propagate",
+                data={
+                    "document_id": doc_id,
+                    "org_id": org_id,
+                    "version_id": version_id,
+                },
+                id=event_id,
+            )
+        )
+        return {"status": "fired", "event_id": event_id}
+    except Exception as exc:
+        log.warning("[inngest] policy propagation trigger failed: %s", exc)
+        return {"status": "failed", "reason": str(exc)[:200]}
+
+
 async def _generate_doc_summary(*, doc_id: str) -> dict[str, Any]:
     """Wrapper around services.document_summary so Inngest gets a serializable dict.
 
@@ -422,6 +530,54 @@ async def _generate_doc_summary(*, doc_id: str) -> dict[str, Any]:
         return await generate_document_summary(document_id=doc_id)
     except Exception as exc:
         log.warning("[inngest] summary generation failed: doc=%s err=%s", doc_id, exc)
+        return {"status": "failed", "reason": str(exc)[:200]}
+
+
+async def _auto_tag_doc(*, doc_id: str) -> dict[str, Any]:
+    """Agent Day 12: auto-tag wrapper. Swallows any LLM failure so a doc
+    upload never retries solely because of a tag-generation hiccup."""
+    from app.services.auto_tagger import auto_tag_document
+
+    try:
+        return await auto_tag_document(document_id=doc_id)
+    except Exception as exc:
+        log.warning("[inngest] auto-tag failed: doc=%s err=%s", doc_id, exc)
+        return {"status": "failed", "reason": str(exc)[:200]}
+
+
+# Extensions recognised as meeting transcripts. .vtt = Zoom WebVTT,
+# .json = Microsoft Teams transcript export (other JSON docs are excluded
+# by the agent's parser detection rather than this filter so a generic
+# JSON upload doesn't get routed here).
+_MEETING_TRANSCRIPT_FILE_TYPES = {"vtt", "teams_transcript", "transcript"}
+
+
+async def _maybe_route_meeting_transcript(
+    *, doc_id: str, org_id: str, file_type: str | None,
+) -> dict[str, Any]:
+    """Agent Day 13: fan out a `meeting/transcript-uploaded` event when the
+    upload is a transcript. Routing is keyed by file_type so the regular
+    doc pipeline doesn't try to interpret every JSON.
+
+    .vtt → Zoom WebVTT
+    .json with file_type='teams_transcript' → Teams transcript export
+        (the documents router sets that file_type when an admin uploads
+        via the dedicated meeting-transcript path)
+    """
+    ft = (file_type or "").lower()
+    if ft not in _MEETING_TRANSCRIPT_FILE_TYPES:
+        return {"status": "skipped", "reason": "not_a_transcript"}
+    try:
+        await _inngest_client.send(
+            inngest.Event(
+                name="meeting/transcript-uploaded",
+                data={"doc_id": doc_id, "org_id": org_id, "file_type": ft},
+                id=f"meeting-transcript-{doc_id}",
+            )
+        )
+        return {"status": "queued"}
+    except Exception as exc:
+        log.warning("[inngest] meeting routing failed: doc=%s err=%s", doc_id, exc)
         return {"status": "failed", "reason": str(exc)[:200]}
 
 

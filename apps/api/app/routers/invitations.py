@@ -53,6 +53,12 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 class InviteCreate(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     role: Literal["admin", "member"] = "member"
+    # Day 8: optional onboarding metadata. The OnboardingAgent uses these
+    # to personalise the welcome email + Notion plan and to know who to DM
+    # on Slack. All optional so existing invite flows keep working.
+    role_title: str | None = Field(default=None, max_length=120)
+    start_date: str | None = Field(default=None, max_length=10)  # YYYY-MM-DD
+    manager_user_id: str | None = Field(default=None, max_length=64)
 
 
 class InviteAccept(BaseModel):
@@ -242,6 +248,36 @@ async def create_invitation(
     token_str = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + INVITE_TTL
 
+    # Validate manager_user_id (if provided) belongs to the same org.
+    manager_user_id: str | None = None
+    if body.manager_user_id:
+        m = await asyncio.to_thread(
+            lambda: svc.table("users")
+            .select("id, org_id")
+            .eq("id", body.manager_user_id)
+            .maybe_single()
+            .execute()
+        )
+        if not m or not m.data or m.data.get("org_id") != org_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Manager isn't a member of this workspace.",
+            )
+        manager_user_id = body.manager_user_id
+
+    # Lightweight date validation — Postgres will reject malformed values
+    # too, but we want a clean 400 not a 500.
+    start_date: str | None = None
+    if body.start_date:
+        try:
+            datetime.strptime(body.start_date, "%Y-%m-%d")
+            start_date = body.start_date
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Start date must be YYYY-MM-DD.",
+            ) from exc
+
     try:
         result = await asyncio.to_thread(
             lambda: svc.table("invitations")
@@ -253,6 +289,9 @@ async def create_invitation(
                     "token": token_str,
                     "invited_by": user_id,
                     "expires_at": expires_at.isoformat(),
+                    "role_title": (body.role_title or "").strip() or None,
+                    "start_date": start_date,
+                    "manager_user_id": manager_user_id,
                 }
             )
             .execute()
@@ -507,7 +546,10 @@ async def accept_invitation(token: str, body: InviteAccept) -> dict[str, Any]:
 
     invite = await asyncio.to_thread(
         lambda: svc.table("invitations")
-        .select("id, email, role, org_id, expires_at, accepted_at")
+        .select(
+            "id, email, role, org_id, expires_at, accepted_at, "
+            "role_title, start_date, manager_user_id, invited_by"
+        )
         .eq("token", token)
         .maybe_single()
         .execute()
@@ -565,6 +607,9 @@ async def accept_invitation(token: str, body: InviteAccept) -> dict[str, Any]:
                 "org_id": row["org_id"],
                 "role": row["role"],
                 "display_name": cleaned_name,
+                "role_title": row.get("role_title"),
+                "start_date": row.get("start_date"),
+                "manager_user_id": row.get("manager_user_id"),
             }
         )
         .execute()
@@ -577,26 +622,36 @@ async def accept_invitation(token: str, body: InviteAccept) -> dict[str, Any]:
         .execute()
     )
 
-    # Welcome email for the new joiner. Once-per-lifetime via dedupe_key=None.
+    # Day 8: fire the onboarding agent. The agent owns its own welcome
+    # email (with personalised plan preview), so we DON'T send the generic
+    # 'welcome' email anymore — they'd land at the same time and look
+    # duplicative. If onboarding metadata is absent (legacy invites), the
+    # agent still runs with sensible defaults.
     try:
-        from app.config import get_settings
-        from app.services.email import send_email_event
+        import inngest as _inngest_pkg
 
-        settings = get_settings()
-        org_meta = await _get_org(svc, row["org_id"])
-        await send_email_event(
-            event_type="welcome",
-            to=auth_email,
-            user_id=body.user_id,
-            org_id=row["org_id"],
-            data={
-                "first_name": cleaned_name.split(" ")[0] if cleaned_name else None,
-                "org_name": org_meta["name"],
-                "app_url": settings.app_url,
-            },
+        from app.inngest.client import get_inngest_client
+
+        client = get_inngest_client()
+        await client.send(
+            _inngest_pkg.Event(
+                name="org/member-joined",
+                data={
+                    "org_id": row["org_id"],
+                    "user_id": body.user_id,
+                    "name": cleaned_name,
+                    "email": auth_email,
+                    "role": row["role"],
+                    "role_title": row.get("role_title"),
+                    "start_date": row.get("start_date"),
+                    "manager_user_id": row.get("manager_user_id"),
+                    "invited_by": row.get("invited_by"),
+                },
+                id=f"org-member-joined-{body.user_id}",
+            )
         )
     except Exception as exc:
-        log.warning("welcome_email_dispatch_failed", user_id=body.user_id, error=str(exc))
+        log.warning("onboarding_agent_dispatch_failed", user_id=body.user_id, error=str(exc))
 
     # JWT app_metadata. The next supabase.auth.refreshSession() will pick this
     # up and FastAPI's verify_jwt will read org_id from it.

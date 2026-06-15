@@ -69,6 +69,9 @@ _MIME_TO_TYPE: dict[str, str] = {
     "text/html": "html",
     "application/xhtml+xml": "html",
     "text/csv": "csv",
+    # Day 13 — meeting transcripts. Zoom serves VTT as text/vtt, some MTAs as
+    # application/octet-stream so we still fall back to the extension below.
+    "text/vtt": "vtt",
 }
 _EXT_TO_TYPE: dict[str, str] = {
     "pdf": "pdf",
@@ -81,6 +84,9 @@ _EXT_TO_TYPE: dict[str, str] = {
     "html": "html",
     "htm": "html",
     "csv": "csv",
+    # Day 13: meeting-transcript extensions. The classifier upstream uses
+    # these to route into the MeetingNotesAgent pipeline.
+    "vtt": "vtt",
 }
 
 
@@ -922,6 +928,86 @@ async def mark_document_reviewed(
 
     next_due = result.data if result else None
     return {"status": "ok", "next_due_at": next_due}
+
+
+class PolicyFlagBody(BaseModel):
+    requires_acknowledgement: bool
+
+
+@router.patch("/{doc_id}/policy-flag")
+async def update_policy_flag(
+    doc_id: str,
+    body: PolicyFlagBody,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Admin toggle for `documents.requires_acknowledgement` (Day 9).
+
+    Flipping the flag to TRUE on an already-ready doc kicks the propagation
+    agent. Flipping to FALSE just stops future versions from propagating —
+    we leave existing acknowledgement rows in place because they're an
+    audit record people may need.
+    """
+    org_id: str | None = current_user["org_id"]
+    user_id: str | None = current_user["user_id"]
+    token: str | None = current_user["token"]
+    if not org_id or not user_id or not token:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No organization found.")
+    try:
+        uuid.UUID(doc_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid document id.")
+
+    user_client = get_user_client(token)
+    me = await asyncio.to_thread(
+        lambda: user_client.table("users")
+        .select("role")
+        .eq("id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not me or not me.data or me.data.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required.")
+
+    svc = get_service_client()
+    doc_res = await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .select("id, status, requires_acknowledgement")
+        .eq("id", doc_id)
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not doc_res or not doc_res.data:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    was = bool((doc_res.data or {}).get("requires_acknowledgement"))
+    await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .update({"requires_acknowledgement": body.requires_acknowledgement})
+        .eq("id", doc_id)
+        .execute()
+    )
+
+    # If we just flipped ON and the doc is ready, fire propagation immediately.
+    fired = False
+    if body.requires_acknowledgement and not was and (doc_res.data or {}).get("status") == "ready":
+        try:
+            from app.inngest.client import get_inngest_client
+            import inngest as _inngest
+
+            client = get_inngest_client()
+            await client.send(
+                _inngest.Event(
+                    name="agent/policy-propagate",
+                    data={"document_id": doc_id, "org_id": org_id, "triggered_by": "flag_on"},
+                    id=f"policy-flag-on-{doc_id}-{uuid.uuid4().hex[:8]}",
+                )
+            )
+            fired = True
+        except Exception:
+            pass
+
+    return {"requires_acknowledgement": body.requires_acknowledgement, "propagation_queued": fired}
 
 
 @router.patch("/{doc_id}/tags")

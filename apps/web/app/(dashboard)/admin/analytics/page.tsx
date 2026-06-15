@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Clock, Loader2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { StatCard } from "@/components/admin/stat-card";
@@ -12,6 +12,17 @@ import {
 } from "@/components/admin/analytics-charts";
 import { formatDistanceToNow } from "@/lib/date";
 import { cn } from "@/lib/utils";
+
+interface TimeSavingsResponse {
+  total_minutes_this_month: number;
+  total_hours_this_month: number;
+  per_user: {
+    user_id: string;
+    name: string;
+    minutes: number;
+    hours: number;
+  }[];
+}
 
 interface AnalyticsResponse {
   period: "7d" | "30d" | "90d";
@@ -57,6 +68,20 @@ export default function AnalyticsPage() {
     { revalidateOnFocus: false },
   );
 
+  // Time savings is its own endpoint and always reports last-30-days totals,
+  // independent of the analytics period selector. Fetched separately so a
+  // missing/failed call doesn't take down the rest of the page.
+  const timeSavingsFetcher = async (url: string): Promise<TimeSavingsResponse> => {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Failed to load (${res.status})`);
+    return res.json();
+  };
+  const { data: timeSavings } = useSWR<TimeSavingsResponse>(
+    "/api/admin/time-savings",
+    timeSavingsFetcher,
+    { revalidateOnFocus: false },
+  );
+
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6 md:p-8">
       <header className="flex items-center justify-between gap-3">
@@ -97,7 +122,7 @@ export default function AnalyticsPage() {
       {isLoading || !data ? (
         <AnalyticsSkeleton />
       ) : (
-        <AnalyticsBody data={data} period={period} />
+        <AnalyticsBody data={data} period={period} timeSavings={timeSavings} />
       )}
     </div>
   );
@@ -106,9 +131,11 @@ export default function AnalyticsPage() {
 function AnalyticsBody({
   data,
   period,
+  timeSavings,
 }: {
   data: AnalyticsResponse;
   period: string;
+  timeSavings: TimeSavingsResponse | undefined;
 }) {
   const { stats, daily_queries, user_breakdown, top_documents, intent_breakdown } =
     data;
@@ -170,6 +197,8 @@ function AnalyticsBody({
           <DailyQueriesChart data={daily_queries} />
         )}
       </section>
+
+      <TimeSavedSection timeSavings={timeSavings} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
@@ -253,6 +282,74 @@ function AnalyticsBody({
 function EmptyChart({ label }: { label: string }) {
   return (
     <p className="py-12 text-center text-sm text-muted-foreground">{label}</p>
+  );
+}
+
+function TimeSavedSection({
+  timeSavings,
+}: {
+  timeSavings: TimeSavingsResponse | undefined;
+}) {
+  return (
+    <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
+      <div className="mb-4 flex items-baseline justify-between">
+        <h2 className="flex items-center gap-1.5 text-sm font-medium">
+          <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+          Time saved
+        </h2>
+        <p className="text-xs text-muted-foreground">last 30 days</p>
+      </div>
+      {!timeSavings ? (
+        <p className="py-12 text-center text-sm text-muted-foreground">
+          Loading…
+        </p>
+      ) : timeSavings.total_minutes_this_month === 0 ? (
+        <p className="py-12 text-center text-sm text-muted-foreground">
+          No measurable time saved yet — keep using Company Brain and this will fill in.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+          <div className="md:col-span-1">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Org total
+            </p>
+            <p className="mt-1 text-3xl font-semibold tracking-tight tabular-nums">
+              {timeSavings.total_hours_this_month}h
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {timeSavings.total_minutes_this_month.toLocaleString()} minutes
+            </p>
+          </div>
+          <div className="md:col-span-2">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Top contributors
+            </p>
+            {timeSavings.per_user.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No per-user attribution yet.
+              </p>
+            ) : (
+              <ul className="space-y-1.5">
+                {timeSavings.per_user.slice(0, 5).map((u, i) => (
+                  <li
+                    key={u.user_id}
+                    className="flex items-center gap-3 text-sm"
+                  >
+                    <span className="w-5 shrink-0 font-mono text-xs text-muted-foreground">
+                      {i + 1}.
+                    </span>
+                    <span className="flex-1 truncate">{u.name}</span>
+                    <Badge variant="outline" className="tabular-nums">
+                      {u.hours}h
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

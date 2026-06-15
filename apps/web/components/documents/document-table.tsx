@@ -26,6 +26,7 @@ import { TagDialog } from "./tag-dialog";
 import { UploadVersionButton } from "./upload-version-button";
 import { DocumentSummary } from "./document-summary";
 import { TableOfContents } from "./table-of-contents";
+import { VersionDiffSection } from "./version-diff-section";
 import { hasInsights, readDocumentInsights } from "./document-metadata";
 import { useCurrentUser } from "@/hooks/use-user";
 
@@ -352,25 +353,28 @@ function Row({
     {expanded && canExpand && (
       <tr className="bg-muted/30">
         <td colSpan={8} className="border-t border-border/60 px-4 py-4 md:px-12">
-          <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-            {insights.summary && (
-              <div>
-                <DocumentSummary
-                  summary={insights.summary}
-                  keyTopics={insights.keyTopics}
-                />
-              </div>
-            )}
-            {insights.toc.length > 0 && (
-              <div className="max-h-72 overflow-y-auto pr-2">
-                <TableOfContents entries={insights.toc} />
-              </div>
-            )}
-            {!insights.summary && insights.toc.length === 0 && (
-              <p className="text-xs text-muted-foreground">
-                Summary still generating — check back in a few seconds.
-              </p>
-            )}
+          <div className="space-y-4">
+            <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              {insights.summary && (
+                <div>
+                  <DocumentSummary
+                    summary={insights.summary}
+                    keyTopics={insights.keyTopics}
+                  />
+                </div>
+              )}
+              {insights.toc.length > 0 && (
+                <div className="max-h-72 overflow-y-auto pr-2">
+                  <TableOfContents entries={insights.toc} />
+                </div>
+              )}
+              {!insights.summary && insights.toc.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Summary still generating — check back in a few seconds.
+                </p>
+              )}
+            </div>
+            <VersionDiffSection documentId={doc.id} />
           </div>
         </td>
       </tr>

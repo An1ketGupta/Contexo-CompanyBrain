@@ -35,6 +35,11 @@ ALLOWED_EVENTS: tuple[str, ...] = (
     "document.processed",
     "document.failed",
     "query.completed",
+    # Day 14: emitted on terminal status of every agent_runs row. Lets an
+    # admin route onboarding/policy/support-response completions into an
+    # external system without setting up the public API trigger first.
+    "agent.completed",
+    "agent.failed",
 )
 
 

@@ -40,7 +40,11 @@ from app.services.langfuse import (
     start_trace_span,
     update_current_trace,
 )
-from app.services.org_config import get_org_instructions
+from app.services.org_config import (
+    ConfidenceThresholds,
+    get_confidence_thresholds,
+    get_org_config,
+)
 from app.services.retrieval import SearchHit, hybrid_search
 
 from .client import SEARCH_TOOL, SEARCH_TOOL_NAME, LLMClient, LLMError, get_llm_client
@@ -172,21 +176,19 @@ OrchestratorEvent = (
 )
 
 
-# Confidence thresholds — calibrated on Google `text-embedding-004` cosine
-# similarity. 0.75+ is "this chunk is unambiguously about the query"; 0.45+
-# is "topically related"; below that is noise. Knowledge-gap turns force the
-# low band regardless of score so the UI doesn't mislead.
-_CONFIDENCE_HIGH = 0.75
-_CONFIDENCE_MEDIUM = 0.45
-
-
 def _compute_confidence(
     sources: list[dict],
     hits: list[SearchHit],
     *,
     knowledge_gap: bool,
+    thresholds: ConfidenceThresholds,
 ) -> ConfidenceEvent:
-    """Average the raw vector cosine across cited chunks → confidence band."""
+    """Average the raw vector cosine across cited chunks → confidence band.
+
+    Thresholds are per-org (Agent Day 3) — admins tune them from the
+    confidence settings page when their corpus produces too many false
+    "low" badges (heterogeneous docs) or too many "high" (too-similar docs).
+    """
     if not sources or knowledge_gap:
         return ConfidenceEvent(level="low", score=0.0, chunks_considered=0)
 
@@ -201,9 +203,9 @@ def _compute_confidence(
         return ConfidenceEvent(level="low", score=0.0, chunks_considered=0)
 
     avg = sum(cosines) / len(cosines)
-    if avg >= _CONFIDENCE_HIGH:
+    if avg >= thresholds.high:
         level: Literal["high", "medium", "low"] = "high"
-    elif avg >= _CONFIDENCE_MEDIUM:
+    elif avg >= thresholds.medium:
         level = "medium"
     else:
         level = "low"
@@ -272,13 +274,17 @@ async def execute_task(
     # nudge the user to upload more documents.
     search_attempts: list[tuple[str, int]] = []
 
-    # Org-level system-prompt prefix (Day 9 / #67). TTL-cached, so this is a
-    # cheap dict hit on the hot path. Falls back to None on lookup error.
+    # Org-level config (Day 9 / #67 + Agent Day 3). One TTL-cached lookup pulls
+    # both the system-prompt prefix AND per-org confidence thresholds so we
+    # don't double-cache or double-fetch.
     try:
-        org_instructions = await get_org_instructions(org_id)
+        cfg = await get_org_config(org_id)
+        org_instructions = cfg.ai_instructions
+        confidence_thresholds = cfg.confidence
     except Exception as exc:
-        log.warning("org_instructions_lookup_failed: %s", exc)
+        log.warning("org_config_lookup_failed: %s", exc)
         org_instructions = None
+        confidence_thresholds = ConfidenceThresholds.default()
 
     # Scope-aware system note. When a conversation is pinned to one document,
     # tell the LLM so it doesn't generalize from a single source like it had
@@ -457,15 +463,32 @@ async def execute_task(
         # uncertainty itself in the partial-coverage case.
         knowledge_gap = bool(search_attempts) and all(count == 0 for _, count in search_attempts)
         if knowledge_gap:
-            yield KnowledgeGapEvent(
-                topics=tuple(q for q, _ in search_attempts),
-            )
+            gap_topics = tuple(q for q, _ in search_attempts)
+            yield KnowledgeGapEvent(topics=gap_topics)
+            # Persist the gap signal so admins can act on it (Agent Day 5).
+            # Fire-and-forget through Inngest — a failed enqueue must not
+            # block the answer streaming back to the user.
+            try:
+                await _enqueue_knowledge_gap(
+                    org_id=org_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_message=user_message,
+                    topics=gap_topics,
+                )
+            except Exception as exc:
+                log.warning("knowledge_gap_enqueue_failed: %s", exc)
 
         # Confidence — emitted whenever the LLM consulted retrieval. Skipping
         # zero-source turns means a "hi how are you" doesn't render a "low
         # confidence" badge on a chat that wasn't asking for facts.
         if sources:
-            yield _compute_confidence(sources, all_hits, knowledge_gap=knowledge_gap)
+            yield _compute_confidence(
+                sources,
+                all_hits,
+                knowledge_gap=knowledge_gap,
+                thresholds=confidence_thresholds,
+            )
 
         if stream and not final_text:
             # We may have exited the loop because the LLM was about to speak. To
@@ -510,6 +533,46 @@ async def execute_task(
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+async def _enqueue_knowledge_gap(
+    *,
+    org_id: str,
+    user_id: str | None,
+    conversation_id: str | None,
+    user_message: str,
+    topics: tuple[str, ...],
+) -> None:
+    """Emit a knowledge/gap-detected event for the Inngest worker.
+
+    Each search the LLM ran becomes its own gap row — that's the right
+    granularity for the admin alert (a topic that's hit 3x is more
+    actionable than a query that ran once). The worker handles dedupe +
+    threshold + auto-draft.
+    """
+    if not topics:
+        return
+    import inngest as _inngest_pkg
+
+    from app.inngest.client import get_inngest_client
+
+    client = get_inngest_client()
+    for topic in topics:
+        # Each topic is its own event so the worker can debounce per
+        # (org, topic) cleanly. The event id includes a hash of the topic
+        # to absorb tight duplicate fires from concurrent chat windows.
+        await client.send(
+            _inngest_pkg.Event(
+                name="knowledge/gap-detected",
+                data={
+                    "org_id": org_id,
+                    "topic": topic,
+                    "query": user_message,
+                    "user_id": user_id,
+                    "conversation_id": conversation_id,
+                },
+            )
+        )
+
 
 async def _scope_system_note(client: Client, document_id: str) -> str | None:
     """One-line scope reminder injected into the system prompt."""

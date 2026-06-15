@@ -1,13 +1,17 @@
-"""Email forward-to-brain (Day 14 / #83).
+"""Email forward-to-brain (Day 14 / #83 + Agent Day 12).
 
 Each org gets a unique inbound address (brain-<slug>-<rand>@inbound.<domain>).
 We expect Resend Inbound (or a compatible MX router like Mailgun) to POST
 parsed email envelopes here. The handler verifies the inbound signature,
-finds the matching org, persists the message body as a document, and queues
-it for chunk+embed via the standard text-document pipeline.
+finds the matching org, and fans the envelope out to the classifier
+Inngest function which decides between three downstream paths:
+
+  support / sales  → SupportResponseAgent drafts an AI reply
+  knowledge        → existing chunk+embed pipeline as a doc
+  internal         → drop (calendar bots, fwd: chains, etc.)
 
 Format-agnostic on purpose: as long as the body delivered has at minimum
-`to`, `from`, `subject`, `text` (or `html`), we can ingest it.
+`to`, `from`, `subject`, `text` (or `html`), we can classify and route it.
 """
 from __future__ import annotations
 
@@ -21,7 +25,6 @@ from typing import Any
 
 from app.config import get_settings
 from app.database import get_service_client
-from app.services.integrations.text_ingest import upsert_external_document
 
 log = logging.getLogger(__name__)
 
@@ -108,11 +111,18 @@ def verify_signature(*, raw_body: bytes, signature: str | None) -> bool:
 def parse_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize across inbound providers into a single envelope shape.
 
-    Returns {to, from_, subject, body}. Either `text` or `html` is acceptable
-    for the body; HTML gets a naive tag strip.
+    Returns {to, from_, from_raw, subject, body}. The bare `from_` is the
+    lowercased SMTP address; `from_raw` preserves the "Name <addr@x>" form
+    so downstream code can extract a display name for the support queue UI.
+    Either `text` or `html` is acceptable for the body; HTML gets a naive
+    tag strip.
     """
     to = _first_address(payload.get("to") or payload.get("recipient") or "")
-    from_ = _first_address(payload.get("from") or payload.get("sender") or "")
+    from_raw_value = payload.get("from") or payload.get("sender") or ""
+    from_raw = from_raw_value[0] if isinstance(from_raw_value, list) and from_raw_value else from_raw_value
+    if not isinstance(from_raw, str):
+        from_raw = ""
+    from_ = _first_address(from_raw_value)
     subject = (payload.get("subject") or "").strip()[:200]
 
     body_text = (payload.get("text") or "").strip()
@@ -121,11 +131,23 @@ def parse_envelope(payload: dict[str, Any]) -> dict[str, Any]:
         body_text = _strip_html(body_html)
 
     body_text = _WS_RE.sub(" ", body_text).strip()[:_MAX_BODY_CHARS]
-    return {"to": to, "from_": from_, "subject": subject, "body": body_text}
+    return {
+        "to": to,
+        "from_": from_,
+        "from_raw": from_raw,
+        "subject": subject,
+        "body": body_text,
+    }
 
 
 async def ingest_email(envelope: dict[str, Any]) -> dict[str, Any]:
-    """Find the org by inbound address, create a document, queue ingestion."""
+    """Find the org by inbound address and queue classification.
+
+    The webhook handler stays fast: signature verify + org lookup + fan-out
+    to the classifier Inngest function. The classifier decides whether to
+    create a doc (knowledge) or open a support ticket (support/sales) or
+    drop the message (internal). See `support_functions.py` for routing.
+    """
     to_address = envelope.get("to") or ""
     if not to_address:
         return {"status": "ignored", "reason": "no_to_address"}
@@ -140,34 +162,27 @@ async def ingest_email(envelope: dict[str, Any]) -> dict[str, Any]:
 
     subject = envelope.get("subject") or "Forwarded email"
     from_ = envelope.get("from_") or "unknown sender"
-
-    # The text we hand the chunker: subject + from + body. The first two lines
-    # double as light metadata so retrieval can match on sender/subject too.
-    content = f"Subject: {subject}\nFrom: {from_}\n\n{body}"
-
-    # Dedupe key: subject + first 256 chars of body (cheap, near-perfect).
-    # Two forwards of the same email shouldn't appear twice in the brain.
+    # Idempotency key matches the dedupe sig used in the classifier and
+    # SupportResponseAgent — same forwarded email won't reroute twice.
     sig = hashlib.sha256(f"{subject}\n{body[:256]}".encode("utf-8")).hexdigest()[:24]
-
-    doc_id = await upsert_external_document(
-        org_id=org["id"],
-        source=SOURCE_TAG,
-        external_id=sig,
-        name=f"Email: {subject[:80]}" if subject else f"Email from {from_[:60]}",
-        file_type="txt",
-    )
 
     import inngest
     from app.inngest.client import get_inngest_client
     client = get_inngest_client()
     await client.send(
         inngest.Event(
-            name="doc/process-text",
-            data={"doc_id": doc_id, "org_id": org["id"], "text": content},
-            id=f"email-{doc_id}",
+            name="support/classify-inbound",
+            data={
+                "org_id": org["id"],
+                "from_email": from_,
+                "from_raw": envelope.get("from_raw"),
+                "subject": subject,
+                "body": body,
+            },
+            id=f"classify-{org['id']}-{sig}",
         )
     )
-    return {"status": "queued", "doc_id": doc_id, "org_id": org["id"]}
+    return {"status": "queued", "org_id": org["id"]}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

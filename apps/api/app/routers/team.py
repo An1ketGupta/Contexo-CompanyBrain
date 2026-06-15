@@ -56,12 +56,22 @@ async def get_team_activity(
         svc = get_service_client()
         users_res = await asyncio.to_thread(
             lambda: svc.table("users")
-            .select("id, display_name, email")
+            .select("id, display_name")
             .in_("id", user_ids)
             .execute()
         )
         for row in (users_res.data or []):
-            users_by_id[row["id"]] = row
+            users_by_id[row["id"]] = {"display_name": row.get("display_name"), "email": None}
+
+        # Email lives in auth.users — fetch per id via the Auth admin API.
+        for uid in user_ids:
+            try:
+                au = await asyncio.to_thread(lambda u=uid: svc.auth.admin.get_user_by_id(u))
+                email = getattr(getattr(au, "user", None), "email", None)
+                if email:
+                    users_by_id.setdefault(uid, {"display_name": None, "email": None})["email"] = email
+            except Exception as exc:
+                log.warning("team_activity_email_lookup_failed: %s", exc)
 
     out: list[dict[str, Any]] = []
     for row in feed:

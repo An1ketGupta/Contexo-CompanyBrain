@@ -28,7 +28,9 @@
       "Bash(.venv/Scripts/python -c \"from app.main import app; from app.routers import organizations, templates; from app.services.onboarding import get_onboarding_state, mark_dismissed; from app.services.llm.task_chain import _resolve_tag_scope; print\\('OK'\\)\")",
       "Read(//c/My_Folder/Harkirat_Master/WebDev/Projects/SaaS/NirnayaIQ/supabase/migrations/**)",
       "Read(//c/My_Folder/Harkirat_Master/WebDev/Projects/SaaS/NirnayaIQ/supabase/**)",
-      "Bash(git commit -m)"
+      "Bash(git commit -m)",
+      "Bash(git commit *)",
+      "Bash(python -c ' *)"
     ]
   }
 }

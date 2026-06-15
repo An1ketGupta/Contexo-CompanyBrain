@@ -817,6 +817,30 @@ async def update_message_feedback(
             metadata={"feedback": body.feedback},
         )
 
+    # Agent Day 15: fire the output-improvement loop on negative feedback.
+    # Idempotent on (message_id) — re-tapping thumbs-down won't re-analyse.
+    if body.feedback == "negative" and current_user.get("org_id"):
+        try:
+            import inngest as _inngest
+            from app.inngest.client import get_inngest_client as _client
+
+            await _client().send(
+                _inngest.Event(
+                    name="message/feedback-negative",
+                    data={
+                        "message_id": message_id,
+                        "org_id": current_user["org_id"],
+                    },
+                    id=f"feedback-negative-{message_id}",
+                )
+            )
+        except Exception as exc:
+            log.warning(
+                "feedback_negative_event_failed msg=%s err=%s",
+                message_id,
+                exc,
+            )
+
     return {"feedback": body.feedback}
 
 

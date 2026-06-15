@@ -120,6 +120,10 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     google_oauth_redirect_uri: str = "http://localhost:8000/integrations/drive/callback"
+    # Gmail OAuth lives on a distinct redirect URI so the same Google client
+    # can issue both Drive (org-level) and Gmail (per-user) tokens without the
+    # callback handler having to disambiguate provider from state alone.
+    gmail_oauth_redirect_uri: str = "http://localhost:8000/integrations/gmail/callback"
 
     # Notion — create an integration at https://notion.so/my-integrations
     # and a public OAuth app under "Settings → OAuth Domain & URIs".

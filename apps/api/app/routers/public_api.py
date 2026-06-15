@@ -1,27 +1,59 @@
-"""Public Developer API (Day 15 / #47).
+"""Public Developer API (Day 15 / #47, extended Agent Day 14).
 
 Surface:
-    * POST /v1/query              — run one chat turn, return text + sources
-    * GET  /v1/documents          — list documents
+    * POST /v1/query                       — run one chat turn, text + sources
+    * GET  /v1/documents                   — list documents
+    * GET  /v1/agents                      — list agent types + input schemas
+    * POST /v1/agents/{agent_type}/run     — trigger an agent run
+    * GET  /v1/agent-runs/{run_id}         — poll status of a triggered run
     * Settings endpoints (under /settings/api-keys) handle CRUD on the keys.
 
 Auth: Bearer cb_live_* token validated via app.services.api_keys.verify_key.
 Rate-limit: a per-key sliding window + the org's regular monthly chat quota.
 The chat quota lookup is identical to the dashboard's, so a customer doesn't
 get to bypass their plan by routing through the API.
+
+Agent triggers (Day 14):
+    * Accepts optional `Idempotency-Key` header — retrying with the same key
+      produces the same run_id (UUIDv5 over api_key + agent + key), so
+      BambooHR retries collide with their previous send instead of firing
+      duplicate onboardings.
+    * Accepts optional `approver_email` in the body — when set, creates an
+      approval row gated by an existing workspace member; the agent fires
+      only after they approve via web/email/Slack. The approver MUST be a
+      member of the same org; external approvals are out of scope.
+    * Accepts optional `webhook_url` — when set, the agent POSTs the result
+      back on completion with HMAC-SHA256 signature derived from the api_key.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+import uuid as _uuid
+from datetime import datetime, timezone
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 
 from app.database import get_service_client
 from app.errors import RateLimited
 from app.services.api_keys import ApiKeyContext, verify_key
+from app.services.approvals import (
+    mint_token,
+    validate_execution_action,
+)
+from app.services.agent_registry import (
+    AGENT_REGISTRY,
+    AgentInputError,
+    agent_registry_public_view,
+    dispatch_api_agent,
+    normalize_idempotency_key,
+    precreate_agent_run,
+    resolve_approver_user_id,
+    run_id_from_idempotency_key,
+    validate_agent_input,
+)
 from app.services.llm.task_chain import execute_task_blocking
 from app.services.rate_limit import (
     _monthly_check_and_increment,
@@ -183,3 +215,382 @@ async def public_list_documents(
 
     res = await asyncio.to_thread(_run)
     return {"documents": res.data or [], "limit": limit}
+
+
+# ── /v1/agents ──────────────────────────────────────────────────────────────
+
+
+@router.get("/agents")
+async def public_list_agents(
+    ctx: ApiKeyContext = Depends(get_api_context),
+) -> dict[str, Any]:
+    """Self-describing index of agent types triggerable via /v1/agents/{type}/run.
+
+    No quota burn — this is a read-only metadata endpoint that callers will
+    hit during integration setup.
+    """
+    return {"agents": agent_registry_public_view()}
+
+
+# ── /v1/agents/{agent_type}/run ─────────────────────────────────────────────
+
+
+class AgentTriggerRequest(BaseModel):
+    input: dict[str, Any] = Field(default_factory=dict)
+    output_channels: list[Literal["email", "slack", "notion"]] = Field(
+        default_factory=list
+    )
+    approver_email: str | None = Field(
+        default=None,
+        max_length=320,
+        description=(
+            "When set, the agent runs only after this workspace member approves "
+            "via the inbox/email/Slack. Must be an existing org member."
+        ),
+    )
+    webhook_url: HttpUrl | None = Field(
+        default=None,
+        description=(
+            "Optional callback URL. We POST agent.completed/agent.failed with "
+            "an HMAC-SHA256 signature header derived from your API key."
+        ),
+    )
+
+
+class AgentTriggerResponse(BaseModel):
+    agent_run_id: str
+    status: str  # 'running' | 'pending_approval'
+    estimated_completion_seconds: int
+    approval_id: str | None = None
+    poll_url: str
+
+
+@router.post(
+    "/agents/{agent_type}/run",
+    response_model=AgentTriggerResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def trigger_agent(
+    agent_type: str,
+    body: AgentTriggerRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ctx: ApiKeyContext = Depends(get_api_context),
+) -> AgentTriggerResponse:
+    await _enforce_api_quota(ctx)
+
+    # 1. Validate agent type + input against the registry.
+    spec = AGENT_REGISTRY.get(agent_type)
+    if not spec:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unknown agent type '{agent_type}'. "
+                f"Valid types: {', '.join(sorted(AGENT_REGISTRY.keys()))}"
+            ),
+        )
+
+    try:
+        clean_input = validate_agent_input(agent_type, body.input)
+    except AgentInputError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    # 2. Resolve idempotent run_id. If the caller supplied an Idempotency-Key
+    #    we derive a deterministic UUID from (api_key, agent_type, key) so
+    #    retries collapse into one agent_runs row. Otherwise a fresh uuid4.
+    idem_key = normalize_idempotency_key(idempotency_key)
+    if idem_key:
+        run_id = run_id_from_idempotency_key(
+            api_key_id=ctx.id, agent_type=agent_type, idem_key=idem_key
+        )
+        # Idempotent path: if we already have a row for this run_id, return
+        # its current state instead of re-firing. Same UX as Stripe.
+        existing = await _get_agent_run_row(run_id=run_id, org_id=ctx.org_id)
+        if existing:
+            return _agent_run_to_trigger_response(
+                run=existing, spec_seconds=spec.estimated_seconds
+            )
+    else:
+        run_id = str(_uuid.uuid4())
+
+    # Relative URL — we don't store the API base URL server-side. Callers
+    # already know the host they hit; appending it keeps integrations
+    # portable across staging/prod.
+    poll_url = f"/v1/agent-runs/{run_id}"
+
+    webhook_url_str = str(body.webhook_url) if body.webhook_url else None
+
+    # 3. Approval gate — if approver_email is set, route via the existing
+    #    approvals workflow with channel='agent'. Existing magic-link / Slack
+    #    / web resolve flows just work.
+    if body.approver_email:
+        approver_user_id = await resolve_approver_user_id(
+            org_id=ctx.org_id, approver_email=body.approver_email,
+        )
+        if not approver_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "approver_email must be an existing workspace member of "
+                    "this organisation. Invite them first, or omit the field "
+                    "to run without approval."
+                ),
+            )
+
+        # Pre-create the agent_runs row in `pending_approval` so the caller
+        # gets a pollable id immediately.
+        svc = get_service_client()
+        await precreate_agent_run(
+            run_id=run_id,
+            org_id=ctx.org_id,
+            agent_type=agent_type,
+            triggered_by="api",
+            triggered_by_user_id=None,
+            input_data={
+                **clean_input,
+                "_api_context": {
+                    "run_id": run_id,
+                    "webhook_url": webhook_url_str,
+                    "api_key_id": ctx.id,
+                },
+            },
+        )
+        await asyncio.to_thread(
+            lambda: svc.table("agent_runs")
+            .update({"status": "pending_approval"})
+            .eq("id", run_id)
+            .execute()
+        )
+
+        execution_action = validate_execution_action(
+            {
+                "channel": "agent",
+                "params": {
+                    "agent_type": agent_type,
+                    "agent_input": clean_input,
+                    "output_channels": list(body.output_channels),
+                    "webhook_url": webhook_url_str,
+                    "api_key_id": ctx.id,
+                    "run_id": run_id,
+                },
+            }
+        )
+
+        raw_token, token_hash, expires_at = mint_token()
+        approval_row = {
+            "org_id": ctx.org_id,
+            "message_id": None,
+            "requested_by": None,
+            "approver_id": approver_user_id,
+            "agent_type": agent_type,
+            "agent_input": clean_input,
+            "agent_run_id": run_id,
+            "api_key_id": ctx.id,
+            "execution_action": execution_action,
+            "preview_text": (
+                f"Agent: {agent_type}\n"
+                f"Input: {_short_preview(clean_input)}"
+            )[:2000],
+            "token_hash": token_hash,
+            "token_expires_at": expires_at.isoformat(),
+            "status": "pending",
+        }
+
+        try:
+            res = await asyncio.to_thread(
+                lambda: svc.table("approvals").insert(approval_row).execute()
+            )
+            approval_id = (res.data or [{}])[0].get("id")
+        except Exception as exc:
+            msg = str(exc).lower()
+            if (
+                "uq_approvals_pending_per_agent_approver" in msg
+                or "duplicate key" in msg
+            ):
+                # Same (agent_type, approver, input) already pending — fetch it.
+                existing = await asyncio.to_thread(
+                    lambda: svc.table("approvals")
+                    .select("id, agent_run_id")
+                    .eq("agent_type", agent_type)
+                    .eq("approver_id", approver_user_id)
+                    .eq("status", "pending")
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                row = (existing.data or [None])[0]
+                if not row:
+                    raise HTTPException(
+                        status_code=500, detail="approval_create_failed",
+                    ) from exc
+                approval_id = row["id"]
+                run_id = row.get("agent_run_id") or run_id
+            else:
+                log.exception("api_agent_approval_create_failed")
+                raise HTTPException(
+                    status_code=500, detail="approval_create_failed"
+                ) from exc
+
+        # Fire the existing approval-requested notification fan-out (email
+        # + Slack DM). The raw token rides on the event payload only — never
+        # persisted.
+        try:
+            import inngest
+            from app.inngest.client import get_inngest_client
+
+            client = get_inngest_client()
+            await client.send(
+                inngest.Event(
+                    name="approval/requested",
+                    data={
+                        "approval_id": approval_id,
+                        "org_id": ctx.org_id,
+                        "raw_token": raw_token,
+                    },
+                    id=f"approval-requested-{approval_id}",
+                )
+            )
+        except Exception as exc:
+            log.warning(
+                "api_agent_approval_notify_failed approval=%s err=%s",
+                approval_id,
+                exc,
+            )
+
+        return AgentTriggerResponse(
+            agent_run_id=run_id,
+            status="pending_approval",
+            estimated_completion_seconds=0,
+            approval_id=approval_id,
+            poll_url=poll_url,
+        )
+
+    # 4. No approver — pre-create the agent_runs row and fire immediately.
+    await precreate_agent_run(
+        run_id=run_id,
+        org_id=ctx.org_id,
+        agent_type=agent_type,
+        triggered_by="api",
+        triggered_by_user_id=None,
+        input_data={
+            **clean_input,
+            "_api_context": {
+                "run_id": run_id,
+                "webhook_url": webhook_url_str,
+                "api_key_id": ctx.id,
+            },
+        },
+    )
+
+    try:
+        await dispatch_api_agent(
+            org_id=ctx.org_id,
+            agent_type=agent_type,
+            agent_input=clean_input,
+            output_channels=list(body.output_channels),
+            webhook_url=webhook_url_str,
+            api_key_id=ctx.id,
+            approval_id=None,
+            run_id=run_id,
+        )
+    except AgentInputError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        log.exception("api_agent_dispatch_failed agent=%s", agent_type)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Couldn't queue the agent. Try again.",
+        ) from exc
+
+    return AgentTriggerResponse(
+        agent_run_id=run_id,
+        status="running",
+        estimated_completion_seconds=spec.estimated_seconds,
+        approval_id=None,
+        poll_url=poll_url,
+    )
+
+
+# ── /v1/agent-runs/{run_id} ─────────────────────────────────────────────────
+
+
+class AgentRunPublicView(BaseModel):
+    id: str
+    agent_type: str
+    status: str
+    output: dict[str, Any]
+    error: str | None
+    steps: list[dict[str, Any]]
+    created_at: str
+    completed_at: str | None
+    approval_id: str | None
+
+
+@router.get("/agent-runs/{run_id}", response_model=AgentRunPublicView)
+async def get_agent_run(
+    run_id: str,
+    ctx: ApiKeyContext = Depends(get_api_context),
+) -> AgentRunPublicView:
+    row = await _get_agent_run_row(run_id=run_id, org_id=ctx.org_id)
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="agent_run_not_found",
+        )
+    return AgentRunPublicView(
+        id=row["id"],
+        agent_type=row["agent_type"],
+        status=row["status"],
+        output=row.get("output") or {},
+        error=row.get("error"),
+        steps=row.get("steps") or [],
+        created_at=row["created_at"],
+        completed_at=row.get("completed_at"),
+        approval_id=row.get("approval_id"),
+    )
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+
+async def _get_agent_run_row(*, run_id: str, org_id: str) -> dict[str, Any] | None:
+    svc = get_service_client()
+    res = await asyncio.to_thread(
+        lambda: svc.table("agent_runs")
+        .select(
+            "id, agent_type, status, output, error, steps, created_at, "
+            "completed_at, approval_id"
+        )
+        .eq("id", run_id)
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    return res.data if (res and res.data) else None
+
+
+def _agent_run_to_trigger_response(
+    *, run: dict[str, Any], spec_seconds: int
+) -> AgentTriggerResponse:
+    poll_url = f"/v1/agent-runs/{run['id']}"
+    return AgentTriggerResponse(
+        agent_run_id=run["id"],
+        status="pending_approval"
+        if run["status"] == "pending_approval"
+        else ("running" if run["status"] == "running" else run["status"]),
+        estimated_completion_seconds=0 if run["status"] != "running" else spec_seconds,
+        approval_id=run.get("approval_id"),
+        poll_url=poll_url,
+    )
+
+
+def _short_preview(value: dict[str, Any], limit: int = 240) -> str:
+    """Compact human preview of the input dict for the approval inbox card."""
+    parts: list[str] = []
+    for k, v in value.items():
+        if isinstance(v, (str, int, float, bool)):
+            parts.append(f"{k}={v}")
+        if sum(len(p) for p in parts) > limit:
+            break
+    out = ", ".join(parts)
+    return out[: limit - 1] + "…" if len(out) > limit else out
