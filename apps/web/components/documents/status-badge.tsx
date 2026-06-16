@@ -7,9 +7,10 @@ import type { DocumentStatus } from "@/lib/types";
 interface StatusBadgeProps {
   status: DocumentStatus;
   embeddingStats?: { embedded: number; failed: number; total: number } | null;
+  errorReason?: string | null;
 }
 
-export function StatusBadge({ status, embeddingStats }: StatusBadgeProps) {
+export function StatusBadge({ status, embeddingStats, errorReason }: StatusBadgeProps) {
   // A "ready" doc with non-zero failed chunks is partial — surface it with an
   // amber warning so users notice the missing context before they complain.
   if (
@@ -54,7 +55,7 @@ export function StatusBadge({ status, embeddingStats }: StatusBadgeProps) {
       );
     case "failed":
       return (
-        <Badge variant="destructive">
+        <Badge variant="destructive" title={errorReason || undefined}>
           <XCircle />
           Failed
         </Badge>

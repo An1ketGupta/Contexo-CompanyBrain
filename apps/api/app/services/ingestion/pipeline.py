@@ -114,7 +114,10 @@ async def process_document(
         raise
     except Exception as exc:
         log.exception("[%s] pipeline failed", doc_id)
-        raise PipelineError(f"Ingestion failed: {type(exc).__name__}: {exc}") from exc
+        raise PipelineError(
+            "Something went wrong while processing this file. "
+            "Try re-uploading; if it keeps failing the file may be corrupt."
+        ) from exc
 
 
 @observe(name="retry_failed_chunks")

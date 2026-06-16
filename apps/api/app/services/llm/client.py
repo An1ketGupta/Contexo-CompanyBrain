@@ -1,16 +1,3 @@
-"""LLM adapter — provider-agnostic interface, Google Gemini as the only impl today.
-
-Uses the new `google.genai` SDK (matches embedder.py). The legacy
-`google.generativeai` SDK is end-of-life as of 2025; do not introduce it.
-
-Tool-use protocol:
-    1. Caller passes messages + a tool catalog (e.g. search_company_knowledge).
-    2. We submit to Gemini with automatic_function_calling DISABLED — we want
-       to execute tools ourselves so we can run them in parallel, log them,
-       enforce caps, and surface progress via SSE.
-    3. Response either contains tool_calls (we execute, append ToolResult,
-       call again) or text (we're done — either return or stream final).
-"""
 from __future__ import annotations
 
 import asyncio
@@ -61,7 +48,7 @@ SEARCH_TOOL_DECL = gt.FunctionDeclaration(
 SEARCH_TOOL = gt.Tool(function_declarations=[SEARCH_TOOL_DECL])
 
 
-SYSTEM_PROMPT = """You are Company Brain, an AI assistant that helps employees of this company execute real work tasks — writing emails, drafting job descriptions, creating Slack announcements, summarizing policies, answering questions — using only the company's internal knowledge.
+SYSTEM_PROMPT = """You are NirnayaIQ, an AI assistant that helps employees of this company execute real work tasks — writing emails, drafting job descriptions, creating Slack announcements, summarizing policies, answering questions — using only the company's internal knowledge.
 
 # How you work
 

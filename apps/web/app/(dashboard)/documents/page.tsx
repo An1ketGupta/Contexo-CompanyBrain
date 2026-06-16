@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FileText } from "lucide-react";
 import { UploadDialog } from "@/components/documents/upload-dialog";
+import { DOCUMENTS_REFRESH_EVENT } from "@/components/documents/upload-context";
 import { DocumentCardList } from "@/components/documents/document-card-list";
 import { DocumentTable } from "@/components/documents/document-table";
 import { DocumentFiltersBar } from "@/components/documents/document-filters";
@@ -43,6 +44,16 @@ export default function DocumentsPage() {
     silentToasts: true,
   });
 
+  // Background uploads (kicked off from this page or any other dashboard
+  // route) dispatch `documents:refresh` after each successful complete call.
+  // Realtime usually beats this to the punch, but the explicit refetch keeps
+  // the row visible immediately even if the Realtime channel is reconnecting.
+  useEffect(() => {
+    const handler = () => refresh();
+    window.addEventListener(DOCUMENTS_REFRESH_EVENT, handler);
+    return () => window.removeEventListener(DOCUMENTS_REFRESH_EVENT, handler);
+  }, [refresh]);
+
   const filtering = isFiltering(filters);
   const isEmpty = !loading && !error && documents.length === 0;
 
@@ -57,7 +68,7 @@ export default function DocumentsPage() {
             Everything your AI knows about your company.
           </p>
         </div>
-        <UploadDialog onUploadComplete={refresh} />
+        <UploadDialog />
       </div>
 
       <DocumentFiltersBar

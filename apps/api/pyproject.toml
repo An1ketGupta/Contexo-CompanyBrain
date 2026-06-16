@@ -33,3 +33,11 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "httpx>=0.28.1",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "integration: requires live Supabase + Gemini API (excluded from default run)",
+]
+addopts = "-m 'not integration'"

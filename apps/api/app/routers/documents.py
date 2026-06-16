@@ -2,7 +2,6 @@ import asyncio
 import logging
 import re
 import uuid
-from datetime import datetime
 from typing import Any, Literal
 
 import inngest
@@ -422,8 +421,6 @@ async def list_documents(
     status_filter: DocumentStatus | None = Query(None, alias="status"),
     file_type: DocumentFileType | None = Query(None),
     tag: list[str] | None = Query(None, description="Repeat to AND-filter multiple tags."),
-    date_from: datetime | None = Query(None),
-    date_to: datetime | None = Query(None),
     search: str | None = Query(None, max_length=120, description="Case-insensitive substring match on name."),
     sort_by: DocumentSortField = Query("created_at"),
     sort_dir: DocumentSortDir = Query("desc"),
@@ -461,10 +458,6 @@ async def list_documents(
                 # `cs` on a TEXT[] column → array contains. We pass the literal
                 # PG array form; supabase-py forwards it verbatim.
                 q = q.contains("tags", cleaned)
-        if date_from:
-            q = q.gte("created_at", date_from.isoformat())
-        if date_to:
-            q = q.lte("created_at", date_to.isoformat())
         if search:
             # The user typed a substring; we escape PostgREST's special chars
             # so a user search for "a,b" doesn't break the query.
@@ -577,8 +570,13 @@ async def reprocess_document(
         .execute()
     )
 
+    import time
     await _trigger_processing(
-        doc_id, org_id, result.data["file_path"], result.data["file_type"]
+        doc_id,
+        org_id,
+        result.data["file_path"],
+        result.data["file_type"],
+        attempt_key=str(int(time.time() // 60)),
     )
     return {"doc_id": doc_id, "status": "pending", "mode": "full"}
 
@@ -1098,12 +1096,24 @@ async def delete_document(
 
 # ── Inngest trigger ───────────────────────────────────────────────────────────
 
-async def _trigger_processing(doc_id: str, org_id: str, file_path: str, file_type: str) -> None:
+async def _trigger_processing(
+    doc_id: str,
+    org_id: str,
+    file_path: str,
+    file_type: str,
+    *,
+    attempt_key: str | None = None,
+) -> None:
     """Emit the doc/uploaded event. Inngest's process-document function picks it up.
 
     Uses idempotency_key on the event so a duplicate user click doesn't kick off
-    a second pipeline run (Inngest deduplicates within a 24h window).
+    a second pipeline run (Inngest deduplicates within a 24h window). Retry
+    callers pass `attempt_key` (e.g. a unix-minute) so deliberate re-runs aren't
+    silently dropped by that same dedup window.
     """
+    event_id = (
+        f"doc-uploaded-{doc_id}-{attempt_key}" if attempt_key else f"doc-uploaded-{doc_id}"
+    )
     client = get_inngest_client()
     try:
         await client.send(
@@ -1115,7 +1125,7 @@ async def _trigger_processing(doc_id: str, org_id: str, file_path: str, file_typ
                     "file_path": file_path,
                     "file_type": file_type,
                 },
-                id=f"doc-uploaded-{doc_id}",
+                id=event_id,
             )
         )
     except Exception as exc:

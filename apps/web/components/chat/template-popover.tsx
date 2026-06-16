@@ -135,7 +135,7 @@ export function TemplatePopover({ onSelect, trigger }: Props) {
       {open && (
         <div
           ref={panelRef}
-          className="absolute bottom-full left-0 z-30 mb-2 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
+          className="absolute bottom-full left-0 z-30 mb-2 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-background shadow-lg"
         >
           <div className="border-b border-border p-3">
             <p className="mb-2 text-sm font-semibold">Templates</p>

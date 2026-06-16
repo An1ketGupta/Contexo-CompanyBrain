@@ -1,16 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, Search, Tag as TagIcon, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Search, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
 import { useDebounced } from "@/hooks/use-debounced";
 import {
   DEFAULT_FILTERS,
   isFiltering,
-  useDocumentTags,
   type DocumentFilters,
 } from "@/hooks/use-documents";
 
@@ -68,23 +66,13 @@ export function DocumentFiltersBar({
     setSearchInput(filters.search);
   }, [filters.search]);
 
-  const { tags: allTags } = useDocumentTags();
-
-  const toggleTag = (tag: string) => {
-    const exists = filters.tags.includes(tag);
-    onChange({
-      ...filters,
-      tags: exists ? filters.tags.filter((t) => t !== tag) : [...filters.tags, tag],
-    });
-  };
-
   const active = isFiltering(filters);
   const showFilteredCount = active || totalShown !== totalAvailable;
 
   return (
-    <div className="mb-3 flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-44 max-w-72">
+    <div className="mb-3 flex w-full flex-col gap-2">
+      <div className="flex w-full flex-wrap items-center gap-2">
+        <div className="relative min-w-64 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
             value={searchInput}
@@ -116,23 +104,6 @@ export function DocumentFiltersBar({
           options={TYPE_OPTIONS}
           aria-label="Filter by file type"
         />
-
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-muted-foreground">From</span>
-          <Input
-            type="date"
-            value={filters.date_from}
-            onChange={(e) => onChange({ ...filters, date_from: e.target.value })}
-            className="h-9 w-36"
-          />
-          <span className="text-xs text-muted-foreground">to</span>
-          <Input
-            type="date"
-            value={filters.date_to}
-            onChange={(e) => onChange({ ...filters, date_to: e.target.value })}
-            className="h-9 w-36"
-          />
-        </div>
 
         <div className="ml-auto flex items-center gap-1.5">
           <NativeSelect
@@ -172,41 +143,6 @@ export function DocumentFiltersBar({
           )}
         </div>
       </div>
-
-      {allTags.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            <TagIcon className="h-3 w-3" />
-            Tags
-          </span>
-          {allTags.slice(0, 24).map((t) => {
-            const active = filters.tags.includes(t.tag);
-            return (
-              <button
-                key={t.tag}
-                type="button"
-                onClick={() => toggleTag(t.tag)}
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
-                  active
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground",
-                )}
-              >
-                {t.tag}
-                <span
-                  className={cn(
-                    "ml-0.5 tabular-nums",
-                    active ? "text-primary-foreground/80" : "text-muted-foreground/70",
-                  )}
-                >
-                  {t.count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
 
       {showFilteredCount && (
         <div className="text-xs text-muted-foreground">

@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { MessageSquare, MoreVertical, RefreshCw, Trash2 } from "lucide-react";
+import {
+  AlertCircle,
+  MessageSquare,
+  MoreVertical,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import { formatDistanceToNow } from "@/lib/date";
 import type { Document } from "@/lib/types";
 import {
@@ -114,6 +120,20 @@ export function DocumentCardList({
   );
 }
 
+function extractErrorReason(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const v = (metadata as Record<string, unknown>).error_reason;
+  if (typeof v !== "string" || !v.trim()) return null;
+  let msg = v
+    .trim()
+    .replace(/^Ingestion failed:\s*[A-Za-z_]+Error:\s*/i, "")
+    .replace(/^Ingestion failed:\s*/i, "")
+    .replace(/^Could not parse document:\s*/i, "");
+  msg = msg.charAt(0).toUpperCase() + msg.slice(1);
+  if (!/[.!?]$/.test(msg)) msg += ".";
+  return msg;
+}
+
 function DocumentCard({
   doc,
   onDelete,
@@ -124,6 +144,7 @@ function DocumentCard({
   onRetry: () => void;
 }) {
   const tags = doc.tags ?? [];
+  const errorReason = extractErrorReason(doc.metadata);
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border bg-background p-3">
       <FileIcon type={doc.file_type} className="h-5 w-5 shrink-0" />
@@ -132,10 +153,16 @@ function DocumentCard({
           {doc.name}
         </p>
         <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-          <StatusBadge status={doc.status} />
+          <StatusBadge status={doc.status} errorReason={errorReason} />
           <span>·</span>
           <span>{formatDistanceToNow(doc.created_at)}</span>
         </div>
+        {doc.status === "failed" && errorReason && (
+          <div className="mt-1 flex items-start gap-1.5 text-[11px] leading-snug text-destructive/80">
+            <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+            <span className="line-clamp-2">{errorReason}</span>
+          </div>
+        )}
         {tags.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1">
             {tags.slice(0, 3).map((t) => (

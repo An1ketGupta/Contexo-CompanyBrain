@@ -357,7 +357,7 @@ async def slack_events(
     # form-urlencoded slash command
     parsed = parse_qs(body.decode("utf-8"))
     command = (parsed.get("command") or [""])[0]
-    if command != "/brain":
+    if command not in ("/brain", "/ani"):
         return {"text": "Unknown command."}
 
     team_id = (parsed.get("team_id") or [""])[0]

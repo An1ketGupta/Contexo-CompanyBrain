@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  AlertCircle,
   ChevronDown,
   ChevronRight,
   Loader2,
@@ -56,6 +57,25 @@ function extractEmbeddingStats(metadata: unknown): EmbeddingStats | null {
 function hasFailedChunks(metadata: unknown): boolean {
   const s = extractEmbeddingStats(metadata);
   return !!s && s.failed > 0;
+}
+
+function extractErrorReason(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const v = (metadata as Record<string, unknown>).error_reason;
+  if (typeof v !== "string" || !v.trim()) return null;
+  return prettifyErrorReason(v.trim());
+}
+
+// Strip Python-style traceback prefixes ("Ingestion failed: ValueError: …",
+// "Could not parse document: …") so the user sees a sentence, not a stacktrace.
+function prettifyErrorReason(raw: string): string {
+  let msg = raw
+    .replace(/^Ingestion failed:\s*[A-Za-z_]+Error:\s*/i, "")
+    .replace(/^Ingestion failed:\s*/i, "")
+    .replace(/^Could not parse document:\s*/i, "");
+  msg = msg.charAt(0).toUpperCase() + msg.slice(1);
+  if (!/[.!?]$/.test(msg)) msg += ".";
+  return msg;
 }
 
 function formatSize(bytes: number | null): string {
@@ -289,17 +309,31 @@ function Row({
         {doc.status === "processing" ? (
           <ProcessingIndicator startedAt={doc.created_at} />
         ) : (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <StatusBadge
-              status={doc.status}
-              embeddingStats={extractEmbeddingStats(doc.metadata)}
-            />
-            {doc.status === "ready" && doc.health_label ? (
-              <HealthBadge
-                label={doc.health_label}
-                score={doc.health_score ?? null}
+          <div className="flex flex-col gap-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <StatusBadge
+                status={doc.status}
+                embeddingStats={extractEmbeddingStats(doc.metadata)}
+                errorReason={extractErrorReason(doc.metadata)}
               />
-            ) : null}
+              {doc.status === "ready" && doc.health_label ? (
+                <HealthBadge
+                  label={doc.health_label}
+                  score={doc.health_score ?? null}
+                />
+              ) : null}
+            </div>
+            {doc.status === "failed" && extractErrorReason(doc.metadata) && (
+              <div
+                className="flex max-w-[18rem] items-start gap-1.5 text-[11px] leading-snug text-destructive/80"
+                title={extractErrorReason(doc.metadata) ?? undefined}
+              >
+                <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+                <span className="line-clamp-2">
+                  {extractErrorReason(doc.metadata)}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </td>

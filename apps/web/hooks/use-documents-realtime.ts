@@ -20,6 +20,7 @@ interface RealtimeHandlers {
 interface PendingToast {
   name: string;
   kind: "ready" | "failed";
+  reason?: string | null;
 }
 
 /**
@@ -119,11 +120,19 @@ export function useDocumentsRealtime({
           if (payload.eventType === "UPDATE") {
             const prev = lastStatusRef.current.get(row.id);
             if (prev !== row.status) {
+              const reason =
+                row.metadata &&
+                typeof row.metadata === "object" &&
+                typeof (row.metadata as Record<string, unknown>).error_reason ===
+                  "string"
+                  ? ((row.metadata as Record<string, unknown>)
+                      .error_reason as string)
+                  : null;
               const pending: PendingToast | null =
                 row.status === "ready" && prev !== "ready"
                   ? { name: row.name, kind: "ready" }
                   : row.status === "failed" && prev !== "failed"
-                    ? { name: row.name, kind: "failed" }
+                    ? { name: row.name, kind: "failed", reason }
                     : null;
               if (pending && !silentToastsRef.current) {
                 if (
@@ -168,6 +177,20 @@ function emitDocStatusToast(pending: PendingToast) {
       duration: 8000,
     });
   } else {
-    toast.error(`"${pending.name}" failed to process. Try re-uploading.`);
+    const reason = pending.reason
+      ? (() => {
+          let m = pending.reason
+            .replace(/^Ingestion failed:\s*[A-Za-z_]+Error:\s*/i, "")
+            .replace(/^Ingestion failed:\s*/i, "")
+            .replace(/^Could not parse document:\s*/i, "");
+          m = m.charAt(0).toUpperCase() + m.slice(1);
+          if (!/[.!?]$/.test(m)) m += ".";
+          return m;
+        })()
+      : "Try re-uploading.";
+    toast.error(`"${pending.name}" failed to process.`, {
+      description: reason,
+      duration: 10000,
+    });
   }
 }

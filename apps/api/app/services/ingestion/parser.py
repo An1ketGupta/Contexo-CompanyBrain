@@ -81,6 +81,19 @@ def _parse_pdf(file_bytes: bytes) -> Iterator[RawSegment]:
     except Exception as exc:
         raise ParseError(f"Failed to open PDF: {exc}") from exc
 
+    # Password-protected PDFs (very common for government IDs like Aadhar/PAN)
+    # surface as opaque ValueErrors deep inside PyMuPDF's text extraction.
+    # Catch up front so the user sees an actionable message instead.
+    if getattr(doc, "needs_pass", False) or getattr(doc, "is_encrypted", False):
+        try:
+            doc.close()
+        except Exception:
+            pass
+        raise ParseError(
+            "This PDF is password-protected or encrypted. "
+            "Please upload an unprotected copy."
+        )
+
     try:
         body_size = _detect_body_font_size(doc)
         current_heading: str | None = None

@@ -17,8 +17,6 @@ export interface DocumentFilters {
   file_type: string;     // "" | pdf | docx | txt | md
   tags: string[];
   search: string;
-  date_from: string;     // YYYY-MM-DD or ""
-  date_to: string;
   sort_by: "created_at" | "name" | "file_size_bytes";
   sort_dir: "asc" | "desc";
 }
@@ -28,8 +26,6 @@ export const DEFAULT_FILTERS: DocumentFilters = {
   file_type: "",
   tags: [],
   search: "",
-  date_from: "",
-  date_to: "",
   sort_by: "created_at",
   sort_dir: "desc",
 };
@@ -39,8 +35,6 @@ export function isFiltering(f: DocumentFilters): boolean {
     !!f.status ||
     !!f.file_type ||
     !!f.search ||
-    !!f.date_from ||
-    !!f.date_to ||
     f.tags.length > 0 ||
     f.sort_by !== "created_at" ||
     f.sort_dir !== "desc"
@@ -52,20 +46,28 @@ function buildKey(filters: DocumentFilters): string {
   if (filters.status) params.set("status", filters.status);
   if (filters.file_type) params.set("file_type", filters.file_type);
   if (filters.search) params.set("search", filters.search);
-  if (filters.date_from) params.set("date_from", filters.date_from);
-  if (filters.date_to) {
-    // Inclusive end-of-day: the API treats `date_to` as <= cutoff, and a date
-    // input "2024-02-15" becomes 00:00 UTC. Bump to 23:59 so the natural
-    // "include this day" semantics hold.
-    const d = new Date(`${filters.date_to}T23:59:59Z`);
-    if (!Number.isNaN(d.getTime())) params.set("date_to", d.toISOString());
-  }
   for (const t of filters.tags) params.append("tag", t);
   params.set("sort_by", filters.sort_by);
   params.set("sort_dir", filters.sort_dir);
   params.set("limit", "200");
   const qs = params.toString();
   return `/api/documents${qs ? `?${qs}` : ""}`;
+}
+
+// Secondary key: same filters but no search term, exact tag match on the
+// search term instead. Only active when search is non-empty.
+function buildTagSearchKey(filters: DocumentFilters): string | null {
+  if (!filters.search) return null;
+  const normalised = filters.search.trim().toLowerCase();
+  if (!normalised) return null;
+  const params = new URLSearchParams();
+  if (filters.status) params.set("status", filters.status);
+  if (filters.file_type) params.set("file_type", filters.file_type);
+  params.append("tag", normalised);
+  params.set("sort_by", filters.sort_by);
+  params.set("sort_dir", filters.sort_dir);
+  params.set("limit", "200");
+  return `/api/documents?${params.toString()}`;
 }
 
 const fetcher = async (url: string): Promise<DocumentsResponse> => {
@@ -87,17 +89,36 @@ const tagsFetcher = async (url: string): Promise<{ tags: DocumentTag[] }> => {
 
 export function useDocuments(filters: DocumentFilters = DEFAULT_FILTERS) {
   const key = useMemo(() => buildKey(filters), [filters]);
+  const tagKey = useMemo(() => buildTagSearchKey(filters), [filters]);
+
   const { data, error, isLoading, mutate } = useSWR<DocumentsResponse, ApiError>(
     key,
     fetcher,
-    {
-      revalidateOnFocus: true,
-      keepPreviousData: true,
-    },
+    { revalidateOnFocus: true, keepPreviousData: true },
   );
 
-  const documents = data?.documents ?? [];
-  const total = data?.total ?? 0;
+  // Secondary fetch: tag-exact matches for the search term. Runs in parallel
+  // with the name search; results are appended after name matches.
+  const { data: tagData } = useSWR<DocumentsResponse, ApiError>(
+    tagKey,
+    fetcher,
+    { revalidateOnFocus: false, keepPreviousData: true },
+  );
+
+  const documents = useMemo(() => {
+    const nameMatches = data?.documents ?? [];
+    if (!tagData?.documents?.length) return nameMatches;
+    // Append tag-only matches that didn't appear in the name search.
+    const seen = new Set(nameMatches.map((d) => d.id));
+    const tagOnly = tagData.documents.filter((d) => !seen.has(d.id));
+    return [...nameMatches, ...tagOnly];
+  }, [data, tagData]);
+
+  const total = (data?.total ?? 0) + (tagData?.documents
+    ? tagData.documents.filter(
+        (d) => !(data?.documents ?? []).some((n) => n.id === d.id),
+      ).length
+    : 0);
 
   const refresh = useCallback(() => mutate(), [mutate]);
 

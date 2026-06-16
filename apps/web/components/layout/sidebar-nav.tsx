@@ -19,6 +19,7 @@ import {
   Settings,
   Shield,
   ShieldCheck,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/hooks/use-user";
@@ -35,6 +36,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/chat/meeting-prep", label: "Meeting prep", icon: CalendarDays },
   { href: "/documents", label: "Documents", icon: FileText },
+  { href: "/activity", label: "Team activity", icon: Users },
   { href: "/approvals", label: "Approvals", icon: CheckCircle2 },
   { href: "/insights", label: "Insights", icon: LineChart, adminOnly: true },
   {

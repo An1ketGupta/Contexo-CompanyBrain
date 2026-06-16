@@ -30,7 +30,10 @@
       "Read(//c/My_Folder/Harkirat_Master/WebDev/Projects/SaaS/NirnayaIQ/supabase/**)",
       "Bash(git commit -m)",
       "Bash(git commit *)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\My_Folder\\\\Harkirat_Master\\\\WebDev\\\\Projects\\\\SaaS\\\\NirnayaIQ\\\\Product\" -Recurse -Directory -Exclude node_modules,.next,__pycache__,.git,.venv,venv,dist,build)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Remove-Item *)"
     ]
   }
 }

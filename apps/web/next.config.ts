@@ -36,6 +36,10 @@ export default sentryOrg && sentryProject && sentryAuthToken
       // Tunnels Sentry requests through /monitoring to dodge ad-blockers that
       // false-positive on sentry.io. Optional but standard practice now.
       tunnelRoute: "/monitoring",
-      disableLogger: true,
+      webpack: {
+        treeshake: {
+          removeDebugLogging: true,
+        },
+      },
     })
   : nextConfig;
