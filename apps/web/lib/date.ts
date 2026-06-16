@@ -27,3 +27,43 @@ export function formatDistanceToNow(input: string | Date): string {
   }
   return rtf.format(0, "second");
 }
+
+/**
+ * Compact relative time ("5m", "3h", "2d", "1w"), then switches to absolute
+ * "Mar 14" past 30 days. Use in table/list cells where horizontal space is
+ * scarce — pair with `formatAbsolute` in a `title` for the full timestamp.
+ */
+export function formatRelativeShort(input: string | Date): string {
+  const date = typeof input === "string" ? new Date(input) : input;
+  if (Number.isNaN(date.getTime())) return "—";
+
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d`;
+  if (seconds < 2592000) return `${Math.floor(seconds / 604800)}w`;
+
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+}
+
+/**
+ * Full, human-readable timestamp ("Jun 15, 2026, 4:32 PM"). Use as the hover
+ * tooltip companion to `formatRelativeShort`.
+ */
+export function formatAbsolute(input: string | Date): string {
+  const date = typeof input === "string" ? new Date(input) : input;
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}

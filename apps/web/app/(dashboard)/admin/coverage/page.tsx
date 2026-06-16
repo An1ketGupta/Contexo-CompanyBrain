@@ -6,13 +6,13 @@ import useSWR from "swr";
 import {
   AlertTriangle,
   Check,
-  Loader2,
   RefreshCw,
   Sparkles,
   Target,
   X,
 } from "lucide-react";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "@/lib/date";
 
@@ -338,9 +338,36 @@ function NoDocsEmpty() {
 
 function CoverageSkeleton() {
   return (
-    <div className="flex items-center justify-center rounded-xl border border-dashed border-border py-16 text-sm text-muted-foreground">
-      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-      Computing coverage…
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div
+            key={i}
+            className="space-y-2 rounded-lg border border-border bg-card p-4"
+          >
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="h-8 w-16" />
+          </div>
+        ))}
+      </div>
+      <div className="space-y-2">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div
+            key={i}
+            className="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3.5"
+          >
+            <Skeleton className="mt-0.5 h-5 w-5 shrink-0 rounded-full" />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Skeleton
+                className="h-3.5"
+                style={{ width: `${30 + ((i * 11) % 25)}%` }}
+              />
+              <Skeleton className="h-2.5 w-3/4" />
+            </div>
+            <Skeleton className="h-7 w-20 rounded-md" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

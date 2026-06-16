@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import useSWR from "swr";
-import { AlertTriangle, FileText, Loader2 } from "lucide-react";
+import { AlertTriangle, FileText } from "lucide-react";
 
 import { StatCard } from "@/components/admin/stat-card";
 import { HealthBadge, type HealthLabel } from "@/components/documents/health-badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatDistanceToNow } from "@/lib/date";
 import type { DocumentFileType } from "@/lib/types";
 
@@ -76,14 +77,52 @@ export default function KnowledgeHealthPage() {
       ) : null}
 
       {isLoading || !data ? (
-        <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Loading…
-        </div>
+        <KnowledgeHealthSkeleton />
       ) : (
         <KnowledgeHealthBody data={data} />
       )}
     </div>
+  );
+}
+
+function KnowledgeHealthSkeleton() {
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div
+            key={i}
+            className="space-y-2 rounded-lg border border-border bg-card p-4"
+          >
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-8 w-12" />
+            <Skeleton className="h-2.5 w-20" />
+          </div>
+        ))}
+      </div>
+      <section className="space-y-2">
+        <Skeleton className="h-4 w-56" />
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3"
+            >
+              <Skeleton className="h-4 w-4 rounded" />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <Skeleton
+                  className="h-3.5"
+                  style={{ width: `${40 + ((i * 13) % 30)}%` }}
+                />
+                <Skeleton className="h-2.5 w-2/3" />
+              </div>
+              <Skeleton className="h-5 w-16 rounded-full" />
+              <Skeleton className="h-3 w-12" />
+            </div>
+          ))}
+        </div>
+      </section>
+    </>
   );
 }
 

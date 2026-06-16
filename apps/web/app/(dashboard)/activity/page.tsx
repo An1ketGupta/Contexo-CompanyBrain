@@ -1,8 +1,9 @@
 "use client";
 
 import useSWR from "swr";
-import { Loader2, Users } from "lucide-react";
+import { Users } from "lucide-react";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatDistanceToNow } from "@/lib/date";
 
 interface ActivityItem {
@@ -47,10 +48,7 @@ export default function TeamActivityPage() {
       </header>
 
       {isLoading ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading…
-        </div>
+        <ActivitySkeleton />
       ) : error ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive-soft px-4 py-3 text-sm text-destructive">
           {(error as Error).message}
@@ -79,6 +77,25 @@ export default function TeamActivityPage() {
         </ul>
       )}
     </div>
+  );
+}
+
+function ActivitySkeleton() {
+  return (
+    <ul className="divide-y divide-border rounded-lg border border-border bg-background">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <li key={i} className="flex items-start gap-3 px-4 py-3">
+          <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <Skeleton
+              className="h-3.5"
+              style={{ width: `${55 + ((i * 13) % 35)}%` }}
+            />
+            <Skeleton className="h-2.5 w-20" />
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
 

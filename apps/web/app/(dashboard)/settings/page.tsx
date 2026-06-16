@@ -50,8 +50,21 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+      <div className="mx-auto max-w-3xl space-y-8 p-6 md:p-8">
+        <div className="space-y-2">
+          <Skeleton className="h-6 w-28" />
+          <Skeleton className="h-3.5 w-80" />
+        </div>
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div
+            key={i}
+            className="space-y-4 rounded-lg border border-border bg-background p-5"
+          >
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="h-9 w-full rounded-md" />
+            <Skeleton className="h-9 w-2/3 rounded-md" />
+          </div>
+        ))}
       </div>
     );
   }
@@ -471,9 +484,6 @@ function TeamCard({
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"admin" | "member">("member");
   const [roleTitle, setRoleTitle] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [managerUserId, setManagerUserId] = useState("");
-  const [showOnboarding, setShowOnboarding] = useState(false);
   const [sending, setSending] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
   const [removeBusy, setRemoveBusy] = useState(false);
@@ -484,6 +494,11 @@ function TeamCard({
       toast.error("Enter a valid email address.");
       return;
     }
+    const trimmedRoleTitle = roleTitle.trim();
+    if (!trimmedRoleTitle) {
+      toast.error("Role title is required.");
+      return;
+    }
     setSending(true);
     try {
       const res = await fetch("/api/organizations/invitations", {
@@ -492,9 +507,7 @@ function TeamCard({
         body: JSON.stringify({
           email: trimmed,
           role,
-          role_title: roleTitle.trim() || null,
-          start_date: startDate || null,
-          manager_user_id: managerUserId || null,
+          role_title: trimmedRoleTitle,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -509,9 +522,6 @@ function TeamCard({
       setEmail("");
       setRole("member");
       setRoleTitle("");
-      setStartDate("");
-      setManagerUserId("");
-      setShowOnboarding(false);
       invites.mutate();
     } finally {
       setSending(false);
@@ -699,32 +709,66 @@ function TeamCard({
       </AlertDialog>
 
       {isAdmin && (
-        <div className="space-y-2 rounded-md border border-dashed border-border bg-muted/30 p-3">
-          <Label htmlFor="invite-email" className="flex items-center gap-1.5 text-xs">
-            <Mail className="h-3 w-3" />
+        <div className="space-y-4 rounded-md border border-dashed border-border bg-muted/30 p-4">
+          <div className="flex items-center gap-1.5 text-xs font-medium">
+            <Mail className="h-3.5 w-3.5" />
             Invite by email
-          </Label>
-          <div className="flex flex-col gap-2 sm:flex-row">
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_140px]">
+            <div className="space-y-1.5">
+              <Label htmlFor="invite-email" className="text-[11px]">
+                Email <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="invite-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="teammate@company.com"
+                disabled={sending}
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="invite-role" className="text-[11px]">
+                Role
+              </Label>
+              <select
+                id="invite-role"
+                value={role}
+                onChange={(e) => setRole(e.target.value as "admin" | "member")}
+                disabled={sending}
+                className="block h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <option value="member">Member</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="invite-role-title" className="text-[11px]">
+              Role title <span className="text-destructive">*</span>
+            </Label>
             <Input
-              id="invite-email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="teammate@company.com"
+              id="invite-role-title"
+              value={roleTitle}
+              onChange={(e) => setRoleTitle(e.target.value)}
+              placeholder="Senior Engineer"
               disabled={sending}
-              autoComplete="off"
-              className="flex-1"
+              required
             />
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value as "admin" | "member")}
-              disabled={sending}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            <p className="text-[11px] text-muted-foreground">
+              Used by the onboarding agent to personalise the welcome email.
+            </p>
+          </div>
+
+          <div className="flex justify-end">
+            <Button
+              onClick={sendInvite}
+              disabled={sending || !email || !roleTitle.trim()}
             >
-              <option value="member">Member</option>
-              <option value="admin">Admin</option>
-            </select>
-            <Button onClick={sendInvite} disabled={sending || !email}>
               {sending ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
@@ -733,68 +777,6 @@ function TeamCard({
               Send invite
             </Button>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setShowOnboarding((v) => !v)}
-            className="text-[11px] font-medium text-muted-foreground underline-offset-2 hover:underline"
-          >
-            {showOnboarding ? "Hide onboarding details" : "Add onboarding details (optional)"}
-          </button>
-
-          {showOnboarding && (
-            <div className="grid grid-cols-1 gap-2 rounded-md border border-border bg-background p-3 sm:grid-cols-3">
-              <div>
-                <Label htmlFor="invite-role-title" className="text-[11px]">
-                  Role title
-                </Label>
-                <Input
-                  id="invite-role-title"
-                  value={roleTitle}
-                  onChange={(e) => setRoleTitle(e.target.value)}
-                  placeholder="Senior Engineer"
-                  disabled={sending}
-                />
-              </div>
-              <div>
-                <Label htmlFor="invite-start-date" className="text-[11px]">
-                  Start date
-                </Label>
-                <Input
-                  id="invite-start-date"
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  disabled={sending}
-                />
-              </div>
-              <div>
-                <Label htmlFor="invite-manager" className="text-[11px]">
-                  Manager
-                </Label>
-                <select
-                  id="invite-manager"
-                  value={managerUserId}
-                  onChange={(e) => setManagerUserId(e.target.value)}
-                  disabled={sending}
-                  className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  <option value="">None</option>
-                  {(members.data?.members ?? [])
-                    .filter((m) => m.id !== currentUserId || true)
-                    .map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.display_name ?? m.email ?? m.id}
-                      </option>
-                    ))}
-                </select>
-              </div>
-              <p className="col-span-full text-[11px] text-muted-foreground">
-                These fields drive the onboarding agent — they personalise the
-                welcome email, the Notion plan, and the Slack DM to the manager.
-              </p>
-            </div>
-          )}
         </div>
       )}
     </Card>

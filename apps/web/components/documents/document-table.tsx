@@ -13,7 +13,7 @@ import {
   Tag as TagIcon,
 } from "lucide-react";
 import { toast } from "sonner";
-import { formatDistanceToNow } from "@/lib/date";
+import { formatAbsolute, formatRelativeShort } from "@/lib/date";
 import type { Document } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -76,13 +76,6 @@ function prettifyErrorReason(raw: string): string {
   msg = msg.charAt(0).toUpperCase() + msg.slice(1);
   if (!/[.!?]$/.test(msg)) msg += ".";
   return msg;
-}
-
-function formatSize(bytes: number | null): string {
-  if (!bytes) return "—";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
 export function DocumentTable({
@@ -151,16 +144,10 @@ export function DocumentTable({
               <span className="sr-only">Expand</span>
             </th>
             <th className="px-4 py-2.5 text-left font-medium">Name</th>
-            <th className="hidden px-4 py-2.5 text-left font-medium md:table-cell">
-              Tags
+            <th className="hidden w-28 px-4 py-2.5 text-left font-medium lg:table-cell">
+              Added
             </th>
-            <th className="hidden px-4 py-2.5 text-left font-medium md:table-cell">
-              Size
-            </th>
-            <th className="hidden px-4 py-2.5 text-left font-medium lg:table-cell">
-              Uploaded
-            </th>
-            <th className="px-4 py-2.5 text-left font-medium">Status</th>
+            <th className="w-44 px-4 py-2.5 text-left font-medium">Status</th>
             <th className="px-4 py-2.5 text-right font-medium">
               <span className="sr-only">Actions</span>
             </th>
@@ -211,11 +198,10 @@ function Row({
   return (
     <>
     <tr
-      className={
-        selected
-          ? "bg-primary/5 transition-colors"
-          : "transition-colors hover:bg-muted/40"
-      }
+      className={cn(
+        "group transition-colors",
+        selected ? "bg-primary/5" : "hover:bg-muted/40",
+      )}
     >
       <td className="w-8 px-3 py-3">
         <Checkbox
@@ -254,56 +240,62 @@ function Row({
         </button>
       </td>
       <td className="px-4 py-3">
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 items-start gap-3">
           <FileIcon
             type={doc.file_type}
-            className="h-4 w-4 shrink-0 text-muted-foreground"
+            className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
           />
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="truncate font-medium text-foreground">{doc.name}</p>
-            <p className="truncate text-xs text-muted-foreground md:hidden">
-              {doc.file_type.toUpperCase()} · {formatSize(doc.file_size_bytes)}
-            </p>
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              {(doc.tags ?? []).length === 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setTagOpen(true)}
+                  className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/60 opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+                  aria-label={`Add tags to ${doc.name}`}
+                >
+                  <TagIcon className="h-3 w-3" />
+                  Add tags
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setTagOpen(true)}
+                  className="flex min-w-0 items-center gap-1.5 overflow-hidden rounded text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  aria-label={`Edit tags for ${doc.name}`}
+                >
+                  {(doc.tags ?? []).slice(0, 3).map((t) => (
+                    <span
+                      key={t}
+                      className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                  {(doc.tags ?? []).length > 3 && (
+                    <span className="shrink-0 text-[10px] font-medium text-muted-foreground">
+                      +{(doc.tags ?? []).length - 3}
+                    </span>
+                  )}
+                  <Pencil className="h-3 w-3 shrink-0 text-muted-foreground/40 opacity-0 transition-opacity group-hover:opacity-100" />
+                </button>
+              )}
+              <span
+                className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground/70 lg:hidden"
+                title={formatAbsolute(doc.created_at)}
+              >
+                {formatRelativeShort(doc.created_at)}
+              </span>
+            </div>
           </div>
         </div>
       </td>
-      <td className="hidden px-4 py-3 md:table-cell">
-        <button
-          type="button"
-          onClick={() => setTagOpen(true)}
-          className="group inline-flex max-w-44 flex-wrap items-center gap-1 rounded text-left"
-          aria-label={`Edit tags for ${doc.name}`}
-        >
-          {(doc.tags ?? []).length === 0 ? (
-            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground group-hover:text-foreground">
-              <TagIcon className="h-3 w-3" />
-              Add tags
-            </span>
-          ) : (
-            <>
-              {(doc.tags ?? []).slice(0, 3).map((t) => (
-                <span
-                  key={t}
-                  className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
-                >
-                  {t}
-                </span>
-              ))}
-              {(doc.tags ?? []).length > 3 && (
-                <span className="text-[11px] text-muted-foreground">
-                  +{(doc.tags ?? []).length - 3}
-                </span>
-              )}
-              <Pencil className="ml-1 h-3 w-3 text-muted-foreground/40 group-hover:text-muted-foreground" />
-            </>
-          )}
-        </button>
-      </td>
-      <td className="hidden px-4 py-3 text-muted-foreground md:table-cell">
-        {formatSize(doc.file_size_bytes)}
-      </td>
-      <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">
-        {formatDistanceToNow(doc.created_at)}
+      <td
+        className="hidden whitespace-nowrap px-4 py-3 text-xs tabular-nums text-muted-foreground lg:table-cell"
+        title={formatAbsolute(doc.created_at)}
+      >
+        {formatRelativeShort(doc.created_at)}
       </td>
       <td className="px-4 py-3">
         {doc.status === "processing" ? (
@@ -386,7 +378,7 @@ function Row({
     </tr>
     {expanded && canExpand && (
       <tr className="bg-muted/30">
-        <td colSpan={8} className="border-t border-border/60 px-4 py-4 md:px-12">
+        <td colSpan={6} className="border-t border-border/60 px-4 py-4 md:px-12">
           <div className="space-y-4">
             <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
               {insights.summary && (

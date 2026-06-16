@@ -14,6 +14,7 @@ import useSWR from "swr";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -176,9 +177,24 @@ export default function AgentRunsPage() {
       </div>
 
       {isLoading ? (
-        <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading runs…
-        </div>
+        <ul className="divide-y rounded-md border bg-card">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <li key={i} className="flex items-center gap-3 px-4 py-3">
+              <Skeleton className="h-9 w-9 shrink-0 rounded-md" />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <Skeleton
+                    className="h-3.5"
+                    style={{ width: `${35 + ((i * 11) % 30)}%` }}
+                  />
+                  <Skeleton className="h-4 w-14 rounded-full" />
+                </div>
+                <Skeleton className="h-2.5 w-1/3" />
+              </div>
+              <Skeleton className="h-4 w-4 rounded" />
+            </li>
+          ))}
+        </ul>
       ) : error ? (
         <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           {error instanceof Error ? error.message : "Couldn't load runs."}
@@ -221,8 +237,11 @@ export default function AgentRunsPage() {
             </DialogHeader>
 
             {detail.isLoading ? (
-              <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" /> Loading detail…
+              <div className="space-y-3 py-4">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-32 w-full rounded-md" />
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-24 w-full rounded-md" />
               </div>
             ) : detail.error ? (
               <div className="text-sm text-destructive">

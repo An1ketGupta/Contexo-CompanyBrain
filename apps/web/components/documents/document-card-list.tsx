@@ -8,7 +8,7 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
-import { formatDistanceToNow } from "@/lib/date";
+import { formatAbsolute, formatRelativeShort } from "@/lib/date";
 import type { Document } from "@/lib/types";
 import {
   DropdownMenu,
@@ -37,16 +37,9 @@ interface DocumentCardListProps {
 }
 
 /**
- * V3 Day 3 #27 — mobile-only card layout for /documents.
- *
- * The desktop DocumentTable shows checkboxes, tags column, size column,
- * uploaded-at column, and inline retag/retry/delete actions. On mobile
- * those columns get folded into a single-line card with the most useful
- * affordances (chat, retry-if-failed, delete) tucked behind a menu.
- *
- * Tag editing + bulk select are intentionally desktop-only — they're
- * cumbersome at thumb scale and the mobile use case is "find and chat with
- * the doc," not "tidy the library."
+ * Mobile-only card layout for /documents. Tag editing and bulk select are
+ * intentionally desktop-only — they're cumbersome at thumb scale and the
+ * mobile use case is "find and chat with the doc," not "tidy the library."
  */
 export function DocumentCardList({
   documents,
@@ -155,7 +148,9 @@ function DocumentCard({
         <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
           <StatusBadge status={doc.status} errorReason={errorReason} />
           <span>·</span>
-          <span>{formatDistanceToNow(doc.created_at)}</span>
+          <span title={formatAbsolute(doc.created_at)}>
+            {formatRelativeShort(doc.created_at)}
+          </span>
         </div>
         {doc.status === "failed" && errorReason && (
           <div className="mt-1 flex items-start gap-1.5 text-[11px] leading-snug text-destructive/80">

@@ -108,3 +108,36 @@ body {
     transform: translateX(100%);
   }
 }
+
+/* Shimmer sweep used by <Skeleton/> — a soft gradient passes left-to-right
+   over the placeholder, giving content-shaped loaders a premium "loading
+   real data" feel instead of a flat pulse. */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Three-dot bounce used on the splash screen. Children stagger the delay so
+   the dots wave instead of pulsing in unison. */
+@keyframes dot-bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-skeleton]::before {
+    animation: none !important;
+  }
+}

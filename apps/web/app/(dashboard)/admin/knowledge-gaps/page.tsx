@@ -17,6 +17,7 @@ import useSWR from "swr";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -118,9 +119,24 @@ export default function KnowledgeGapsPage() {
       ) : null}
 
       {isLoading || !data ? (
-        <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Loading gaps…
+        <div className="overflow-hidden rounded-xl border border-border bg-card">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div
+              key={i}
+              className="flex items-start gap-3 border-b border-border px-4 py-3.5 last:border-b-0"
+            >
+              <Skeleton className="h-7 w-7 shrink-0 rounded-md" />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <Skeleton
+                  className="h-3.5"
+                  style={{ width: `${45 + ((i * 13) % 40)}%` }}
+                />
+                <Skeleton className="h-2.5 w-1/3" />
+              </div>
+              <Skeleton className="h-5 w-12 rounded-full" />
+              <Skeleton className="h-7 w-20 rounded-md" />
+            </div>
+          ))}
         </div>
       ) : data.items.length === 0 ? (
         <div className="rounded-xl border border-border bg-card p-10 text-center">

@@ -43,13 +43,6 @@ interface MobileConversationDrawerProps {
   activeId: string | null;
 }
 
-/**
- * V3 Day 3 #27 — mobile-only drawer that mirrors ConversationSidebar.
- *
- * Triggered by a floating button at the top-left of the chat surface.
- * Shares the underlying useConversations hook with the desktop sidebar so
- * a pin/rename/delete made in either surface stays in sync.
- */
 export function MobileConversationDrawer({ activeId }: MobileConversationDrawerProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import useSWR from "swr";
 
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface ConfidenceThresholdsResponse {
   high: number;
@@ -48,9 +49,21 @@ export default function ConfidenceSettingsPage() {
       ) : null}
 
       {isLoading || !data ? (
-        <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Loading thresholds…
+        <div className="space-y-6 rounded-xl border border-border bg-card p-6">
+          {[0, 1].map((i) => (
+            <div key={i} className="space-y-3">
+              <div className="flex items-baseline justify-between">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-4 w-10" />
+              </div>
+              <Skeleton className="h-2 w-full rounded-full" />
+              <Skeleton className="h-2.5 w-3/4" />
+            </div>
+          ))}
+          <div className="flex justify-end gap-2 pt-2">
+            <Skeleton className="h-9 w-24 rounded-md" />
+            <Skeleton className="h-9 w-28 rounded-md" />
+          </div>
         </div>
       ) : (
         <ThresholdEditor initial={data} onSaved={() => mutate()} />

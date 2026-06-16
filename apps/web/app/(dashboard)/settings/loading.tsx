@@ -1,30 +1,40 @@
+import { Skeleton } from "@/components/ui/skeleton";
+
 /**
- * Skeleton for the three-card settings layout (workspace / profile / danger).
+ * Skeleton for the multi-card settings page (workspace / profile / team /
+ * danger zone). Card heights vary so the layout doesn't look like a grid.
  */
+const CARD_FIELDS = [2, 3, 2];
+
 export default function SettingsLoading() {
   return (
     <div className="mx-auto max-w-3xl space-y-8 p-6 md:p-8">
       <div className="space-y-2">
-        <div className="h-5 w-20 animate-pulse rounded bg-muted" />
-        <div className="h-3 w-72 animate-pulse rounded bg-muted/70" />
+        <Skeleton className="h-6 w-28" />
+        <Skeleton className="h-3.5 w-80" />
       </div>
 
-      {Array.from({ length: 3 }).map((_, i) => (
+      {CARD_FIELDS.map((fieldCount, cardIdx) => (
         <div
-          key={i}
-          className="space-y-4 rounded-lg border border-border bg-background p-5"
+          key={cardIdx}
+          className="space-y-5 rounded-lg border border-border bg-background p-5"
         >
-          <div className="h-4 w-32 animate-pulse rounded bg-muted" />
-          <div className="space-y-2">
-            <div className="h-3 w-16 animate-pulse rounded bg-muted/70" />
-            <div className="h-9 w-full animate-pulse rounded-md bg-muted" />
+          <div className="flex items-center justify-between">
+            <div className="space-y-1.5">
+              <Skeleton className="h-4 w-36" />
+              <Skeleton className="h-3 w-56" />
+            </div>
+            <Skeleton className="h-7 w-7 rounded-md" />
           </div>
-          <div className="space-y-2">
-            <div className="h-3 w-16 animate-pulse rounded bg-muted/70" />
-            <div className="h-9 w-full animate-pulse rounded-md bg-muted" />
-          </div>
-          <div className="flex justify-end">
-            <div className="h-8 w-28 animate-pulse rounded-md bg-muted" />
+          {Array.from({ length: fieldCount }).map((_, fieldIdx) => (
+            <div key={fieldIdx} className="space-y-1.5">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-9 w-full rounded-md" />
+            </div>
+          ))}
+          <div className="flex justify-end gap-2">
+            <Skeleton className="h-8 w-20 rounded-md" />
+            <Skeleton className="h-8 w-24 rounded-md" />
           </div>
         </div>
       ))}

@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { AlertTriangle, Loader2, Shield } from "lucide-react";
+import { AlertTriangle, Shield } from "lucide-react";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatDistanceToNow } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
@@ -82,10 +83,25 @@ export default function ModerationPage() {
       ) : null}
 
       {isLoading || !data ? (
-        <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Loading…
-        </div>
+        <ul className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <li
+              key={i}
+              className="rounded-lg border border-border bg-card px-4 py-3"
+            >
+              <div className="flex items-start gap-3">
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Skeleton
+                    className="h-6"
+                    style={{ width: `${50 + ((i * 11) % 35)}%` }}
+                  />
+                  <Skeleton className="h-2.5 w-2/5" />
+                </div>
+                <Skeleton className="h-5 w-16 rounded-full" />
+              </div>
+            </li>
+          ))}
+        </ul>
       ) : data.length === 0 ? (
         <p className="rounded-lg border border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
           No moderation events

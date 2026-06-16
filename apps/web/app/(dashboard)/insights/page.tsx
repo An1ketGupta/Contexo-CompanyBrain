@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import useSWR from "swr";
-import { AlertTriangle, Loader2, TrendingUp } from "lucide-react";
+import { AlertTriangle, TrendingUp } from "lucide-react";
 import { FileIcon } from "@/components/documents/file-icon";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { DocumentFileType } from "@/lib/types";
 
 interface InsightsResponse {
@@ -61,10 +62,7 @@ export default function InsightsPage() {
       </header>
 
       {isLoading ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading…
-        </div>
+        <InsightsSkeleton />
       ) : error ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive-soft px-4 py-3 text-sm text-destructive">
           {(error as Error).message}
@@ -147,6 +145,42 @@ export default function InsightsPage() {
           </section>
         </>
       ) : null}
+    </div>
+  );
+}
+
+function InsightsSkeleton() {
+  return (
+    <div className="space-y-8">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div
+            key={i}
+            className="space-y-2 rounded-lg border border-border bg-background px-4 py-3"
+          >
+            <Skeleton className="h-2.5 w-16" />
+            <Skeleton className="h-7 w-14" />
+          </div>
+        ))}
+      </div>
+      {[0, 1].map((section) => (
+        <section key={section}>
+          <Skeleton className="mb-3 h-3.5 w-28" />
+          <ol className="divide-y divide-border rounded-lg border border-border bg-background">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <li key={i} className="flex items-center gap-3 px-4 py-3">
+                <Skeleton className="h-3 w-4" />
+                <Skeleton className="h-4 w-4 rounded" />
+                <Skeleton
+                  className="h-3.5 flex-1"
+                  style={{ maxWidth: `${50 + ((i * 9) % 30)}%` }}
+                />
+                <Skeleton className="h-3 w-20" />
+              </li>
+            ))}
+          </ol>
+        </section>
+      ))}
     </div>
   );
 }
