@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChatMobileBar } from "@/components/chat/chat-mobile-bar";
+import { ChatScopeSelector } from "@/components/chat/chat-scope-selector";
 import { CollectionSelector } from "@/components/chat/collection-selector";
 import { ConversationSidebar } from "@/components/chat/conversation-sidebar";
 import { DocumentStatusBanner } from "@/components/chat/document-status-banner";
@@ -40,6 +41,17 @@ export default function ChatNewPage() {
 
   const [pendingNavId, setPendingNavId] = useState<string | null>(null);
   const [scopedCollectionId, setScopedCollectionId] = useState<string | null>(null);
+  const [scopedTags, setScopedTags] = useState<string[]>([]);
+
+  const handleCollectionChange = useCallback((id: string | null) => {
+    setScopedCollectionId(id);
+    if (id) setScopedTags([]);
+  }, []);
+
+  const handleTagsChange = useCallback((next: string[]) => {
+    setScopedTags(next);
+    if (next.length > 0) setScopedCollectionId(null);
+  }, []);
 
   const scopedDocument = useMemo(() => {
     if (!scopedDocumentId) return null;
@@ -74,7 +86,7 @@ export default function ChatNewPage() {
   } = useChat({
     conversationId: null,
     scopedDocumentId,
-    scopedTags: [],
+    scopedTags: scopedDocumentId ? [] : scopedTags,
     scopedCollectionId: scopedDocumentId ? null : scopedCollectionId,
     onConversationStarted: handleConversationStarted,
     onTurnComplete: handleTurnComplete,
@@ -110,10 +122,18 @@ export default function ChatNewPage() {
         )}
         <DocumentStatusBanner />
         {isEmpty && !scopedDocument && (
-          <CollectionSelector
-            value={scopedCollectionId}
-            onChange={(id) => setScopedCollectionId(id)}
-          />
+          <>
+            <CollectionSelector
+              value={scopedCollectionId}
+              onChange={handleCollectionChange}
+            />
+            {!scopedCollectionId && (
+              <ChatScopeSelector
+                value={scopedTags}
+                onChange={handleTagsChange}
+              />
+            )}
+          </>
         )}
         {isEmpty ? (
           <div className="flex flex-1 overflow-y-auto">

@@ -1,38 +1,57 @@
 "use client";
 
 import Link from "next/link";
-import { Hash, Sparkles } from "lucide-react";
 
 interface DocumentSummaryProps {
   summary: string;
   keyTopics?: string[];
-  generatedAt?: string;
 }
 
-/** Auto-generated 2-3 sentence overview + 5 topic chips. Topics link into
- *  /chat with the topic as the seeded query so users can drill straight from
- *  the metadata to a scoped conversation. */
+/**
+ * Auto-generated summary + extracted topics. Rendered as two distinct
+ * subsections inside the expanded document panel. Topics deep-link into
+ * /chat with the topic seeded as the query.
+ */
 export function DocumentSummary({ summary, keyTopics }: DocumentSummaryProps) {
   return (
-    <div className="space-y-3">
-      <div className="flex items-start gap-2">
-        <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-indigo-500" />
-        <p className="text-xs leading-relaxed text-muted-foreground">{summary}</p>
-      </div>
+    <div className="space-y-5">
+      <section>
+        <SectionLabel>Summary</SectionLabel>
+        <p className="mt-1.5 text-sm leading-relaxed text-foreground/85">
+          {summary}
+        </p>
+      </section>
+
       {keyTopics && keyTopics.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {keyTopics.map((topic) => (
-            <Link
-              key={topic}
-              href={`/chat?q=${encodeURIComponent(topic)}`}
-              className="group inline-flex items-center gap-0.5 rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 dark:hover:bg-indigo-950/40 dark:hover:text-indigo-300"
-            >
-              <Hash className="h-2.5 w-2.5 opacity-60 group-hover:opacity-100" />
-              {topic}
-            </Link>
-          ))}
-        </div>
+        <section>
+          <SectionLabel>Key topics</SectionLabel>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            {keyTopics.map((topic, i) => (
+              <span key={topic} className="flex items-center gap-3">
+                <Link
+                  href={`/chat?q=${encodeURIComponent(topic)}`}
+                  className="text-sm text-muted-foreground transition-colors hover:text-foreground hover:underline underline-offset-4"
+                >
+                  {topic}
+                </Link>
+                {i < keyTopics.length - 1 && (
+                  <span aria-hidden className="text-muted-foreground/40">
+                    ·
+                  </span>
+                )}
+              </span>
+            ))}
+          </div>
+        </section>
       )}
     </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      {children}
+    </h4>
   );
 }

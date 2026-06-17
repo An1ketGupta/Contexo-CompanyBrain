@@ -54,7 +54,16 @@ interface UploadContextValue {
 
 const UploadContext = createContext<UploadContextValue | null>(null);
 
-export const ACCEPTED_EXT = new Set(["pdf", "docx", "txt", "md"]);
+export const ACCEPTED_EXT = new Set([
+  "pdf",
+  "docx",
+  "txt",
+  "md",
+  "xlsx",
+  "pptx",
+  "html",
+  "csv",
+]);
 export const MAX_MB = 50;
 export const MAX_BYTES = MAX_MB * 1024 * 1024;
 const REFRESH_EVENT = "documents:refresh";

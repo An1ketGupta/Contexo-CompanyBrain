@@ -12,12 +12,11 @@ interface MessageInputProps {
   disabled?: boolean;
   disabledReason?: string;
   placeholder?: string;
-  /** Hard cap mirrored from FastAPI chat_max_message_chars. */
   maxLength?: number;
 }
 
 const DEFAULT_PLACEHOLDER =
-  "Ask anything or describe a task — write an email, draft a job description, summarize a policy…";
+  "Ask anything or describe a task…";
 
 export function MessageInput({
   onSend,

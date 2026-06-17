@@ -461,7 +461,14 @@ export function useChat({
         abortRef.current = null;
       }
     },
-    [isStreaming, onConversationStarted, onTurnComplete, scopedDocumentId],
+    [
+      isStreaming,
+      onConversationStarted,
+      onTurnComplete,
+      scopedDocumentId,
+      scopedTags,
+      scopedCollectionId,
+    ],
   );
 
   const send = useCallback(

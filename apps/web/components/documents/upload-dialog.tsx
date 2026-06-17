@@ -29,13 +29,21 @@ import {
   type UploadItem,
 } from "./upload-context";
 
-const ACCEPTED_TYPES = ".pdf,.docx,.txt,.md";
+const ACCEPTED_TYPES = ".pdf,.docx,.txt,.md,.xlsx,.pptx,.html,.htm,.csv";
+
+const FILE_ICON_TYPES: Record<string, DocumentFileType> = {
+  pdf: "pdf",
+  docx: "docx",
+  md: "md",
+  xlsx: "xlsx",
+  pptx: "pptx",
+  html: "html",
+  htm: "html",
+  csv: "csv",
+};
 
 function asFileIconType(name: string): DocumentFileType {
-  const ext = extOf(name);
-  return ext === "pdf" || ext === "docx" || ext === "md"
-    ? (ext as DocumentFileType)
-    : "txt";
+  return FILE_ICON_TYPES[extOf(name)] ?? "txt";
 }
 
 /**
@@ -113,11 +121,9 @@ export function UploadDialogHost() {
     <Dialog open={dialogOpen} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Upload documents</DialogTitle>
+          <DialogTitle>Upload Documents</DialogTitle>
           <DialogDescription>
-            Drop one or more files. PDF, DOCX, TXT, or MD up to {MAX_MB} MB
-            each. You can close this dialog at any time — uploads keep running
-            in the background.
+            You can close this dialog — uploads keep running.
           </DialogDescription>
         </DialogHeader>
 
@@ -239,7 +245,7 @@ function Dropzone({
         {hasQueue ? "Add more files" : "Drag files or click to select"}
       </p>
       <p className="mt-0.5 text-xs text-muted-foreground">
-        PDF, DOCX, TXT, MD — up to {MAX_MB} MB each
+          Up to {MAX_MB} MB each
       </p>
     </div>
   );
