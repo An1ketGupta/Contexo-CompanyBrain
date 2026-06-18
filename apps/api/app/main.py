@@ -20,6 +20,7 @@ from app.routers import (
     gmail_router,
     health,
     integrations as integrations_router,
+    integrations_v2 as integrations_v2_router,
     invitations,
     meeting_prep as meeting_prep_router,
     notifications as notifications_router,
@@ -101,6 +102,7 @@ app.include_router(auth_router.router)
 app.include_router(usage_router.router)
 app.include_router(webhooks_router.router)
 app.include_router(integrations_router.router)
+app.include_router(integrations_v2_router.router)
 app.include_router(public_api.router)
 app.include_router(slack_router.router)
 app.include_router(gmail_router.router)

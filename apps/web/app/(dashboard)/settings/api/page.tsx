@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { toast } from "sonner";
@@ -127,12 +127,21 @@ export default function ApiKeysPage() {
   );
 }
 
+function useOrigin() {
+  const [origin, setOrigin] = useState("https://your-app.app");
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+  return origin;
+}
+
 function CurlExample() {
+  const origin = useOrigin();
   return (
     <section className="space-y-2 rounded-lg border border-border bg-background p-4">
       <p className="text-sm font-medium">Quick start</p>
       <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">
-{`curl -X POST ${typeof window !== "undefined" ? window.location.origin : "https://your-app.app"}/v1/query \\
+{`curl -X POST ${origin}/v1/query \\
   -H "Authorization: Bearer cb_live_…" \\
   -H "Content-Type: application/json" \\
   -d '{"message": "What is our refund policy?"}'`}
@@ -146,7 +155,7 @@ function CurlExample() {
 }
 
 function AgentTriggerDocs() {
-  const origin = typeof window !== "undefined" ? window.location.origin : "https://your-app.app";
+  const origin = useOrigin();
   return (
     <section className="space-y-3 rounded-lg border border-border bg-background p-4">
       <header>

@@ -120,7 +120,23 @@ async def integrations_status(
     settings = get_settings()
     client = get_user_client(token)
 
-    drive_row, notion_row, slack_row, slack_subs, gmail_row, inbound = await asyncio.gather(
+    # The four post-Slack providers live in the unified `integrations` table
+    # (migration 036). We fetch them in the same parallel batch so the status
+    # endpoint stays a single round trip from the UI.
+    from app.services.integrations import _unified as _v2
+
+    (
+        drive_row,
+        notion_row,
+        slack_row,
+        slack_subs,
+        gmail_row,
+        inbound,
+        onedrive_row,
+        confluence_row,
+        github_row,
+        dropbox_row,
+    ) = await asyncio.gather(
         asyncio.to_thread(
             lambda: client.table("drive_integrations")
             .select("folder_ids, last_synced_at, created_at, scopes")
@@ -152,6 +168,10 @@ async def integrations_status(
             .maybe_single().execute()
         ),
         email_forward.get_inbound_address(org_id=org_id),
+        _v2.get_row(org_id=org_id, provider="onedrive"),
+        _v2.get_row(org_id=org_id, provider="confluence"),
+        _v2.get_row(org_id=org_id, provider="github"),
+        _v2.get_row(org_id=org_id, provider="dropbox"),
     )
 
     gmail_data = (gmail_row.data or {}) if gmail_row else {}
@@ -203,6 +223,38 @@ async def integrations_status(
             "connected_at": gmail_data.get("connected_at"),
             "last_used_at": gmail_data.get("last_used_at"),
         },
+        # ── Unified integrations (migration 036) ──
+        # Status shape matches drive/notion's so the frontend Card components
+        # can pattern-match on .connected / .last_synced_at / .last_error.
+        "onedrive": _v2_summary(
+            onedrive_row, available=bool(settings.microsoft_client_id)
+        ),
+        "confluence": _v2_summary(
+            confluence_row, available=bool(settings.atlassian_client_id)
+        ),
+        "github": _v2_summary(
+            github_row,
+            available=bool(settings.github_app_id and settings.github_app_slug),
+        ),
+        "dropbox": _v2_summary(
+            dropbox_row, available=bool(settings.dropbox_client_id)
+        ),
+    }
+
+
+def _v2_summary(row: dict[str, Any] | None, *, available: bool) -> dict[str, Any]:
+    """Strip token material from a unified-table row before sending to the UI."""
+    if not row:
+        return {"available": available, "connected": False}
+    return {
+        "available": available,
+        "connected": True,
+        "metadata": row.get("metadata") or {},
+        "resources": row.get("resources") or [],
+        "last_synced_at": row.get("last_synced_at"),
+        "last_error": row.get("last_error"),
+        "last_error_at": row.get("last_error_at"),
+        "scopes": row.get("scopes") or [],
     }
 
 

@@ -478,6 +478,16 @@ All integrations are opt-in at org level. OAuth state is verified via `OAUTH_STA
 | Slack | Org OAuth (bot token) | Posts outputs to channels/threads, handles `/nirnaya` slash commands |
 | Gmail | Per-user OAuth | Sends email outputs via Gmail REST API, tracks delivery status |
 | Email Forward | Inbound (Resend) | Receives forwarded emails, creates documents from email bodies |
+| OneDrive / SharePoint | Org OAuth (Microsoft Graph) | Polls selected OneDrive Business drives + SharePoint document libraries via Graph deltaLink every 10 min. PDF/DOCX/XLSX/PPTX/MD/TXT routed through the regular parser pipeline. |
+| Confluence | Org OAuth (Atlassian 3LO) | Polls selected Confluence Cloud spaces every 15 min; ingests page bodies (storage XHTML → text via BS4) plus PDF/DOCX attachments. |
+| GitHub | Org App install | Polls every 15 min for /docs trees, README, *.md/*.mdx, plus Issues and Discussions (GraphQL). Installation tokens minted server-side via RS256-signed app JWT. |
+| Dropbox / Business | Org OAuth | Polls selected folders every 10 min via cursor-based `/files/list_folder/continue`. Files routed through `/files/get_temporary_link` so the bearer never lands in worker payloads. |
+
+**Storage shapes** — two coexist:
+- **Per-provider tables** (legacy: `drive_integrations`, `notion_integrations`, `gmail_integrations`, `slack_integrations`). One row per (org, [user]).
+- **Unified `integrations` table** (migration 036, used by OneDrive/Confluence/GitHub/Dropbox): columns include `provider`, `scope_user_id`, `access_token`, `refresh_token`, `token_expiry`, `scopes`, `metadata JSONB`, `resources JSONB`, `sync_cursor`, `last_synced_at`, `last_error`, `webhook_secret`. Provider service modules in `app/services/integrations/` share helpers in `_unified.py` (row CRUD, token refresh, cursor management, binary ingestion queue).
+
+**Shared external-binary ingest event**: `doc/process-binary-external` (registered in `app/inngest/integration_functions.py`). OneDrive, SharePoint, Confluence attachments, and Dropbox all queue this event; the worker downloads bytes and runs the regular `process_document` pipeline — no Supabase Storage round trip required since the source of truth lives in the integration's API.
 
 Slack notes:
 - Slash command: `/nirnaya [query]` → ephemeral response with search results

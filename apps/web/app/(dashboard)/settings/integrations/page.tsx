@@ -32,6 +32,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { openDriveFolderPicker } from "@/components/integrations/google-drive-picker";
+import {
+  ConfluenceCard,
+  type ConfluenceStatus,
+  DropboxCard,
+  type DropboxStatus,
+  GitHubCard,
+  type GitHubStatus,
+  OneDriveCard,
+  type OneDriveStatus,
+} from "@/components/integrations/v2-cards";
 
 interface DriveStatus {
   available: boolean;
@@ -82,6 +92,10 @@ interface StatusResponse {
   email: EmailStatus;
   slack?: SlackStatus;
   gmail?: GmailStatus;
+  onedrive?: OneDriveStatus;
+  confluence?: ConfluenceStatus;
+  github?: GitHubStatus;
+  dropbox?: DropboxStatus;
 }
 
 const fetcher = async (url: string) => {
@@ -128,6 +142,10 @@ export default function IntegrationsPage() {
           <DriveCard status={data.drive} onChanged={mutate} />
           <GmailCard status={data.gmail} onChanged={mutate} />
           <NotionCard status={data.notion} onChanged={mutate} />
+          <OneDriveCard status={data.onedrive} onChanged={mutate} />
+          <ConfluenceCard status={data.confluence} onChanged={mutate} />
+          <GitHubCard status={data.github} onChanged={mutate} />
+          <DropboxCard status={data.dropbox} onChanged={mutate} />
           <EmailCard status={data.email} onChanged={mutate} />
           <SlackCard status={data.slack} onChanged={mutate} />
         </div>

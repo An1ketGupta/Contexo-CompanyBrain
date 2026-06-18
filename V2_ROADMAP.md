@@ -1997,7 +1997,7 @@ Secret (optional): [__________]
 
 ---
 
-## Day 14 — Google Drive + Notion + Email Forwarding Integration (#86, #87, #83)
+## Day 14 — Google Drive + Notion + Email Forwarding Integration Also added new things check them too(#86, #87, #83)
 
 **Goal:** The knowledge base feeds itself. Documents from Drive, Notion, and email threads are automatically ingested.
 
