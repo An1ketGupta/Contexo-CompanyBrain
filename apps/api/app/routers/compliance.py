@@ -43,6 +43,7 @@ from app.errors import NoOrganization
 from app.inngest.client import get_inngest_client
 from app.observability import get_logger
 from app.services.org_config import invalidate as invalidate_org_config
+from app.services.webhooks import trigger_event as trigger_webhook_event
 
 log = get_logger(__name__)
 
@@ -177,6 +178,31 @@ async def acknowledge_document(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No pending acknowledgement for this document.",
         )
+
+    # Outbound webhook — typically `rows == 1`, but the update is multi-row
+    # tolerant so we mirror that in the payload. The version id lets a
+    # receiver tell "first ack vs. re-ack of a new version" apart.
+    try:
+        first_row = (res.data or [{}])[0]
+        await trigger_webhook_event(
+            org_id=org_id,
+            event="compliance.acknowledged",
+            payload={
+                "document_id": document_id,
+                "document_version_id": first_row.get("document_version_id"),
+                "user_id": user_id,
+                "acknowledged_at": now,
+                "rows": affected,
+            },
+        )
+    except Exception as exc:
+        log.warning(
+            "compliance_acknowledged_webhook_failed",
+            document_id=document_id,
+            user_id=user_id,
+            error=str(exc),
+        )
+
     return {"acknowledged": True, "rows": affected}
 
 

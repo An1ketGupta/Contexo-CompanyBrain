@@ -6,7 +6,7 @@ import { SidebarNav } from "./sidebar-nav";
 import { UserMenu } from "./user-menu";
 import { QuotaMeter } from "./quota-meter";
 import { CommandPaletteTrigger } from "./command-palette-trigger";
-import { OnboardingChecklist } from "@/components/onboarding/onboarding-checklist";
+import { NotificationBell } from "./notification-bell";
 import { useCurrentUser } from "@/hooks/use-user";
 
 export function Sidebar() {
@@ -14,15 +14,15 @@ export function Sidebar() {
 
   return (
     <aside className="hidden h-screen w-60 shrink-0 flex-col border-r border-border bg-background md:flex">
-      <Link
-        href="/chat"
-        className="flex h-14 items-center gap-2 border-b border-border px-5"
-      >
-        <Brain className="h-5 w-5 text-primary" />
-        <span className="text-sm font-semibold tracking-tight">
-          Company Brain
-        </span>
-      </Link>
+      <div className="flex h-14 items-center justify-between border-b border-border px-3">
+        <Link href="/chat" className="flex items-center gap-2 px-2">
+          <Brain className="h-5 w-5 text-primary" />
+          <span className="text-sm font-semibold tracking-tight">
+            Company Brain
+          </span>
+        </Link>
+        <NotificationBell />
+      </div>
 
       <div className="pt-2">
         <CommandPaletteTrigger />
@@ -31,12 +31,6 @@ export function Sidebar() {
       <div className="flex-1 overflow-y-auto py-2">
         <SidebarNav />
       </div>
-
-      {/* Onboarding sits between the nav and the quota meter so it's visible
-          on every dashboard page without scrolling. Renders nothing once
-          dismissed or once all steps are derived as complete + confetti has
-          fired. */}
-      <OnboardingChecklist />
 
       <QuotaMeter />
 

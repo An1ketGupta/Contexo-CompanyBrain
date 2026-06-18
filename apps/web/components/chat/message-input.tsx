@@ -123,7 +123,6 @@ export function MessageInput({
         </div>
 
         <div className="mt-1.5 flex items-center justify-between px-1 text-[11px] text-muted-foreground">
-          <span>Enter to send · Shift+Enter for new line</span>
           {value.length > maxLength * 0.8 && (
             <span className={cn(overLimit && "text-destructive")}>
               {value.length.toLocaleString()} / {maxLength.toLocaleString()}

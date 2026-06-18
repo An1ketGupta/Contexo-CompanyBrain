@@ -54,6 +54,10 @@ export interface Document {
   health_score?: number | null;
   health_label?: DocumentHealthLabel | null;
   last_accessed_at?: string | null;
+  // V2 Day 13 / #38
+  review_frequency_days?: number | null;
+  review_due_at?: string | null;
+  last_reviewed_at?: string | null;
 }
 
 export interface DocumentTag {
@@ -101,6 +105,7 @@ export interface MessageSource {
   section_heading: string | null;
   excerpt: string;
   snippet: string | null;
+  review_due_at?: string | null;
 }
 
 export type ConfidenceLevel = "high" | "medium" | "low";
@@ -167,7 +172,7 @@ export type ChatStreamEvent =
     }
   | { type: "error"; message: string };
 
-// ── V3 Day 1: empty-state banner + onboarding checklist ──────────────────────
+// ── V3 Day 1: empty-state banner ─────────────────────────────────────────────
 
 export interface DocumentStatusSummary {
   total: number;
@@ -175,14 +180,6 @@ export interface DocumentStatusSummary {
   processing: number;
   failed: number;
   has_ready: boolean;
-}
-
-export interface OnboardingState {
-  workspace_created: boolean;
-  first_doc_uploaded: boolean;
-  first_question_asked: boolean;
-  completed: boolean;
-  dismissed: boolean;
 }
 
 // ── V3 Day 2: prompt template library ────────────────────────────────────────

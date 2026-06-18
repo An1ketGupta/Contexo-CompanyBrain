@@ -1,19 +1,10 @@
 """Org-scoped endpoints introduced for V3 Day 1.
 
-Two surfaces live here, intentionally co-located because they share a single
-job — power the empty-state banner and onboarding checklist on the chat
-surface:
-
   * GET /organizations/document-status — counts of total / ready / processing
     docs. Backs the "no documents" / "still processing" banner shown above
     the chat input. Tiny, cheap, frequently polled.
-  * GET /organizations/onboarding      — derived checklist state.
-  * POST /organizations/onboarding/dismiss — persists the dismissed bit.
   * GET /organizations/me              — basic org metadata + V5 enrichment.
   * POST /organizations/enrich         — admin-only V5 #97 enrichment write.
-
-We keep these on /organizations/* (not /documents/*) because the banner is
-about the org's onboarding posture, not about any single document.
 """
 from __future__ import annotations
 
@@ -27,11 +18,6 @@ from pydantic import BaseModel, Field
 from app.auth import verify_jwt
 from app.database import get_service_client, get_user_client
 from app.observability import get_logger
-from app.services.onboarding import (
-    OnboardingState,
-    get_onboarding_state,
-    mark_dismissed,
-)
 
 log = get_logger(__name__)
 
@@ -89,50 +75,6 @@ async def document_status(
         "failed": failed,
         "has_ready": ready > 0,
     }
-
-
-@router.get("/onboarding")
-async def onboarding_state(
-    current_user: dict = Depends(verify_jwt),
-) -> OnboardingState:
-    org_id: str | None = current_user.get("org_id")
-    user_id: str = current_user["user_id"]
-    if not org_id:
-        # No org → no checklist to render. Treat as completed+dismissed so
-        # the banner stays hidden in this edge case (the caller is mid-signup
-        # or the org was deleted).
-        return OnboardingState(
-            workspace_created=False,
-            first_doc_uploaded=False,
-            first_question_asked=False,
-            completed=False,
-            dismissed=True,
-        )
-
-    client = get_user_client(current_user["token"])
-    return await get_onboarding_state(
-        user_client=client, org_id=org_id, user_id=user_id
-    )
-
-
-@router.post("/onboarding/dismiss", status_code=status.HTTP_204_NO_CONTENT)
-async def onboarding_dismiss(
-    current_user: dict = Depends(verify_jwt),
-) -> None:
-    """Persist `metadata.onboarding.dismissed = true` for the caller's org.
-
-    Org-wide: once one teammate dismisses the checklist, it stays hidden for
-    everyone. The "first question asked" CTA on the banner is per-user, but
-    dismissal is a deliberate "we're done with this" signal from any admin
-    or member, and re-showing it would be more annoying than helpful.
-    """
-    org_id: str | None = current_user.get("org_id")
-    if not org_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No organization found.",
-        )
-    await mark_dismissed(org_id=org_id)
 
 
 # ── V5 #97 — Org metadata enrichment ────────────────────────────────────────

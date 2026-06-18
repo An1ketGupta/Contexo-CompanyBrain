@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChatMobileBar } from "@/components/chat/chat-mobile-bar";
-import { ChatScopeSelector } from "@/components/chat/chat-scope-selector";
-import { CollectionSelector } from "@/components/chat/collection-selector";
 import { ConversationSidebar } from "@/components/chat/conversation-sidebar";
 import { DocumentStatusBanner } from "@/components/chat/document-status-banner";
 import { EmptyState } from "@/components/chat/empty-state";
@@ -12,6 +10,7 @@ import { KnowledgeGapBanner } from "@/components/chat/knowledge-gap-banner";
 import { MessageInput } from "@/components/chat/message-input";
 import { MessageList } from "@/components/chat/message-list";
 import { ScopeBanner } from "@/components/chat/scope-banner";
+import { ScopePopover, type ScopeValue } from "@/components/chat/scope-popover";
 import { useChat } from "@/hooks/use-chat";
 import { useConversations } from "@/hooks/use-conversations";
 import { useDocumentStatus } from "@/hooks/use-document-status";
@@ -40,18 +39,10 @@ export default function ChatNewPage() {
   const { prepend, touch, refresh } = useConversations();
 
   const [pendingNavId, setPendingNavId] = useState<string | null>(null);
-  const [scopedCollectionId, setScopedCollectionId] = useState<string | null>(null);
-  const [scopedTags, setScopedTags] = useState<string[]>([]);
-
-  const handleCollectionChange = useCallback((id: string | null) => {
-    setScopedCollectionId(id);
-    if (id) setScopedTags([]);
-  }, []);
-
-  const handleTagsChange = useCallback((next: string[]) => {
-    setScopedTags(next);
-    if (next.length > 0) setScopedCollectionId(null);
-  }, []);
+  const [scope, setScope] = useState<ScopeValue>({
+    collectionId: null,
+    tags: [],
+  });
 
   const scopedDocument = useMemo(() => {
     if (!scopedDocumentId) return null;
@@ -86,8 +77,8 @@ export default function ChatNewPage() {
   } = useChat({
     conversationId: null,
     scopedDocumentId,
-    scopedTags: scopedDocumentId ? [] : scopedTags,
-    scopedCollectionId: scopedDocumentId ? null : scopedCollectionId,
+    scopedTags: scopedDocumentId ? [] : scope.tags,
+    scopedCollectionId: scopedDocumentId ? null : scope.collectionId,
     onConversationStarted: handleConversationStarted,
     onTurnComplete: handleTurnComplete,
   });
@@ -122,18 +113,7 @@ export default function ChatNewPage() {
         )}
         <DocumentStatusBanner />
         {isEmpty && !scopedDocument && (
-          <>
-            <CollectionSelector
-              value={scopedCollectionId}
-              onChange={handleCollectionChange}
-            />
-            {!scopedCollectionId && (
-              <ChatScopeSelector
-                value={scopedTags}
-                onChange={handleTagsChange}
-              />
-            )}
-          </>
+          <ScopePopover value={scope} onChange={setScope} />
         )}
         {isEmpty ? (
           <div className="flex flex-1 overflow-y-auto">

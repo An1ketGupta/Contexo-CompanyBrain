@@ -445,7 +445,7 @@ async def list_documents(
 
     def _run() -> Any:
         q = client.table("documents").select(
-            "id, name, file_type, file_size_bytes, status, chunk_count, tags, metadata, created_at, health_score, health_label, last_accessed_at",
+            "id, name, file_type, file_size_bytes, status, chunk_count, tags, metadata, created_at, health_score, health_label, last_accessed_at, review_frequency_days, review_due_at, last_reviewed_at",
             count="exact",
         )
         if status_filter:

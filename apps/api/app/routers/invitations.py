@@ -44,7 +44,7 @@ SEAT_CAPS: dict[str, int | None] = {
     "business": None,
 }
 
-INVITE_TTL = timedelta(days=7)
+INVITE_TTL = timedelta(days=15)
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -278,35 +278,72 @@ async def create_invitation(
                 detail="Start date must be YYYY-MM-DD.",
             ) from exc
 
+    invite_payload = {
+        "org_id": org_id,
+        "email": email,
+        "role": body.role,
+        "token": token_str,
+        "invited_by": user_id,
+        "expires_at": expires_at.isoformat(),
+        "role_title": (body.role_title or "").strip() or None,
+        "start_date": start_date,
+        "manager_user_id": manager_user_id,
+    }
+
+    def _do_insert():
+        return svc.table("invitations").insert(invite_payload).execute()
+
     try:
-        result = await asyncio.to_thread(
-            lambda: svc.table("invitations")
-            .insert(
-                {
-                    "org_id": org_id,
-                    "email": email,
-                    "role": body.role,
-                    "token": token_str,
-                    "invited_by": user_id,
-                    "expires_at": expires_at.isoformat(),
-                    "role_title": (body.role_title or "").strip() or None,
-                    "start_date": start_date,
-                    "manager_user_id": manager_user_id,
-                }
-            )
-            .execute()
-        )
+        result = await asyncio.to_thread(_do_insert)
     except Exception as exc:
         msg = str(exc)
-        if "idx_invitations_unique_active" in msg or "duplicate key" in msg.lower():
+        is_unique_conflict = (
+            "idx_invitations_unique_active" in msg
+            or "duplicate key" in msg.lower()
+        )
+        if not is_unique_conflict:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create invite. Try again.",
+            ) from exc
+
+        # Unique-index conflict: a row with (org_id, lower(email)) and
+        # accepted_at IS NULL already exists. The index predicate can't
+        # include expiry (now() is STABLE, not IMMUTABLE), so expired rows
+        # still block — and the list endpoint filters them out, leaving the
+        # admin with no way to revoke. Auto-clean expired conflicts here so
+        # re-inviting a stale email "just works"; preserve the 409 for
+        # genuinely pending invites that the admin should revoke explicitly.
+        now_iso = datetime.now(timezone.utc).isoformat()
+        existing = await asyncio.to_thread(
+            lambda: svc.table("invitations")
+            .select("id, expires_at")
+            .eq("org_id", org_id)
+            .eq("email", email)
+            .is_("accepted_at", "null")
+            .maybe_single()
+            .execute()
+        )
+        existing_row = existing.data if existing else None
+        if existing_row and (existing_row.get("expires_at") or "") < now_iso:
+            await asyncio.to_thread(
+                lambda: svc.table("invitations")
+                .delete()
+                .eq("id", existing_row["id"])
+                .execute()
+            )
+            try:
+                result = await asyncio.to_thread(_do_insert)
+            except Exception as retry_exc:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create invite. Try again.",
+                ) from retry_exc
+        else:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A pending invite already exists for that email.",
             ) from exc
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create invite. Try again.",
-        ) from exc
 
     invite_row = (result.data or [None])[0]
     if not invite_row:
@@ -349,7 +386,7 @@ async def create_invitation(
                 "inviter_name": inviter_name,
                 "role": body.role,
                 "accept_url": accept_url,
-                "expires_in_days": 7,
+                "expires_in_days": INVITE_TTL.days,
             },
         )
     except Exception as exc:

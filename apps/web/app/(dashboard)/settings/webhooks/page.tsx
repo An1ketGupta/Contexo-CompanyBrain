@@ -44,6 +44,10 @@ const ALL_EVENTS = [
   { value: "document.processed", label: "Document processed" },
   { value: "document.failed", label: "Document failed" },
   { value: "query.completed", label: "Query completed" },
+  { value: "approval.requested", label: "Approval requested" },
+  { value: "approval.decided", label: "Approval decided" },
+  { value: "compliance.acknowledged", label: "Compliance acknowledged" },
+  { value: "knowledge_gap.detected", label: "Knowledge gap detected" },
 ];
 
 const fetcher = async (url: string) => {

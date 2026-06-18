@@ -248,6 +248,7 @@ async def _notify_org_admins(
     """
     from app.config import get_settings
     from app.services.email import send_email_event
+    from app.services.notifications import create_notification
 
     settings = get_settings()
     svc = get_service_client()
@@ -290,30 +291,62 @@ async def _notify_org_admins(
     ]
     total_due = len(docs)
 
-    # Disabled: using browser notifications instead (placeholder for later)
+    # Two-channel delivery: in-app bell + email. Both share the same iso_week
+    # dedupe_key so re-firing the Monday cron doesn't double up either channel.
     enqueued = 0
-    # for admin_id, admin_email in admins:
-    #     try:
-    #         await send_email_event(
-    #             event_type="knowledge_refresh",  # type: ignore[arg-type]
-    #             to=admin_email,
-    #             user_id=admin_id,
-    #             org_id=org_id,
-    #             dedupe_key=iso_week,
-    #             data={
-    #                 "docs": docs_payload,
-    #                 "total_due": total_due,
-    #                 "app_url": settings.app_url,
-    #             },
-    #         )
-    #         enqueued += 1
-    #     except Exception as exc:
-    #         log.warning(
-    #             "review_reminder_enqueue_failed",
-    #             admin_id=admin_id,
-    #             org_id=org_id,
-    #             error=str(exc),
-    #         )
+    notif_title = (
+        f"{total_due} document needs review"
+        if total_due == 1
+        else f"{total_due} documents need review"
+    )
+    # Body lists the first 5 doc names; the popover trims further if needed.
+    doc_names_preview = ", ".join(d["name"] for d in docs[:5])
+    if total_due > 5:
+        doc_names_preview += f", and {total_due - 5} more"
+    notif_link = f"{settings.app_url.rstrip('/')}/documents?filter=review-due"
+
+    for admin_id, admin_email in admins:
+        # In-app notification (idempotent via dedupe_key).
+        try:
+            await create_notification(
+                org_id=org_id,
+                user_id=admin_id,
+                type="review_reminder",
+                title=notif_title,
+                body=doc_names_preview,
+                link_url=notif_link,
+                dedupe_key=iso_week,
+                metadata={
+                    "total_due": total_due,
+                    "doc_ids": [d["id"] for d in docs[:20]],
+                },
+            )
+        except Exception as exc:
+            log.warning(
+                "review_reminder_notification_failed admin=%s org=%s err=%s",
+                admin_id, org_id, exc,
+            )
+
+        # Email (idempotent via dedupe_key in the email worker).
+        try:
+            await send_email_event(
+                event_type="knowledge_refresh",  # type: ignore[arg-type]
+                to=admin_email,
+                user_id=admin_id,
+                org_id=org_id,
+                dedupe_key=iso_week,
+                data={
+                    "docs": docs_payload,
+                    "total_due": total_due,
+                    "app_url": settings.app_url,
+                },
+            )
+            enqueued += 1
+        except Exception as exc:
+            log.warning(
+                "review_reminder_email_failed admin=%s org=%s err=%s",
+                admin_id, org_id, exc,
+            )
 
     return enqueued
 

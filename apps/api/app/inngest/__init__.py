@@ -10,6 +10,7 @@ from .functions import FUNCTIONS as _DOC_FUNCTIONS
 from .functions import process_document
 from .gmail_functions import FUNCTIONS as _GMAIL_FUNCTIONS
 from .slack_functions import FUNCTIONS as _SLACK_FUNCTIONS
+from .slack_inbound_functions import FUNCTIONS as _SLACK_INBOUND_FUNCTIONS
 from .integration_write_functions import FUNCTIONS as _INTEGRATION_WRITE_FUNCTIONS
 from .knowledge_gap_functions import FUNCTIONS as _KNOWLEDGE_GAP_FUNCTIONS
 from .onboarding_functions import FUNCTIONS as _ONBOARDING_FUNCTIONS
@@ -28,6 +29,7 @@ FUNCTIONS = [
     *_INTEGRATION_FUNCTIONS,
     *_GMAIL_FUNCTIONS,
     *_SLACK_FUNCTIONS,
+    *_SLACK_INBOUND_FUNCTIONS,
     *_INTEGRATION_WRITE_FUNCTIONS,
     *_KNOWLEDGE_GAP_FUNCTIONS,
     *_APPROVAL_FUNCTIONS,

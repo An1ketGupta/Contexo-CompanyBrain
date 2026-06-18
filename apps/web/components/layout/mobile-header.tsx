@@ -7,6 +7,7 @@ import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/s
 import { Button } from "@/components/ui/button";
 import { SidebarNav } from "./sidebar-nav";
 import { UserMenu } from "./user-menu";
+import { NotificationBell } from "./notification-bell";
 import { useCurrentUser } from "@/hooks/use-user";
 
 export function MobileHeader() {
@@ -49,7 +50,7 @@ export function MobileHeader() {
         </span>
       </Link>
 
-      <div className="w-9" aria-hidden="true" />
+      <NotificationBell />
     </header>
   );
 }

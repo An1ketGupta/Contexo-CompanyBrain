@@ -455,6 +455,7 @@ async def execute_task(
         # End of tool loop — emit sources first, then either final text (non-stream)
         # or stream the final generation if requested.
         sources = _dedupe_sources(all_hits, limit=settings.chat_max_context_chunks)
+        await _attach_review_due(sources, org_id=org_id, db_client=db_client)
         yield SourcesEvent(sources=sources)
 
         # Knowledge-gap signal: every search the LLM ran returned 0 hits.
@@ -727,6 +728,35 @@ def _dedupe_sources(hits: list[SearchHit], *, limit: int) -> list[dict]:
             }
         )
     return out
+
+
+async def _attach_review_due(
+    sources: list[dict], *, org_id: str, db_client: Client
+) -> None:
+    """Stamp each source dict with its document's `review_due_at`.
+
+    Powers the in-chat "may be outdated" banner. Best-effort: a failed read
+    leaves sources untouched and the banner simply won't render.
+    """
+    doc_ids = {s["document_id"] for s in sources if s.get("document_id")}
+    if not doc_ids:
+        return
+    try:
+        result = await asyncio.to_thread(
+            lambda: db_client.table("documents")
+            .select("id, review_due_at")
+            .eq("org_id", org_id)
+            .in_("id", list(doc_ids))
+            .execute()
+        )
+    except Exception as exc:
+        log.warning("attach_review_due failed: %s", exc)
+        return
+    by_id = {row["id"]: row.get("review_due_at") for row in (result.data or [])}
+    for s in sources:
+        doc_id = s.get("document_id")
+        if doc_id in by_id:
+            s["review_due_at"] = by_id[doc_id]
 
 
 # ── Convenience: collect events into a single response (non-streaming path) ─

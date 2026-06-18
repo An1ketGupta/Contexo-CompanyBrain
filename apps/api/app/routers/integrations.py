@@ -40,7 +40,7 @@ from app.auth import verify_jwt
 from app.config import get_settings
 from app.database import get_user_client
 from app.errors import NoOrganization
-from app.services.integrations import drive, email_forward, notion
+from app.services.integrations import drive, email_forward, notion, slack_inbound
 
 log = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ async def integrations_status(
     settings = get_settings()
     client = get_user_client(token)
 
-    drive_row, notion_row, slack_row, gmail_row, inbound = await asyncio.gather(
+    drive_row, notion_row, slack_row, slack_subs, gmail_row, inbound = await asyncio.gather(
         asyncio.to_thread(
             lambda: client.table("drive_integrations")
             .select("folder_ids, last_synced_at, created_at, scopes")
@@ -133,8 +133,17 @@ async def integrations_status(
         ),
         asyncio.to_thread(
             lambda: client.table("slack_integrations")
-            .select("slack_team_name, installed_at")
+            .select("slack_team_name, installed_at, scopes")
             .maybe_single().execute()
+        ),
+        asyncio.to_thread(
+            lambda: client.table("slack_channel_subscriptions")
+            .select(
+                "channel_id, channel_name, is_private, last_backfilled_at, "
+                "last_error, last_error_at"
+            )
+            .eq("org_id", org_id)
+            .execute()
         ),
         asyncio.to_thread(
             lambda: client.table("gmail_integrations")
@@ -177,6 +186,14 @@ async def integrations_status(
             "connected": bool(slack_row and slack_row.data),
             "workspace_name": (slack_row.data or {}).get("slack_team_name") if slack_row else None,
             "installed_at": (slack_row.data or {}).get("installed_at") if slack_row else None,
+            "scopes_complete": slack_inbound.has_inbound_scopes(
+                (slack_row.data or {}).get("scopes") if slack_row else None
+            ),
+            "has_canvas_scope": slack_inbound.has_canvas_scope(
+                (slack_row.data or {}).get("scopes") if slack_row else None
+            ),
+            "required_scopes": slack_inbound.required_inbound_scopes(),
+            "subscriptions": (slack_subs.data or []) if slack_subs else [],
         },
         "gmail": {
             "available": bool(settings.google_client_id),
@@ -238,6 +255,45 @@ async def drive_add_folder(
     await _require_admin(user_id, token)
     folders = await drive.add_folder(org_id=org_id, folder_id=body.folder_id, folder_name=body.folder_name)
     return {"folder_ids": folders}
+
+
+@router.get("/integrations/drive/folders/browse")
+async def drive_browse_folders(
+    q: str | None = Query(default=None, max_length=200),
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Search the connected Drive for folders by name — drives the picker UI."""
+    org_id, user_id, token = _require_org(current_user)
+    await _require_admin(user_id, token)
+    folders = await drive.list_folders(org_id=org_id, query=q)
+    return {"folders": folders}
+
+
+@router.get("/integrations/drive/picker-token")
+async def drive_picker_token(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
+    """Hand the (refreshed) Drive access token to the browser so it can launch
+    Google's native Picker. Admin-only because picking folders is an admin
+    action; the token's scope is drive.readonly + documents + drive.file, so
+    blast radius is limited even if it leaks to the page.
+    """
+    org_id, user_id, token = _require_org(current_user)
+    await _require_admin(user_id, token)
+    creds = await drive.get_org_credentials(org_id)
+    if not creds:
+        raise HTTPException(status_code=400, detail="drive_not_connected")
+    return {"access_token": creds["access_token"]}
+
+
+@router.get("/integrations/drive/folders/names")
+async def drive_folder_names(
+    ids: str = Query(..., min_length=1, max_length=2000),
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Bulk-resolve friendly names for already-configured folder IDs."""
+    org_id, _, _ = _require_org(current_user)
+    folder_ids = [fid for fid in (ids.split(",")) if fid.strip()]
+    names = await drive.get_folder_names(org_id=org_id, folder_ids=folder_ids[:50])
+    return {"names": names}
 
 
 @router.delete("/integrations/drive/folders/{folder_id}")

@@ -33,6 +33,7 @@ import inngest
 from app.database import get_service_client
 from app.inngest.client import get_inngest_client
 from app.observability import get_logger
+from app.services.webhooks import trigger_event as trigger_webhook_event
 
 log = get_logger(__name__)
 
@@ -159,6 +160,28 @@ async def knowledge_gap_threshold(ctx: inngest.Context) -> dict[str, Any]:
                 draft_id=draft_id,
                 stub_preview=(stub["content"][:600] + "…") if len(stub["content"]) > 600 else stub["content"],
             ),
+        )
+
+    # Outbound webhook. Fires at threshold-hit (debounced 24h by Inngest)
+    # so receivers get one notification per topic-per-day, not one per
+    # zero-hit search. draft_id is null when the unique-index race fired.
+    try:
+        await trigger_webhook_event(
+            org_id=org_id,
+            event="knowledge_gap.detected",
+            payload={
+                "topic": topic,
+                "count": count,
+                "draft_id": draft_id,
+                "review_url_path": f"/admin/knowledge-gaps?draft={draft_id}" if draft_id else None,
+            },
+        )
+    except Exception as exc:
+        log.warning(
+            "knowledge_gap_webhook_failed",
+            org_id=org_id,
+            topic=topic,
+            error=str(exc),
         )
 
     return {"status": "drafted", "draft_id": draft_id}

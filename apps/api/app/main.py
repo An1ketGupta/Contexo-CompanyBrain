@@ -22,6 +22,7 @@ from app.routers import (
     integrations as integrations_router,
     invitations,
     meeting_prep as meeting_prep_router,
+    notifications as notifications_router,
     organizations as organizations_router,
     public_api,
     search,
@@ -115,6 +116,7 @@ app.include_router(time_savings_router.router)
 app.include_router(approvals_router.router)
 app.include_router(compliance_router.router)
 app.include_router(support_router.router)
+app.include_router(notifications_router.router)
 
 # Inngest serve endpoint — webhook the Inngest server hits to invoke our functions.
 # Mounts at /api/inngest by default.

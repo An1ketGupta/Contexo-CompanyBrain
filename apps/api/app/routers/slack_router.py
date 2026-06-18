@@ -42,6 +42,7 @@ from app.database import get_service_client, get_user_client
 from app.errors import NoOrganization
 from app.inngest.client import get_inngest_client
 from app.services.integrations import slack as slack_service
+from app.services.integrations import slack_inbound
 from app.services.integrations.slack_commands import dispatch as dispatch_slack_command
 from app.services.integrations.slack_commands import get_slack_draft
 from app.services.llm.task_chain import execute_task_blocking
@@ -116,9 +117,25 @@ async def slack_connect(current_user: dict = Depends(verify_jwt)) -> dict[str, A
     if not settings.slack_client_id:
         raise HTTPException(status_code=503, detail="Slack integration is not configured.")
     state = _mint_state(user_id=user_id, org_id=org_id)
+    # Scope upgrade: chat:write + commands are the outbound surface; the
+    # rest enable inbound ingest of pins/canvases/files. `canvases:read`
+    # is paid-plan only — Slack quietly drops it for Free/Pro workspaces
+    # and the inbound path detects + degrades gracefully.
+    scope_str = ",".join([
+        "chat:write",
+        "commands",
+        "channels:read",
+        "channels:history",
+        "groups:read",
+        "groups:history",
+        "pins:read",
+        "files:read",
+        "users:read",
+        "canvases:read",
+    ])
     params = {
         "client_id": settings.slack_client_id,
-        "scope": "chat:write,commands",
+        "scope": scope_str,
         "redirect_uri": settings.slack_oauth_redirect_uri,
         "state": state,
     }
@@ -154,6 +171,12 @@ async def slack_callback(
     if not access or not team.get("id"):
         return _settings_redirect(error="slack_oauth_missing_fields")
 
+    # Slack returns the granted scope set as a comma-separated string on
+    # `scope`. We persist it so the inbound surface can detect when a paid-
+    # plan-only scope (canvases:read) wasn't granted and skip canvases
+    # silently rather than crashing on every event.
+    granted_scopes = [s for s in (payload.get("scope") or "").split(",") if s]
+
     svc = get_service_client()
     row = {
         "org_id": org_id,
@@ -162,6 +185,7 @@ async def slack_callback(
         "bot_token": access,
         "bot_user_id": bot_user,
         "installed_by": user_id,
+        "scopes": granted_scopes,
     }
     try:
         await asyncio.to_thread(
@@ -350,8 +374,12 @@ async def slack_events(
         payload = json.loads(body.decode("utf-8"))
         if payload.get("type") == "url_verification":
             return {"challenge": payload.get("challenge")}
-        # We don't subscribe to event types yet — accept and drop so the
-        # subscription list can be tweaked without redeploying.
+        if payload.get("type") == "event_callback":
+            # Slack's 3s ACK deadline — fan out to Inngest immediately and
+            # return. The wrapper function handles team→org resolution +
+            # routing per event type.
+            await _dispatch_inbound_event(payload)
+            return {"ok": True}
         return {"ok": True}
 
     # form-urlencoded slash command
@@ -1179,3 +1207,248 @@ def _settings_redirect(*, connected: str | None = None, error: str | None = None
     if error:
         return RedirectResponse(url=f"{base}?error={error}", status_code=302)
     return RedirectResponse(url=base, status_code=302)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Slack INBOUND — channel subscriptions + event dispatch
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+_INBOUND_EVENT_TYPES = {
+    "pin_added",
+    "pin_removed",
+    "message",
+    "file_shared",
+    "canvas_added",
+    "canvas_changed",
+    "member_joined_channel",
+}
+
+
+async def _dispatch_inbound_event(envelope: dict[str, Any]) -> None:
+    """Resolve team→org and fan out the event to Inngest.
+
+    `event_callback` envelopes carry `team_id` at the top level + `event`
+    payload nested. We trust the signature already verified upstream, then
+    just normalise the shape so the Inngest worker has a stable contract.
+    """
+    team_id = envelope.get("team_id") or ""
+    event = envelope.get("event") or {}
+    event_type = event.get("type")
+    if event_type not in _INBOUND_EVENT_TYPES:
+        return
+    org_id = await slack_inbound.find_org_by_team(team_id)
+    if not org_id:
+        log.info("slack_event_no_org team_id=%s", team_id)
+        return
+
+    client = get_inngest_client()
+    # Stable dedupe key off the event_id Slack includes per delivery — Slack
+    # retries every undelivered event up to 3 times, so we lean on this to
+    # avoid double-processing.
+    event_id = envelope.get("event_id") or f"{team_id}:{event.get('ts') or ''}"
+    await client.send(
+        inngest_pkg.Event(
+            name="slack/inbound-event",
+            data={
+                "event_type": event_type,
+                "team_id": team_id,
+                "org_id": org_id,
+                "payload": event,
+            },
+            id=f"slack-inbound-{event_id}",
+        )
+    )
+
+
+# ── Subscriptions endpoints ─────────────────────────────────────────────────
+
+
+class _SubscribeBody(BaseModel):
+    channel_id: str = Field(..., min_length=1, max_length=64)
+    channel_name: str | None = Field(default=None, max_length=200)
+    is_private: bool = Field(default=False)
+    ingest_pins: bool = Field(default=True)
+    ingest_canvases: bool = Field(default=True)
+    ingest_files: bool = Field(default=True)
+    ingest_messages: bool = Field(default=False)
+
+
+@router.get("/integrations/slack/subscriptions")
+async def slack_list_subscriptions(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Return the org's current channel allowlist."""
+    org_id, user_id, token = _require_org(current_user)
+    await _require_admin(user_id, token)
+    svc = get_service_client()
+    result = await asyncio.to_thread(
+        lambda: svc.table("slack_channel_subscriptions")
+        .select(
+            "id, channel_id, channel_name, is_private, ingest_pins, "
+            "ingest_canvases, ingest_files, ingest_messages, "
+            "last_backfilled_at, last_error, last_error_at, created_at"
+        )
+        .eq("org_id", org_id)
+        .order("created_at", desc=False)
+        .execute()
+    )
+    return {"subscriptions": result.data or []}
+
+
+@router.get("/integrations/slack/inbound-channels")
+async def slack_list_inbound_channels(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Channels the bot is currently a member of — the picker's data source.
+
+    Different from the outbound `/integrations/slack/channels` which returns
+    every channel (for posting to). Here we filter to bot-member channels
+    because the bot can only ingest from channels it's been invited to.
+    """
+    org_id, user_id, token = _require_org(current_user)
+    await _require_admin(user_id, token)
+    channels = await slack_inbound.list_bot_channels(org_id=org_id)
+    return {"channels": channels}
+
+
+@router.post(
+    "/integrations/slack/subscriptions",
+    status_code=status.HTTP_201_CREATED,
+)
+async def slack_subscribe_channel(
+    body: _SubscribeBody,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Add a channel to the ingest allowlist + queue a one-shot backfill."""
+    org_id, user_id, token = _require_org(current_user)
+    await _require_admin(user_id, token)
+
+    svc = get_service_client()
+    # Confirm we still have a Slack install — without it, the subscription
+    # row would be inert.
+    integ = await asyncio.to_thread(
+        lambda: svc.table("slack_integrations")
+        .select("slack_team_id")
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not integ or not integ.data:
+        raise HTTPException(status_code=400, detail="slack_not_connected")
+    team_id: str = integ.data["slack_team_id"]
+
+    # Resolve channel metadata server-side rather than trusting the body —
+    # the bot must actually be a member for us to read from it.
+    info = await slack_inbound.fetch_channel_info(
+        org_id=org_id, channel_id=body.channel_id
+    )
+    if not info or not info.get("is_member"):
+        raise HTTPException(
+            status_code=400,
+            detail="bot_not_in_channel",
+        )
+
+    row = {
+        "org_id": org_id,
+        "channel_id": body.channel_id,
+        "channel_name": info.get("name") or body.channel_name,
+        "is_private": bool(info.get("is_private")),
+        "ingest_pins": body.ingest_pins,
+        "ingest_canvases": body.ingest_canvases,
+        "ingest_files": body.ingest_files,
+        "ingest_messages": body.ingest_messages,
+    }
+
+    await asyncio.to_thread(
+        lambda: svc.table("slack_channel_subscriptions")
+        .upsert(row, on_conflict="org_id,channel_id")
+        .execute()
+    )
+
+    # Kick off backfill.
+    client = get_inngest_client()
+    await client.send(
+        inngest_pkg.Event(
+            name="slack/backfill-channel",
+            data={
+                "org_id": org_id,
+                "team_id": team_id,
+                "channel_id": body.channel_id,
+                "channel_name": row["channel_name"],
+            },
+            id=f"slack-backfill-{org_id}-{body.channel_id}-"
+                f"{int(time.time())}",
+        )
+    )
+
+    return {"status": "subscribed", "channel": row}
+
+
+@router.delete(
+    "/integrations/slack/subscriptions/{channel_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def slack_unsubscribe_channel(
+    channel_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> None:
+    """Remove a channel from the allowlist. Existing ingested docs stay in
+    place — admins can archive them manually via the documents page."""
+    org_id, user_id, token = _require_org(current_user)
+    await _require_admin(user_id, token)
+    svc = get_service_client()
+    await asyncio.to_thread(
+        lambda: svc.table("slack_channel_subscriptions")
+        .delete()
+        .eq("org_id", org_id)
+        .eq("channel_id", channel_id)
+        .execute()
+    )
+
+
+@router.post(
+    "/integrations/slack/subscriptions/{channel_id}/resync",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def slack_resync_channel(
+    channel_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Trigger a fresh backfill for an existing subscription."""
+    org_id, user_id, token = _require_org(current_user)
+    await _require_admin(user_id, token)
+    svc = get_service_client()
+    sub = await asyncio.to_thread(
+        lambda: svc.table("slack_channel_subscriptions")
+        .select("channel_id, channel_name")
+        .eq("org_id", org_id)
+        .eq("channel_id", channel_id)
+        .maybe_single()
+        .execute()
+    )
+    if not sub or not sub.data:
+        raise HTTPException(status_code=404, detail="subscription_not_found")
+    integ = await asyncio.to_thread(
+        lambda: svc.table("slack_integrations")
+        .select("slack_team_id")
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not integ or not integ.data:
+        raise HTTPException(status_code=400, detail="slack_not_connected")
+    client = get_inngest_client()
+    await client.send(
+        inngest_pkg.Event(
+            name="slack/backfill-channel",
+            data={
+                "org_id": org_id,
+                "team_id": integ.data["slack_team_id"],
+                "channel_id": channel_id,
+                "channel_name": sub.data.get("channel_name"),
+            },
+            id=f"slack-resync-{org_id}-{channel_id}-{int(time.time())}",
+        )
+    )
+    return {"status": "queued"}

@@ -403,6 +403,91 @@ async def _download_raw(access_token: str, file_id: str) -> str:
     return resp.text
 
 
+# ── Folder browsing (picker UI) ─────────────────────────────────────────────
+
+async def list_folders(
+    *,
+    org_id: str,
+    query: str | None = None,
+    page_size: int = 25,
+) -> list[dict[str, Any]]:
+    """Search the user's Drive for folders by name.
+
+    Used by the settings UI's folder picker. Returns at most `page_size`
+    folders, sorted by Drive's relevance ranking. We include items from shared
+    drives so workspaces with Team Drives aren't filtered out — most NirnayaIQ
+    customers keep their canonical docs in a shared drive, not My Drive.
+    """
+    creds = await get_org_credentials(org_id)
+    if not creds:
+        return []
+    access_token = creds["access_token"]
+
+    q_parts = [
+        "mimeType = 'application/vnd.google-apps.folder'",
+        "trashed = false",
+    ]
+    if query:
+        safe = query.replace("'", "\\'")
+        q_parts.append(f"name contains '{safe}'")
+
+    params = {
+        "q": " and ".join(q_parts),
+        "fields": "files(id,name,parents)",
+        "pageSize": str(max(1, min(page_size, 100))),
+        "corpora": "allDrives",
+        "includeItemsFromAllDrives": "true",
+        "supportsAllDrives": "true",
+        "orderBy": "modifiedTime desc",
+    }
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+        resp = await client.get(
+            "https://www.googleapis.com/drive/v3/files",
+            params=params,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    if resp.status_code != 200:
+        raise RuntimeError(f"drive folder list failed: {resp.status_code} {resp.text[:200]}")
+    files = resp.json().get("files", [])
+    return [
+        {"id": f["id"], "name": f.get("name") or f["id"], "parents": f.get("parents") or []}
+        for f in files
+    ]
+
+
+async def get_folder_names(*, org_id: str, folder_ids: list[str]) -> dict[str, str]:
+    """Resolve {folder_id: friendly_name} for already-configured folders.
+
+    Drive doesn't support batch `files.list` by ID, so we issue one `files.get`
+    per ID in parallel. Folders the token can no longer see (deleted, perms
+    revoked) silently fall out — the UI shows the raw ID for those, which is
+    what the user pasted in the first place.
+    """
+    if not folder_ids:
+        return {}
+    creds = await get_org_credentials(org_id)
+    if not creds:
+        return {}
+    access_token = creds["access_token"]
+
+    async def _one(client: httpx.AsyncClient, fid: str) -> tuple[str, str | None]:
+        try:
+            resp = await client.get(
+                f"https://www.googleapis.com/drive/v3/files/{fid}",
+                params={"fields": "id,name", "supportsAllDrives": "true"},
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        except Exception:
+            return fid, None
+        if resp.status_code != 200:
+            return fid, None
+        return fid, resp.json().get("name")
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+        results = await asyncio.gather(*[_one(client, fid) for fid in folder_ids])
+    return {fid: name for fid, name in results if name}
+
+
 # ── Folder management (called by the integrations router) ───────────────────
 
 # ── Org credentials helper (used by Docs write surface) ─────────────────────
