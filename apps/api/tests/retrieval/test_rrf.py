@@ -22,6 +22,8 @@ def hit(
         content=f"content of {chunk_id}",
         document_id="doc-1",
         document_name="Test Doc",
+        document_version_id=None,
+        version_number=None,
         chunk_index=0,
         page_number=None,
         section_heading=None,

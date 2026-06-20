@@ -648,6 +648,8 @@ export function useChat({
               feedback: rollback?.feedback ?? m.feedback,
               confidence: rollback?.confidence ?? m.confidence,
               intent: rollback?.intent ?? m.intent,
+              competitor_matches:
+                rollback?.competitor_matches ?? m.competitor_matches,
               other_branches: nextOther,
               error:
                 isAbort && abortReason !== "stall"
@@ -691,6 +693,7 @@ export function useChat({
         feedback: target.feedback,
         confidence: target.confidence,
         intent: target.intent,
+        competitor_matches: target.competitor_matches,
       };
       const previousServerId = target.server_id;
 
@@ -708,6 +711,7 @@ export function useChat({
             feedback: incoming.feedback,
             confidence: incoming.confidence,
             intent: incoming.intent,
+            competitor_matches: incoming.competitor_matches,
             active_branch_index: targetBranchIndex,
             other_branches: nextOther,
           };
@@ -740,6 +744,7 @@ export function useChat({
               feedback: m.feedback,
               confidence: m.confidence,
               intent: m.intent,
+              competitor_matches: m.competitor_matches,
             };
             return {
               ...m,
@@ -749,6 +754,7 @@ export function useChat({
               feedback: stashedPrev.feedback,
               confidence: stashedPrev.confidence,
               intent: stashedPrev.intent,
+              competitor_matches: stashedPrev.competitor_matches,
               active_branch_index: previousIndex,
               other_branches: nextOther,
             };
@@ -1001,6 +1007,28 @@ function handleEvent(
                   message: event.message,
                   request_id: e.request_id,
                   retry_after: e.retry_after,
+                },
+              }
+            : m,
+        ),
+      );
+      return;
+    }
+    case "moderation_block": {
+      // V4 #79 — server emitted a single SSE frame and closed the stream.
+      // Settle the assistant bubble straight into the moderation error state
+      // so ErrorPanel renders the amber/shield UI (and suppresses retry,
+      // since the same input would just re-trip the catalog).
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.local_id === assistantLocalId
+            ? {
+                ...m,
+                status: "error",
+                error: {
+                  code: "moderation_blocked",
+                  message: event.message,
+                  request_id: event.request_id,
                 },
               }
             : m,

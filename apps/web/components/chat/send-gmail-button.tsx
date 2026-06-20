@@ -21,6 +21,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, Loader2, Mail, Send } from "lucide-react";
+import type { CompetitorMatch } from "@/lib/types";
+import { CompetitorConfirmDialog } from "./competitor-confirm-dialog";
 import { SendGmailDialog } from "./send-gmail-dialog";
 import { cn } from "@/lib/utils";
 
@@ -33,13 +35,19 @@ interface GmailStatus {
 interface SendGmailButtonProps {
   messageId: string;
   body: string;
+  competitorMatches?: CompetitorMatch[];
 }
 
-export function SendGmailButton({ messageId, body }: SendGmailButtonProps) {
+export function SendGmailButton({
+  messageId,
+  body,
+  competitorMatches,
+}: SendGmailButtonProps) {
   const [status, setStatus] = useState<GmailStatus | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(false);
   const [showReauthBanner, setShowReauthBanner] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
 
   const fetchStatus = useCallback(async () => {
@@ -89,6 +97,10 @@ export function SendGmailButton({ messageId, body }: SendGmailButtonProps) {
       setShowReauthBanner(true);
       return;
     }
+    if (competitorMatches && competitorMatches.length > 0) {
+      setConfirmOpen(true);
+      return;
+    }
     setDialogOpen(true);
   };
 
@@ -133,6 +145,18 @@ export function SendGmailButton({ messageId, body }: SendGmailButtonProps) {
             Reconnect
           </a>
         </div>
+      )}
+
+      {confirmOpen && competitorMatches && (
+        <CompetitorConfirmDialog
+          matches={competitorMatches}
+          destination="Gmail"
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => {
+            setConfirmOpen(false);
+            setDialogOpen(true);
+          }}
+        />
       )}
 
       {dialogOpen && (

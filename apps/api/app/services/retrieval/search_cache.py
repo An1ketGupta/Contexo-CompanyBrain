@@ -80,7 +80,7 @@ async def _refetch_chunk_payloads(
     org_id: str,
     client: Client,
 ) -> dict[str, dict[str, Any]]:
-    """Fetch (content, document_id, document_name, chunk_index, page, heading)
+    """Fetch (content, document_id, document_name, version, chunk_index, page, heading)
     for `chunk_ids`. Returns a chunk_id → fields dict; missing chunks are
     silently dropped (the doc was deleted between cache write and read).
 
@@ -96,8 +96,8 @@ async def _refetch_chunk_payloads(
         res = await _asyncio.to_thread(
             lambda: client.table("chunks")
             .select(
-                "id, content, document_id, chunk_index, page_number, section_heading, "
-                "documents(name)"
+                "id, content, document_id, document_version_id, chunk_index, page_number, section_heading, "
+                "documents(name), document_versions(version_number)"
             )
             .in_("id", chunk_ids)
             .eq("org_id", org_id)
@@ -110,10 +110,15 @@ async def _refetch_chunk_payloads(
     out: dict[str, dict[str, Any]] = {}
     for row in (getattr(res, "data", None) or []):
         doc_join = row.get("documents") or {}
+        version_join = row.get("document_versions") or {}
         out[row["id"]] = {
             "content": row.get("content") or "",
             "document_id": row.get("document_id") or "",
             "document_name": (doc_join.get("name") if isinstance(doc_join, dict) else "") or "",
+            "document_version_id": row.get("document_version_id"),
+            "version_number": (
+                version_join.get("version_number") if isinstance(version_join, dict) else None
+            ),
             "chunk_index": int(row.get("chunk_index") or 0),
             "page_number": row.get("page_number"),
             "section_heading": row.get("section_heading"),
@@ -163,6 +168,8 @@ async def _rehydrate_hits(
                 content=payload["content"],
                 document_id=payload["document_id"],
                 document_name=payload["document_name"],
+                document_version_id=payload.get("document_version_id"),
+                version_number=payload.get("version_number"),
                 chunk_index=payload["chunk_index"],
                 page_number=payload.get("page_number"),
                 section_heading=payload.get("section_heading"),

@@ -769,6 +769,8 @@ def _dedupe_sources(hits: list[SearchHit], *, limit: int) -> list[dict]:
                 "chunk_id": h.chunk_id,
                 "document_id": h.document_id,
                 "document_name": h.document_name,
+                "document_version_id": h.document_version_id,
+                "version_number": h.version_number,
                 "page_number": h.page_number,
                 "section_heading": h.section_heading,
                 "excerpt": (h.content or "").strip()[:280],

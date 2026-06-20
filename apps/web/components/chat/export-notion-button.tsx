@@ -26,6 +26,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import type { CompetitorMatch } from "@/lib/types";
+import { CompetitorConfirmDialog } from "./competitor-confirm-dialog";
 import { cn } from "@/lib/utils";
 
 interface NotionStatus {
@@ -44,16 +46,19 @@ interface ExportNotionButtonProps {
   body: string;
   // Heuristic-derived suggested title from the first line (passed in by caller).
   suggestedTitle: string;
+  competitorMatches?: CompetitorMatch[];
 }
 
 export function ExportNotionButton({
   messageId,
   body,
   suggestedTitle,
+  competitorMatches,
 }: ExportNotionButtonProps) {
   const [status, setStatus] = useState<NotionStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
 
   const fetchStatus = useCallback(async () => {
@@ -101,6 +106,10 @@ export function ExportNotionButton({
       window.location.href = "/settings/integrations?focus=notion";
       return;
     }
+    if (competitorMatches && competitorMatches.length > 0) {
+      setConfirmOpen(true);
+      return;
+    }
     setDialogOpen(true);
   };
 
@@ -121,6 +130,17 @@ export function ExportNotionButton({
           <StickyNote className="h-3.5 w-3.5" />
         )}
       </button>
+      {confirmOpen && competitorMatches && (
+        <CompetitorConfirmDialog
+          matches={competitorMatches}
+          destination="Notion"
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => {
+            setConfirmOpen(false);
+            setDialogOpen(true);
+          }}
+        />
+      )}
       {dialogOpen && (
         <ExportNotionDialog
           messageId={messageId}

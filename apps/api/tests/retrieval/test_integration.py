@@ -318,6 +318,57 @@ async def test_fts_case_insensitive(seeded_org, service_client):
 
 
 @pytest.mark.asyncio
+async def test_archived_chunks_are_excluded_from_search(service_client):
+    org_id = str(uuid.uuid4())
+    doc_id = str(uuid.uuid4())
+    chunk_id = str(uuid.uuid4())
+
+    service_client.table("organizations").insert({
+        "id": org_id,
+        "name": "Archived Search Org",
+        "slug": f"arch-{org_id[:8]}",
+        "plan": "starter",
+    }).execute()
+    service_client.table("documents").insert({
+        "id": doc_id,
+        "org_id": org_id,
+        "name": "Archived Only Doc",
+        "file_path": "test/archived.pdf",
+        "file_type": "pdf",
+        "status": "ready",
+    }).execute()
+    service_client.table("chunks").insert({
+        "id": chunk_id,
+        "org_id": org_id,
+        "document_id": doc_id,
+        "content": "ARCHIVED-ONLY-TERM-928374 should never surface in search results.",
+        "chunk_index": 0,
+        "page_number": 1,
+        "is_archived": True,
+    }).execute()
+
+    try:
+        fts_result = await fts_search(
+            "ARCHIVED-ONLY-TERM-928374",
+            org_id,
+            service_client,
+            k=5,
+        )
+        hybrid_result = await hybrid_search(
+            "ARCHIVED-ONLY-TERM-928374",
+            org_id,
+            service_client,
+            k=5,
+        )
+        assert fts_result == []
+        assert hybrid_result == []
+    finally:
+        service_client.table("chunks").delete().eq("id", chunk_id).execute()
+        service_client.table("documents").delete().eq("id", doc_id).execute()
+        service_client.table("organizations").delete().eq("id", org_id).execute()
+
+
+@pytest.mark.asyncio
 async def test_fts_stemming_matches_inflected_forms(seeded_org, service_client):
     # "employees" should match chunks containing "employee" (English stemmer)
     with_s = await fts_search("employees", seeded_org["org_id"], service_client, k=10)

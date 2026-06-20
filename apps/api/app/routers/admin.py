@@ -951,3 +951,145 @@ async def send_weekly_digest_now(
         )
     )
     return {"queued": True}
+
+
+# ── Competitor mentions review ──────────────────────────────────────────────
+
+
+class CompetitorMentionsDismissRequest(BaseModel):
+    """Bulk-dismiss request. Either pass a list of mention ids OR a term to
+    dismiss every open mention of that term. Exactly one of the two must be
+    set so the caller can't accidentally close a wider set than intended."""
+
+    ids: list[str] | None = None
+    term: str | None = None
+
+    @field_validator("ids")
+    @classmethod
+    def _cap_ids(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        if len(v) > 500:
+            raise ValueError("Too many ids (max 500).")
+        return v
+
+
+_MENTIONS_PAGE_MAX = 200
+
+
+@router.get("/competitor-mentions")
+async def list_competitor_mentions(
+    status_filter: str = Query(default="open", pattern="^(open|dismissed|all)$", alias="status"),
+    term: str | None = Query(default=None, max_length=200),
+    user_id: str | None = Query(default=None),
+    source: str | None = Query(default=None, pattern="^(chat|agent)$"),
+    since: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=_MENTIONS_PAGE_MAX),
+    offset: int = Query(default=0, ge=0),
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Admin feed of competitor hits across the org.
+
+    Returns rows newest first, plus a `summary.by_term` count of currently
+    open mentions so the dashboard can show top-N offenders without a
+    second round trip.
+    """
+    org_id = await _require_admin(current_user)
+    svc = get_service_client()
+
+    def _query() -> Any:
+        q = (
+            svc.table("competitor_mentions")
+            .select(
+                "id, source_kind, message_id, agent_run_id, conversation_id, "
+                "user_id, matched_term, watchlist_source, snippet, match_count, "
+                "status, dismissed_by, dismissed_at, created_at",
+                count="exact",
+            )
+            .eq("org_id", org_id)
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+        )
+        if status_filter != "all":
+            q = q.eq("status", status_filter)
+        if term:
+            q = q.ilike("matched_term", term)
+        if user_id:
+            q = q.eq("user_id", user_id)
+        if source:
+            q = q.eq("source_kind", source)
+        if since:
+            q = q.gte("created_at", since)
+        return q.execute()
+
+    res = await asyncio.to_thread(_query)
+    items = res.data or []
+    total = res.count or 0
+
+    summary_res = await asyncio.to_thread(
+        lambda: svc.table("competitor_mentions")
+        .select("matched_term")
+        .eq("org_id", org_id)
+        .eq("status", "open")
+        .limit(5000)
+        .execute()
+    )
+    by_term: dict[str, int] = {}
+    for row in summary_res.data or []:
+        t = row.get("matched_term")
+        if not t:
+            continue
+        by_term[t] = by_term.get(t, 0) + 1
+    top_terms = sorted(by_term.items(), key=lambda kv: kv[1], reverse=True)[:20]
+
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "summary": {
+            "open_total": sum(by_term.values()),
+            "by_term": [{"term": t, "count": c} for t, c in top_terms],
+        },
+    }
+
+
+@router.post("/competitor-mentions/dismiss")
+async def dismiss_competitor_mentions(
+    body: CompetitorMentionsDismissRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Mark mentions as dismissed. Records who dismissed and when so the
+    log can be audited later. Idempotent — already-dismissed rows are
+    silently skipped by the `status='open'` filter."""
+    org_id = await _require_admin(current_user)
+    if (body.ids is None) == (body.term is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pass exactly one of `ids` or `term`.",
+        )
+
+    svc = get_service_client()
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "status": "dismissed",
+        "dismissed_by": current_user["user_id"],
+        "dismissed_at": now,
+    }
+
+    def _update() -> Any:
+        q = (
+            svc.table("competitor_mentions")
+            .update(payload)
+            .eq("org_id", org_id)
+            .eq("status", "open")
+        )
+        if body.ids:
+            q = q.in_("id", body.ids)
+        else:
+            q = q.eq("matched_term", body.term)
+        return q.execute()
+
+    res = await asyncio.to_thread(_update)
+    affected = len(res.data or [])
+    return {"dismissed": affected}

@@ -109,6 +109,7 @@ export default function DocumentsPage() {
               onDelete={deleteDocument}
               onRetry={retryDocument}
               onUpdateTags={updateTags}
+              onRefresh={refresh}
             />
           </div>
           <div className="md:hidden">

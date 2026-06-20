@@ -24,11 +24,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
 
+import inngest
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 
 from app.auth import verify_jwt
 from app.database import get_user_client
+from app.inngest import get_inngest_client
 
 log = logging.getLogger(__name__)
 
@@ -160,4 +162,52 @@ async def create_meeting_prep(
             detail="Could not create the meeting prep conversation.",
         ) from exc
 
+    # Fire-and-forget telemetry. The brief itself streams through /chat/stream
+    # (same UX as a regular turn) — this event is purely for the analytics
+    # rollup ("how many briefs by meeting type, who's using it") and any
+    # future follow-up automation (calendar attach, reminder, etc.). Idempotent
+    # via the conv_id so a retried POST won't double-count.
+    await _fire_meeting_prep_created(
+        conversation_id=conv_id,
+        org_id=org_id,
+        user_id=user_id,
+        body=body,
+    )
+
     return {"conversation_id": conv_id, "prompt": query, "title": title}
+
+
+async def _fire_meeting_prep_created(
+    *,
+    conversation_id: str,
+    org_id: str,
+    user_id: str,
+    body: MeetingPrepBody,
+) -> None:
+    try:
+        client = get_inngest_client()
+        await client.send(
+            inngest.Event(
+                name="meeting-prep/created",
+                # `id` keys Inngest's dedupe — a retried POST that re-uses the
+                # same conv_id won't fire the analytics handler twice.
+                id=f"meeting-prep-{conversation_id}",
+                data={
+                    "conversation_id": conversation_id,
+                    "org_id": org_id,
+                    "user_id": user_id,
+                    "meeting_type": body.meeting_type,
+                    "attendees_chars": len(body.attendees),
+                    "topics_chars": len(body.topics),
+                    "has_date": bool(body.date),
+                    "has_additional_context": bool(body.additional_context),
+                },
+            )
+        )
+    except Exception as exc:
+        # Telemetry must never break the user-facing flow.
+        log.warning(
+            "meeting_prep_event_failed",
+            conversation_id=conversation_id,
+            error=str(exc),
+        )

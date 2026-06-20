@@ -64,6 +64,8 @@ def _row_to_hit(row: dict) -> SearchHit:
         content=row["content"],
         document_id=row["document_id"],
         document_name=row["document_name"],
+        document_version_id=row.get("document_version_id"),
+        version_number=row.get("version_number"),
         chunk_index=row["chunk_index"],
         page_number=row.get("page_number"),
         section_heading=row.get("section_heading"),

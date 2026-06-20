@@ -26,6 +26,8 @@ def hit(chunk_id: str, similarity: float = 0.5, snippet: str | None = None) -> S
         content=f"text of {chunk_id}",
         document_id=DOC_ID,
         document_name="Test Doc",
+        document_version_id=None,
+        version_number=None,
         chunk_index=0,
         page_number=None,
         section_heading=None,

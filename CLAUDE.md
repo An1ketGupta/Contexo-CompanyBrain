@@ -6,11 +6,11 @@
 
 **NirnayaIQ** is a multi-tenant SaaS work execution platform. Companies upload their entire knowledge base (PDFs, SOPs, handbooks, brand guides, product docs, culture decks, meeting transcripts) and employees use it to execute any work task — writing emails, drafting job descriptions, posting Slack announcements, answering policy questions, prepping for meetings — with the AI always having full company context.
 
-**Not a Q&A chatbot. A work execution platform with AI-powered company context, 5 live integrations, compliance workflows, and autonomous background agents.**
+**Not a Q&A chatbot. A work execution platform with AI-powered company context, 9 live integrations, compliance workflows, autonomous background agents, and a Chrome extension.**
 
-Stack: Next.js (frontend) + FastAPI Python (AI/RAG backend) + Supabase (DB/auth/storage/vector).
+Stack: Next.js (frontend) + FastAPI Python (AI/RAG backend) + Supabase (DB/auth/storage/vector) + Chrome MV3 extension.
 
-Current phase: Pre-seed, free-tier infrastructure, solo engineer (Aniket). Codebase has shipped through v5 + an Agent sprint (35 DB migrations, production-ready).
+Current phase: Pre-seed, free-tier infrastructure, solo engineer (Aniket). Codebase has shipped through v5 + an Agent sprint (41 DB migrations, production-ready).
 
 ---
 
@@ -20,9 +20,9 @@ Current phase: Pre-seed, free-tier infrastructure, solo engineer (Aniket). Codeb
 apps/
   api/                   FastAPI Python backend
     app/
-      services/          30+ service modules
-      routers/           20+ API routers
-      inngest/           17 Inngest background job files
+      services/          35+ service modules
+      routers/           25+ API routers
+      inngest/           20 Inngest background job files
       models/            Pydantic models
       middleware/
       auth.py, config.py, database.py, errors.py, main.py
@@ -35,13 +35,21 @@ apps/
     app/
       (auth)/            login, signup, accept-invite
       (dashboard)/       chat, documents, settings, activity, approvals,
-                         compliance, insights, help, admin (10 pages)
-      api/               60+ Next.js proxy routes to FastAPI
-    components/          100+ components (chat 30+, documents 15+, admin 10+)
-    hooks/               15+ custom hooks
+                         compliance, insights, help, history, notifications,
+                         archive, admin (11 pages)
+      api/               70+ Next.js proxy routes to FastAPI
+    components/          100+ components (chat 30+, documents 15+, admin 10+,
+                         settings 2+)
+    hooks/               18+ custom hooks
     lib/                 types, utils, API client, Supabase client
+extensions/
+  chrome/                MV3 Chrome side-panel extension ("Company Brain")
+    src/
+      background.ts      Service worker (opens panel, scrapes page via Readability)
+      sidepanel/         React side-panel app (chat + "Add to Brain")
+      manifest.config.ts Vite/CRXJS manifest definition
 supabase/
-  migrations/            35 SQL migration files (001 → 035)
+  migrations/            41 SQL migration files (001 → 041)
 ARCHITECTURE.md          Full tech stack decisions + data models
 ROADMAP.md / V2-V5_Roadmap.md / Agent_Roadmap.md
 PRICING.md
@@ -69,7 +77,15 @@ uv run uvicorn app.main:app --reload  # http://localhost:8000
 **Supabase local:**
 ```bash
 supabase start    # starts local Postgres + Auth + Storage
-supabase db push  # apply all 35 migrations
+supabase db push  # apply all 41 migrations
+```
+
+**Chrome extension:**
+```bash
+cd extensions/chrome
+pnpm install
+pnpm dev          # Vite/CRXJS dev build — load unpacked from dist/ in chrome://extensions
+pnpm build        # production build
 ```
 
 **Environment files:**
@@ -99,6 +115,7 @@ supabase db push  # apply all 35 migrations
 | LLM Observability | Langfuse (tracing, prompt versioning, sample rate) |
 | Error Tracking | Sentry |
 | Document Parsing | PyMuPDF (PDF), python-docx (DOCX), openpyxl (XLSX), python-pptx (PPTX), beautifulsoup4 (HTML) |
+| Chrome Extension | MV3 side panel, Vite + @crxjs/vite-plugin + React + TypeScript, @mozilla/readability |
 | Frontend Hosting | Vercel |
 | Backend Hosting | Railway (Dockerfile + railway.json) |
 
@@ -138,9 +155,10 @@ apps/api/app/
 │   │   ├── pipeline.py            Orchestrates parse → chunk → embed → store
 │   │   └── store.py               Writes chunks + embeddings to Supabase
 │   ├── retrieval/
-│   │   ├── vector_search.py       pgvector cosine search (k=8)
-│   │   ├── fts_search.py          PostgreSQL full-text search (LIMIT 20)
-│   │   └── hybrid_search.py       RRF fusion — called by search_company_knowledge tool
+│   │   ├── vector_search.py       pgvector cosine search (k=8); returns version_number
+│   │   ├── fts_search.py          PostgreSQL full-text search (LIMIT 20); returns version_number
+│   │   ├── hybrid_search.py       RRF fusion — called by search_company_knowledge tool
+│   │   └── search_cache.py        Redis-cached hybrid_search (60s TTL, rehydrates text from PG on hit)
 │   ├── llm/
 │   │   ├── client.py              Gemini/Claude/OpenAI adapter + SEARCH_TOOL definition
 │   │   ├── task_chain.py          Tool-use pipeline: LLM → parallel search → generation
@@ -167,16 +185,21 @@ apps/api/app/
 │   ├── approvals.py               Approval workflow service (email + token-based)
 │   ├── auto_tagger.py             Auto-assigns tags to uploaded documents
 │   ├── citation_tracker.py        Tracks source documents used per output
+│   ├── competitor_detector.py     Regex-based competitor mention detection (no LLM)
 │   ├── compliance.py              Policy compliance check service
 │   ├── coverage.py                Knowledge base coverage metrics
 │   ├── document_summary.py        Auto-generates per-document summaries
+│   ├── documents_cache.py         Invalidates doc-list + search caches on doc change
 │   ├── health_score.py            Document staleness / health scoring
 │   ├── intent.py                  Writing vs. analysis intent classification
 │   ├── moderation.py              Content moderation (profanity, PII detection)
+│   ├── notifications.py           In-app notification creation + delivery
 │   ├── observability.py           Sentry + structured logging setup
 │   ├── onboarding.py              Onboarding flow orchestration
 │   ├── org_config.py              Per-org AI configuration
+│   ├── query_logs.py              Per-turn query log writer (powers /history)
 │   ├── rate_limit.py              Per-user/per-org rate limiting (Redis-backed)
+│   ├── recommendations.py         Recommended-documents widget logic
 │   ├── redis_cache.py             Upstash Redis wrapper
 │   ├── summarization.py           Conversation summarization
 │   ├── time_savings.py            Computes and stores time-saved metrics
@@ -196,15 +219,19 @@ apps/api/app/
 │   ├── slack_router.py            Slack OAuth + slash commands + block kit events
 │   ├── gmail_router.py            Gmail OAuth + send endpoint
 │   ├── integrations.py            OAuth flows (Drive, Notion, Email forward)
+│   ├── integrations_v2.py         Extended OAuth flows for new providers
+│   ├── notifications.py           In-app notifications CRUD
 │   ├── public_api.py              /v1 API key-authenticated public endpoints
+│   ├── support.py                 Support ticket endpoints
 │   ├── admin.py                   Admin: analytics, coverage, health, knowledge gaps,
-│   │                              agent runs, compliance, moderation, support, digests
+│   │                              agent runs, compliance, moderation, support, digests,
+│   │                              competitor mentions
 │   ├── meeting_prep.py            Meeting notes + prep endpoints
 │   ├── settings.py                User + org settings
 │   ├── invitations.py             Team invitation flow
 │   ├── organizations.py           Org management (admin only)
 │   ├── team.py                    Team/workspace management
-│   ├── document_versions.py       Document version history
+│   ├── document_versions.py       Version upload (init/complete), version history, diffs
 │   ├── sharing.py                 Public conversation share links
 │   ├── search.py                  Document search endpoint
 │   ├── time_savings.py            Time savings analytics endpoint
@@ -215,6 +242,7 @@ apps/api/app/
 ├── inngest/
 │   ├── functions.py               Document ingestion pipeline
 │   ├── approval_functions.py      Approval workflow steps + email dispatch
+│   ├── archive_functions.py       Conversation auto-archive + retention-delete crons (daily)
 │   ├── compliance_functions.py    Policy compliance checks + Slack notifications
 │   ├── feedback_functions.py      User feedback processing
 │   ├── gmail_functions.py         Gmail send + delivery tracking
@@ -224,7 +252,9 @@ apps/api/app/
 │   ├── meeting_functions.py       Meeting transcript processing
 │   ├── onboarding_functions.py    Onboarding workflows
 │   ├── policy_functions.py        Policy propagation + compliance
+│   ├── query_log_retention.py     Prunes old query_logs rows on a schedule
 │   ├── slack_functions.py         Slack message posting
+│   ├── slack_inbound_functions.py Handles inbound Slack messages to the bot
 │   ├── support_functions.py       Support ticket generation
 │   ├── version_diff_functions.py  Document version diffing
 │   ├── webhook_functions.py       Webhook event dispatch
@@ -249,12 +279,16 @@ apps/web/
 │       ├── settings/integrations/page.tsx  Drive, Notion, Slack, Gmail, Email forward
 │       ├── settings/collections/page.tsx   Document collections
 │       ├── settings/webhooks/page.tsx      Outbound webhooks
+│       ├── settings/templates/page.tsx     Prompt template library management
 │       ├── activity/page.tsx      Team activity feed
 │       ├── approvals/page.tsx     Pending approval queue
+│       ├── archive/page.tsx       Archived conversations
 │       ├── compliance/pending/page.tsx  Policy acknowledgements
+│       ├── history/page.tsx       Per-user query history (powered by query_logs)
 │       ├── insights/page.tsx      Analytics (time saved, knowledge gaps, coverage)
+│       ├── notifications/page.tsx In-app notifications feed
 │       ├── help/...               FAQ + help articles
-│       └── admin/                 10 admin pages:
+│       └── admin/                 11 admin pages:
 │           ├── analytics/         Product telemetry charts
 │           ├── coverage/          Knowledge base coverage
 │           ├── health/            Document health scores
@@ -263,6 +297,7 @@ apps/web/
 │           ├── confidence/        Confidence threshold settings
 │           ├── compliance/        Compliance status grid
 │           ├── agent-runs/        Agent execution history + logs
+│           ├── competitor-mentions/ Competitor mention log (org + user watchlists)
 │           ├── support/           Support ticket queue
 │           └── support/[id]/      Individual ticket
 ├── components/
@@ -285,17 +320,29 @@ apps/web/
 │   ├── compliance/                Acknowledgement banner + dialog
 │   ├── command-palette/           Cmd+K (search conversations, docs, actions)
 │   ├── onboarding/                First-run wizard
+│   ├── settings/
+│   │   ├── collection-form-dialog.tsx  Create/edit collection
+│   │   └── template-form-dialog.tsx    Create/edit prompt template
 │   └── ui/                        shadcn/ui primitives
 └── hooks/
     ├── use-chat.ts                SSE streaming + conversation state
-    ├── use-documents.ts           Document list + SWR
-    ├── use-documents-realtime.ts  Supabase Realtime for document status updates
+    ├── use-conversation.ts        Single conversation data + mutations
     ├── use-conversations.ts       Conversation list + branching
     ├── use-collections.ts         Document collections
-    ├── use-templates.ts           Saved prompt templates
-    ├── use-usage.ts               Monthly quota status
+    ├── use-debounced.ts           Generic debounce hook
+    ├── use-documents.ts           Document list + SWR
+    ├── use-documents-realtime.ts  Supabase Realtime for document status updates
+    ├── use-document-status.ts     Per-document processing status polling
+    ├── use-document-ready-toast.ts  Toast when doc finishes processing
     ├── use-keyboard-shortcuts.ts  Cmd+K, Cmd+/, etc.
-    └── use-document-ready-toast.ts  Toast when doc finishes processing
+    ├── use-media-query.ts         Responsive breakpoint detection
+    ├── use-notifications.ts       In-app notification list + mark-read
+    ├── use-organization.ts        Current org data + mutations
+    ├── use-query-history.ts       Per-user query history (query_logs)
+    ├── use-recommendations.ts     Recommended-documents widget
+    ├── use-templates.ts           Saved prompt templates (CRUD + recordUse)
+    ├── use-usage.ts               Monthly quota status
+    └── use-user.ts                Current user + org (useCurrentUser)
 ```
 
 ---
@@ -397,19 +444,24 @@ ALLOWED_ORIGINS=                  # comma-separated CORS origins
 
 ## Database Schema
 
-35 migrations (001 → 035). All tables have RLS enabled with `org_id` on every row.
+41 migrations (001 → 041). All tables have RLS enabled with `org_id` on every row.
 
 ```sql
 -- Core
-organizations         id, name, slug, plan, created_at, ai_instructions
-users                 id (= auth.uid), org_id, role, display_name, activity_private
+organizations         id, name, slug, plan, created_at, ai_instructions,
+                      competitor_names TEXT[], recommended_documents JSONB,
+                      metadata JSONB
+users                 id (= auth.uid), org_id, role, display_name, activity_private,
+                      competitor_names TEXT[]
 documents             id, org_id, name, file_path, file_type, status, chunk_count,
-                      health_score, health_label, gap_flag_count, summary, toc
+                      health_score, health_label, gap_flag_count, summary, toc,
+                      current_version_id, requires_acknowledgement
 chunks                id, org_id, document_id, content, content_tsv (generated),
-                      chunk_index, page_number, section_heading
+                      chunk_index, page_number, section_heading,
+                      is_archived, document_version_id
 embeddings            id, chunk_id, org_id, embedding vector(768)
 conversations         id, org_id, user_id, title, scoped_document_id,
-                      scoped_tags, scoped_collection_id
+                      scoped_tags, scoped_collection_id, is_archived
 messages              id, conversation_id, org_id, role, content, sources JSONB,
                       feedback, delivery_status, langfuse_trace_id, metadata JSONB,
                       parent_message_id, is_active_branch, is_pinned
@@ -420,12 +472,21 @@ invitations           id, org_id, email, inviter_id, token, accepted_at, expires
 -- Features
 document_tags         id, org_id, name, created_at
 document_collections  id, org_id, creator_id, name, tag_filters, created_at
-templates             id, org_id, creator_id, name, prompt, created_at
+document_versions     id, document_id, version_number, file_path, file_size_bytes,
+                      uploaded_by, is_current, content_hash, chunk_summary, created_at
+document_diffs        id, document_id, from_version_id, to_version_id,
+                      from_version, to_version, diff_summary, created_at
+prompt_templates      id, org_id, created_by, title, description, template_text,
+                      category, is_shared, is_builtin, use_count, variables JSONB
 shared_conversations  id, conversation_id, token, expires_at, is_public
+query_logs            id, user_id, org_id, conversation_id, message_id, query_text,
+                      intent, response_length, source_count, tool_calls, latency_ms,
+                      model_used, created_at
 
 -- Integrations
-integrations          id, org_id, user_id, provider, access_token, refresh_token,
-                      metadata JSONB, connected_at
+integrations          id, org_id, scope_user_id, provider, access_token, refresh_token,
+                      token_expiry, scopes, metadata JSONB, resources JSONB,
+                      sync_cursor, last_synced_at, last_error, webhook_secret
 gmail_integrations    id, org_id, user_id, email_address, has_send_scope, connected_at
 api_keys              id, org_id, user_id, key_hash, name, last_used_at
 
@@ -440,13 +501,19 @@ document_drafts       id, org_id, creator_id, document_id, content, status, appr
 agent_runs            id, org_id, user_id, agent_type, status, result_json, created_at
 meeting_transcripts   id, org_id, uploader_id, file_path, transcript_text, status
 
--- Observability
+-- Notifications & Observability
+notifications         id, org_id, user_id, type, title, body, metadata JSONB,
+                      link_url, dedupe_key, read_at, created_at
+competitor_mentions   id, org_id, user_id, source_type, source_id, matched_term,
+                      watchlist_type, snippet, dismissed_at, created_at
 analytics_events      id, org_id, user_id, event_type, metadata JSONB, created_at
 activity_feed         id, org_id, user_id, activity_type, summary, is_private, created_at
 webhooks              id, org_id, event_type, url, metadata JSONB
 ```
 
 `content_tsv` in `chunks` is a generated column — never write to it directly.
+
+`chunks.is_archived = true` = soft-deleted by a version upload. Search RPCs exclude archived rows. Hard-delete only happens when the parent document is deleted. No automated purge job exists — archived chunks accumulate until document deletion.
 
 ---
 
@@ -501,6 +568,20 @@ Gmail notes:
 
 ---
 
+## Chrome Extension
+
+MV3 side-panel extension, name "Company Brain". Published separately from the web app.
+
+**Two capabilities:**
+1. **Chat** — streams chat against the org's knowledge base from inside any browser tab. Uses the same `/chat/stream` SSE endpoint as the web app. Conversation threading via `conversation_id` stored in component state.
+2. **"Add to Brain"** — scrapes the active tab via `@mozilla/readability` (runs in service worker, serializes DOM via `chrome.scripting.executeScript`), then POSTs to `/documents/from-url` to ingest the page as a document.
+
+**Auth**: Session stored in `chrome.storage.local` key `cb.session.v1`. Sign-in goes through Supabase auth; the token is passed as a Bearer header on every API call. Session expiry triggers a re-login flow.
+
+**Permissions used**: `sidePanel`, `scripting`, `activeTab`, `storage`, `tabs`. No `<all_urls>` host permission — `activeTab` covers scraping only on user gesture.
+
+---
+
 ## Background Agents
 
 Agents are triggered by Inngest events (not HTTP requests). All extend `BaseAgent` and use the same tool-use loop as chat (max 4 rounds). They write their outputs to the DB.
@@ -544,7 +625,7 @@ Agents are triggered by Inngest events (not HTTP requests). All extend `BaseAgen
 ## Common Tasks
 
 **Add a new database table:**
-1. Create `supabase/migrations/036_description.sql`
+1. Create `supabase/migrations/042_description.sql`
 2. Add table + RLS policy + relevant indexes (org_id, org_id + status, etc.)
 3. Run `supabase db push`
 4. Add TypeScript type to `apps/web/lib/types.ts`
@@ -567,6 +648,13 @@ Agents are triggered by Inngest events (not HTTP requests). All extend `BaseAgen
 3. Add Inngest polling function in `apps/api/app/inngest/integration_functions.py`
 4. Store tokens in `integrations` table (encrypted at rest via Supabase)
 5. Add settings UI in `apps/web/app/(dashboard)/settings/integrations/page.tsx`
+
+**Add a feature to the Chrome extension:**
+- Extension lives in `extensions/chrome/src/sidepanel/` (React side-panel app)
+- `background.ts` is the MV3 service worker — handles tab scraping via `chrome.scripting.executeScript` + Readability
+- Auth session stored in `chrome.storage.local` via `sidepanel/lib/storage.ts`
+- API calls go through `sidepanel/lib/api.ts` (uses the public Next.js API URL, not FastAPI directly)
+- The extension uses `activeTab` permission only — no idle content scripts
 
 **Switch LLM from Gemini to Claude:**
 1. Set `LLM_PROVIDER=claude` in env

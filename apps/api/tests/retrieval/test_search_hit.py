@@ -14,6 +14,8 @@ def base_hit(**overrides) -> SearchHit:
         content="Employee vacation policy allows 20 days.",
         document_id="doc-1",
         document_name="HR Handbook",
+        document_version_id=None,
+        version_number=None,
         chunk_index=3,
         page_number=7,
         section_heading="Leave Policy",

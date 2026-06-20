@@ -146,6 +146,14 @@ function DocumentCard({
           {doc.name}
         </p>
         <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+          {doc.current_version_number != null && (
+            <>
+              <span className="rounded-full bg-muted px-1.5 py-0.5 font-medium text-muted-foreground">
+                v{doc.current_version_number}
+              </span>
+              <span>Â·</span>
+            </>
+          )}
           <StatusBadge status={doc.status} errorReason={errorReason} />
           <span>·</span>
           <span title={formatAbsolute(doc.created_at)}>

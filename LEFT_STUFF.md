@@ -1,1 +1,0 @@
-The competitor stuff of checking whether the competitior name is mentioned or not.

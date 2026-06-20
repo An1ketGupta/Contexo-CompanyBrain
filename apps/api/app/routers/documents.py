@@ -338,6 +338,7 @@ async def complete_upload(
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
     org_id: str | None = current_user["org_id"]
+    user_id: str | None = current_user.get("user_id")
     if not org_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No organization found.")
 
@@ -356,8 +357,19 @@ async def complete_upload(
     if not result.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
 
+    initial_version = await _ensure_initial_version_row(
+        doc_id=body.doc_id,
+        org_id=org_id,
+        user_id=user_id,
+        client=svc,
+    )
+
     await _trigger_processing(
-        body.doc_id, org_id, result.data["file_path"], result.data["file_type"]
+        body.doc_id,
+        org_id,
+        result.data["file_path"],
+        result.data["file_type"],
+        version_id=initial_version["id"] if initial_version else None,
     )
 
     # V3 #80 — the doc row now exists in 'pending'; an org refreshing the
@@ -591,7 +603,7 @@ async def list_documents(
 
     def _run() -> Any:
         q = client.table("documents").select(
-            "id, name, file_type, file_size_bytes, status, chunk_count, tags, metadata, created_at, health_score, health_label, last_accessed_at, review_frequency_days, review_due_at, last_reviewed_at",
+            "id, name, file_type, file_size_bytes, status, chunk_count, tags, metadata, created_at, health_score, health_label, last_accessed_at, review_frequency_days, review_due_at, last_reviewed_at, current_version_id",
             count="exact",
         )
         if status_filter:
@@ -618,8 +630,12 @@ async def list_documents(
         return q.execute()
 
     result = await asyncio.to_thread(_run)
+    documents = await _attach_version_summaries(
+        client=client,
+        documents=list(result.data or []),
+    )
     payload = {
-        "documents": result.data or [],
+        "documents": documents,
         "total": result.count or 0,
         "limit": limit,
         "offset": offset,
@@ -1264,6 +1280,7 @@ async def _trigger_processing(
     file_type: str,
     *,
     attempt_key: str | None = None,
+    version_id: str | None = None,
 ) -> None:
     """Emit the doc/uploaded event. Inngest's process-document function picks it up.
 
@@ -1285,6 +1302,7 @@ async def _trigger_processing(
                     "org_id": org_id,
                     "file_path": file_path,
                     "file_type": file_type,
+                    "version_id": version_id,
                 },
                 id=event_id,
             )
@@ -1399,6 +1417,131 @@ async def _maybe_auto_match_recommendation(*, doc_id: str, org_id: str) -> None:
             "matched_key": updated[idx].get("key"),
         },
     )
+
+
+async def _ensure_initial_version_row(
+    *,
+    doc_id: str,
+    org_id: str,
+    user_id: str | None,
+    client,
+) -> dict[str, Any] | None:
+    """Ensure first-time uploads get a v1 row and `documents.current_version_id`.
+
+    Existing docs that already have a current version are left untouched so this
+    helper is safe to call on every `/upload/complete`.
+    """
+    existing = await asyncio.to_thread(
+        lambda: client.table("document_versions")
+        .select("id, version_number, file_path")
+        .eq("document_id", doc_id)
+        .eq("is_current", True)
+        .limit(1)
+        .execute()
+    )
+    rows = existing.data or []
+    if rows:
+        return rows[0]
+
+    doc_res = await asyncio.to_thread(
+        lambda: client.table("documents")
+        .select("file_path, file_size_bytes, created_at")
+        .eq("id", doc_id)
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    doc = (doc_res and doc_res.data) or None
+    if not doc or not doc.get("file_path"):
+        return None
+
+    version_id = str(uuid.uuid4())
+    row = {
+        "id": version_id,
+        "document_id": doc_id,
+        "version_number": 1,
+        "file_path": doc["file_path"],
+        "file_size_bytes": doc.get("file_size_bytes"),
+        "uploaded_by": user_id,
+        "is_current": True,
+        "created_at": doc.get("created_at"),
+    }
+
+    try:
+        await asyncio.to_thread(
+            lambda: client.table("document_versions").insert(row).execute()
+        )
+    except Exception:
+        latest = await asyncio.to_thread(
+            lambda: client.table("document_versions")
+            .select("id, version_number, file_path")
+            .eq("document_id", doc_id)
+            .eq("is_current", True)
+            .limit(1)
+            .execute()
+        )
+        current = (latest.data or [])
+        return current[0] if current else None
+
+    await asyncio.to_thread(
+        lambda: client.table("documents")
+        .update({"current_version_id": version_id})
+        .eq("id", doc_id)
+        .eq("org_id", org_id)
+        .execute()
+    )
+    return row
+
+
+async def _attach_version_summaries(
+    *,
+    client,
+    documents: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Hydrate current version number + history count for the documents list."""
+    if not documents:
+        return documents
+
+    doc_ids = [d["id"] for d in documents if d.get("id")]
+    if not doc_ids:
+        return documents
+
+    res = await asyncio.to_thread(
+        lambda: client.table("document_versions")
+        .select("id, document_id, version_number, is_current, created_at")
+        .in_("document_id", doc_ids)
+        .order("version_number", desc=True)
+        .execute()
+    )
+    versions = res.data or []
+
+    counts: dict[str, int] = {}
+    current: dict[str, dict[str, Any]] = {}
+    for row in versions:
+        doc_id = row.get("document_id")
+        if not doc_id:
+            continue
+        counts[doc_id] = counts.get(doc_id, 0) + 1
+        chosen = current.get(doc_id)
+        if row.get("is_current") or chosen is None:
+            current[doc_id] = row
+
+    enriched: list[dict[str, Any]] = []
+    for doc in documents:
+        current_row = current.get(doc["id"])
+        enriched.append(
+            {
+                **doc,
+                "version_count": counts.get(doc["id"], 0),
+                "current_version_number": (
+                    int(current_row["version_number"]) if current_row and current_row.get("version_number") is not None else None
+                ),
+                "current_version_uploaded_at": (
+                    current_row.get("created_at") if current_row else None
+                ),
+            }
+        )
+    return enriched
 
 
 async def _trigger_chunk_retry(doc_id: str, org_id: str) -> None:

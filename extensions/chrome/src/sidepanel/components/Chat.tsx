@@ -8,7 +8,7 @@ import { signOut, SessionExpired } from '../lib/auth'
 import type { Session } from '../lib/storage'
 import { getActiveTabInfo, scrapeActiveTab } from '../lib/scrape'
 
-type Source = { doc_name: string; chunk_id?: string; excerpt?: string }
+type Source = { document_name: string; chunk_id?: string; excerpt?: string }
 type Message =
   | { role: 'user'; content: string }
   | { role: 'assistant'; content: string; sources: Source[]; streaming: boolean }
@@ -297,30 +297,65 @@ export default function Chat({
   )
 }
 
+function renderInline(text: string): React.ReactNode {
+  const segments = text.split(/(\*\*[^*]+\*\*)/g)
+  return segments.map((seg, i) =>
+    seg.startsWith('**') && seg.endsWith('**')
+      ? <strong key={i}>{seg.slice(2, -2)}</strong>
+      : seg,
+  )
+}
+
+function renderMarkdown(text: string): React.ReactNode {
+  const lines = text.split('\n')
+  const nodes: React.ReactNode[] = []
+  let listItems: React.ReactNode[] = []
+  let k = 0
+
+  function flushList() {
+    if (listItems.length > 0) {
+      nodes.push(<ul key={k++} className="cb-md-ul">{listItems}</ul>)
+      listItems = []
+    }
+  }
+
+  for (const line of lines) {
+    const listMatch = line.match(/^[\*\-]\s+(.+)/)
+    if (listMatch) {
+      listItems.push(<li key={listItems.length}>{renderInline(listMatch[1])}</li>)
+      continue
+    }
+    flushList()
+    if (line.trim() === '') continue
+    if (line.startsWith('### ') || line.startsWith('## ') || line.startsWith('# ')) {
+      const content = line.replace(/^#{1,3}\s+/, '')
+      nodes.push(<p key={k++} className="cb-md-h">{renderInline(content)}</p>)
+    } else {
+      nodes.push(<p key={k++} className="cb-md-p">{renderInline(line)}</p>)
+    }
+  }
+  flushList()
+  return nodes
+}
+
 function MessageBubble({ message }: { message: Message }) {
   if (message.role === 'user') {
     return (
       <div className="cb-msg cb-msg--user">
-        <div className="cb-msg-bubble">{message.content}</div>
+        <div className="cb-msg-bubble cb-msg-bubble--user">{message.content}</div>
       </div>
     )
   }
   return (
     <div className="cb-msg cb-msg--asst">
-      <div className="cb-msg-bubble">
-        {message.content || (message.streaming ? '…' : '')}
+      <div className="cb-msg-bubble cb-msg-bubble--asst">
+        {message.content
+          ? renderMarkdown(message.content)
+          : message.streaming
+            ? <span className="cb-subtle">…</span>
+            : null}
         {message.streaming && <span className="cb-cursor">▍</span>}
       </div>
-      {message.sources.length > 0 && (
-        <div className="cb-sources">
-          <div className="cb-sources-label">Based on</div>
-          <ul>
-            {message.sources.map((s, i) => (
-              <li key={`${s.chunk_id ?? i}`}>{s.doc_name}</li>
-            ))}
-          </ul>
-        </div>
-      )}
     </div>
   )
 }

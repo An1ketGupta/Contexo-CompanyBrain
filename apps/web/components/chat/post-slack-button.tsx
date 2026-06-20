@@ -14,6 +14,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, MessageSquare } from "lucide-react";
+import type { CompetitorMatch } from "@/lib/types";
+import { CompetitorConfirmDialog } from "./competitor-confirm-dialog";
 import { PostSlackDialog } from "./post-slack-dialog";
 import { cn } from "@/lib/utils";
 
@@ -26,12 +28,18 @@ interface SlackStatus {
 interface PostSlackButtonProps {
   messageId: string;
   body: string;
+  competitorMatches?: CompetitorMatch[];
 }
 
-export function PostSlackButton({ messageId, body }: PostSlackButtonProps) {
+export function PostSlackButton({
+  messageId,
+  body,
+  competitorMatches,
+}: PostSlackButtonProps) {
   const [status, setStatus] = useState<SlackStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [postedTo, setPostedTo] = useState<string | null>(null);
 
   const fetchStatus = useCallback(async () => {
@@ -81,6 +89,10 @@ export function PostSlackButton({ messageId, body }: PostSlackButtonProps) {
       window.location.href = "/settings/integrations?focus=slack";
       return;
     }
+    if (competitorMatches && competitorMatches.length > 0) {
+      setConfirmOpen(true);
+      return;
+    }
     setDialogOpen(true);
   };
 
@@ -105,6 +117,18 @@ export function PostSlackButton({ messageId, body }: PostSlackButtonProps) {
           <MessageSquare className="h-3.5 w-3.5" />
         )}
       </button>
+
+      {confirmOpen && competitorMatches && (
+        <CompetitorConfirmDialog
+          matches={competitorMatches}
+          destination="Slack"
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => {
+            setConfirmOpen(false);
+            setDialogOpen(true);
+          }}
+        />
+      )}
 
       {dialogOpen && (
         <PostSlackDialog

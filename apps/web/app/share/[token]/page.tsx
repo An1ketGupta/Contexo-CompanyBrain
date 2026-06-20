@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Brain, FileText } from "lucide-react";
+import { Brain } from "lucide-react";
 import { Markdown } from "@/components/chat/markdown";
 
 const API_URL = process.env.API_URL ?? "http://localhost:8000";
@@ -68,29 +68,6 @@ export default async function SharePage({
             <Markdown>{data.content}</Markdown>
           </div>
 
-          {data.sources && data.sources.length > 0 && (
-            <div className="mt-5 border-t border-border pt-4">
-              <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Based on
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {data.sources.map((s, i) => (
-                  <span
-                    key={i}
-                    className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
-                  >
-                    <FileText className="h-3 w-3" />
-                    {s.document_name ?? "Untitled"}
-                    {s.page_number ? (
-                      <span className="text-muted-foreground/70">
-                        · p. {s.page_number}
-                      </span>
-                    ) : null}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="mt-6 text-center">

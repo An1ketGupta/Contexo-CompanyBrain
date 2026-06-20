@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { mutate as globalMutate } from "swr";
 import { Loader2, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
 
@@ -85,6 +86,11 @@ export function UploadVersionButton({
       toast.success(
         `Uploaded v${version_number} of "${documentName}". Re-processing…`,
       );
+      await Promise.allSettled([
+        globalMutate("/api/documents"),
+        globalMutate(`/api/documents/${documentId}/versions`),
+        globalMutate(`/api/documents/${documentId}/diffs`),
+      ]);
       onUploaded?.();
     } catch (err) {
       toast.error((err as Error).message || "Couldn't upload new version.");

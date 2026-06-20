@@ -95,6 +95,7 @@ interface CitationGroup {
   key: string;
   document_name: string;
   document_id: string | null;
+  version_number: number | null;
   pages: (number | null)[];
   excerpts: { page_number: number | null; excerpt: string }[];
   review_due_at: string | null;
@@ -110,6 +111,7 @@ function groupByDocument(sources: MessageSource[]): CitationGroup[] {
         key,
         document_name: s.document_name,
         document_id: docId,
+        version_number: s.version_number ?? null,
         pages: [],
         excerpts: [],
         review_due_at: s.review_due_at ?? null,
@@ -120,6 +122,9 @@ function groupByDocument(sources: MessageSource[]): CitationGroup[] {
       g.pages.push(s.page_number);
     }
     g.excerpts.push({ page_number: s.page_number, excerpt: s.excerpt });
+    if (g.version_number == null && s.version_number != null) {
+      g.version_number = s.version_number;
+    }
     if (g.review_due_at == null && s.review_due_at) {
       g.review_due_at = s.review_due_at;
     }
@@ -156,6 +161,8 @@ function CitationCard({ group }: { group: CitationGroup }) {
       : group.pages.length === 1
         ? `Page ${group.pages[0]}`
         : `${group.pages.length} pages`;
+  const versionLabel =
+    group.version_number != null ? `v${group.version_number}` : null;
 
   const openDocument = async (preferredPage?: number | null) => {
     if (!group.document_id) {
@@ -202,11 +209,20 @@ function CitationCard({ group }: { group: CitationGroup }) {
       >
         <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-xs font-medium text-foreground" title={group.document_name}>
-            {group.document_name}
-          </p>
-          {pageLabel && (
-            <p className="truncate text-[11px] text-muted-foreground">{pageLabel}</p>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <p className="truncate text-xs font-medium text-foreground" title={group.document_name}>
+              {group.document_name}
+            </p>
+            {versionLabel && (
+              <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                {versionLabel}
+              </span>
+            )}
+          </div>
+          {(pageLabel || versionLabel) && (
+            <p className="truncate text-[11px] text-muted-foreground">
+              {[pageLabel, versionLabel].filter(Boolean).join(" · ")}
+            </p>
           )}
         </div>
         <ChevronDown

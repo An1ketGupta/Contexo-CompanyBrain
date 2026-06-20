@@ -29,6 +29,7 @@ import { ReviewSettingsDialog } from "./review-settings-dialog";
 import { UploadVersionButton } from "./upload-version-button";
 import { DocumentSummary } from "./document-summary";
 import { TableOfContents } from "./table-of-contents";
+import { DocumentVersionHistory } from "./version-history";
 import { VersionDiffSection } from "./version-diff-section";
 import { hasInsights, readDocumentInsights } from "./document-metadata";
 import { useCurrentUser } from "@/hooks/use-user";
@@ -40,6 +41,7 @@ interface DocumentTableProps {
   onDelete: (id: string) => Promise<void>;
   onRetry: (id: string) => Promise<void>;
   onUpdateTags: (id: string, tags: string[]) => Promise<void>;
+  onRefresh?: () => void;
 }
 
 type EmbeddingStats = { embedded: number; failed: number; total: number };
@@ -87,6 +89,7 @@ export function DocumentTable({
   onDelete,
   onRetry,
   onUpdateTags,
+  onRefresh,
 }: DocumentTableProps) {
   const allSelected =
     documents.length > 0 && documents.every((d) => selectedIds.has(d.id));
@@ -165,6 +168,7 @@ export function DocumentTable({
               onDelete={onDelete}
               onRetry={onRetry}
               onUpdateTags={onUpdateTags}
+              onRefresh={onRefresh}
             />
           ))}
         </tbody>
@@ -180,6 +184,7 @@ function Row({
   onDelete,
   onRetry,
   onUpdateTags,
+  onRefresh,
 }: {
   doc: Document;
   selected: boolean;
@@ -187,6 +192,7 @@ function Row({
   onDelete: (id: string) => Promise<void>;
   onRetry: (id: string) => Promise<void>;
   onUpdateTags: (id: string, tags: string[]) => Promise<void>;
+  onRefresh?: () => void;
 }) {
   const [tagOpen, setTagOpen] = useState(false);
   const [savingTags, setSavingTags] = useState(false);
@@ -196,7 +202,8 @@ function Row({
   const isAdmin = user?.role === "admin";
 
   const insights = readDocumentInsights(doc);
-  const canExpand = doc.status === "ready" && hasInsights(insights);
+  const canExpand = doc.status === "ready";
+  const hasExpandableInsights = hasInsights(insights);
   const maxPage = insights.toc.reduce<number | null>((max, entry) => {
     if (entry.page == null) return max;
     return max == null || entry.page > max ? entry.page : max;
@@ -255,6 +262,12 @@ function Row({
           <div className="min-w-0 flex-1">
             <p className="truncate font-medium text-foreground">{doc.name}</p>
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              {doc.current_version_number != null && (
+                <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  v{doc.current_version_number}
+                  {(doc.version_count ?? 0) > 1 ? ` of ${doc.version_count}` : ""}
+                </span>
+              )}
               {(doc.tags ?? []).length === 0 ? (
                 <button
                   type="button"
@@ -353,6 +366,7 @@ function Row({
             <UploadVersionButton
               documentId={doc.id}
               documentName={doc.name}
+              onUploaded={onRefresh}
             />
           )}
           {isAdmin && doc.status === "ready" && (
@@ -445,11 +459,18 @@ function Row({
               </section>
             )}
 
-            {!insights.summary && insights.toc.length === 0 && (
+            {!hasExpandableInsights && (
               <p className="text-sm text-muted-foreground">
-                Summary still generating — check back in a few seconds.
+                Document insights are still generating. Version history is available below.
               </p>
             )}
+
+            <section className="space-y-2 rounded-md border border-border bg-background p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Version history
+              </div>
+              <DocumentVersionHistory documentId={doc.id} />
+            </section>
 
             <VersionDiffSection documentId={doc.id} />
           </div>

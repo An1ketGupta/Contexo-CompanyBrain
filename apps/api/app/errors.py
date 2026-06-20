@@ -92,6 +92,16 @@ class UpstreamUnavailable(AppError):
     code = "upstream_unavailable"
 
 
+class ModerationBlocked(AppError):
+    """Input rejected by the moderation catalog (prompt injection, jailbreak,
+    etc.). 400 because the *request* is malformed-by-policy. Distinct code so
+    the frontend can render an amber 'this query was blocked' panel instead
+    of the red generic error UI."""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    code = "moderation_blocked"
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _request_id(request: Request) -> str | None:

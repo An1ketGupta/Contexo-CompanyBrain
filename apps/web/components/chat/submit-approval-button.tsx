@@ -39,12 +39,15 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/hooks/use-user";
+import type { CompetitorMatch } from "@/lib/types";
+import { CompetitorConfirmDialog } from "./competitor-confirm-dialog";
 
 type Channel = "gmail" | "slack";
 
 interface SubmitApprovalButtonProps {
   messageId: string;
   body: string;
+  competitorMatches?: CompetitorMatch[];
 }
 
 interface Member {
@@ -60,8 +63,13 @@ interface SlackChannel {
   is_private?: boolean;
 }
 
-export function SubmitApprovalButton({ messageId, body }: SubmitApprovalButtonProps) {
+export function SubmitApprovalButton({
+  messageId,
+  body,
+  competitorMatches,
+}: SubmitApprovalButtonProps) {
   const [open, setOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
   if (submitted) {
@@ -73,17 +81,37 @@ export function SubmitApprovalButton({ messageId, body }: SubmitApprovalButtonPr
     );
   }
 
+  const handleClick = () => {
+    if (competitorMatches && competitorMatches.length > 0) {
+      setConfirmOpen(true);
+      return;
+    }
+    setOpen(true);
+  };
+
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={handleClick}
         className="tap inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         title="Submit for approval"
         aria-label="Submit for approval"
       >
         <ShieldCheck className="h-3.5 w-3.5" />
       </button>
+
+      {confirmOpen && competitorMatches && (
+        <CompetitorConfirmDialog
+          matches={competitorMatches}
+          destination="approval"
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => {
+            setConfirmOpen(false);
+            setOpen(true);
+          }}
+        />
+      )}
 
       {open && (
         <SubmitApprovalDialog

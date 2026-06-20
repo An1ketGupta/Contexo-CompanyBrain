@@ -177,23 +177,44 @@ body,
 .cb-msg-bubble {
   padding: 8px 12px;
   border-radius: 12px;
-  white-space: pre-wrap;
   word-wrap: break-word;
   line-height: 1.5;
   max-width: 90%;
 }
 
-.cb-msg--user .cb-msg-bubble {
+.cb-msg-bubble--user {
+  white-space: pre-wrap;
   background: var(--cb-indigo);
   color: white;
   border-bottom-right-radius: 2px;
 }
 
-.cb-msg--asst .cb-msg-bubble {
+.cb-msg-bubble--asst {
+  max-width: 100%;
   background: var(--cb-surface);
   color: var(--cb-text);
   border: 1px solid var(--cb-border);
   border-bottom-left-radius: 2px;
+}
+
+/* Markdown elements inside assistant bubbles */
+.cb-md-p {
+  margin: 0 0 6px 0;
+}
+.cb-md-p:last-child {
+  margin-bottom: 0;
+}
+.cb-md-h {
+  font-weight: 600;
+  margin: 8px 0 3px 0;
+  font-size: 13px;
+}
+.cb-md-ul {
+  margin: 2px 0 6px 0;
+  padding-left: 16px;
+}
+.cb-md-ul li {
+  margin-bottom: 3px;
 }
 
 .cb-cursor {
@@ -211,24 +232,35 @@ body,
 .cb-sources {
   font-size: 11px;
   color: var(--cb-subtle);
-  padding: 0 4px;
+  padding: 2px 4px 0;
 }
 
 .cb-sources-label {
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   font-weight: 600;
   font-size: 10px;
-  margin-bottom: 2px;
+  margin-bottom: 5px;
 }
 
-.cb-sources ul {
-  margin: 0;
-  padding-left: 14px;
+.cb-sources-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
-.cb-sources li {
-  list-style: disc;
+.cb-source-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  border-radius: 20px;
+  font-size: 10px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cb-composer {

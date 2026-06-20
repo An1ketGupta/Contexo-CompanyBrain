@@ -20,6 +20,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import type { CompetitorMatch } from "@/lib/types";
+import { CompetitorConfirmDialog } from "./competitor-confirm-dialog";
 import { cn } from "@/lib/utils";
 
 interface DriveStatus {
@@ -32,17 +34,20 @@ interface ExportGDocsButtonProps {
   messageId: string;
   body: string;
   suggestedTitle: string;
+  competitorMatches?: CompetitorMatch[];
 }
 
 export function ExportGDocsButton({
   messageId,
   body,
   suggestedTitle,
+  competitorMatches,
 }: ExportGDocsButtonProps) {
   const [status, setStatus] = useState<DriveStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [showReauthBanner, setShowReauthBanner] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [createdQueued, setCreatedQueued] = useState(false);
 
   const fetchStatus = useCallback(async () => {
@@ -95,6 +100,10 @@ export function ExportGDocsButton({
       setShowReauthBanner(true);
       return;
     }
+    if (competitorMatches && competitorMatches.length > 0) {
+      setConfirmOpen(true);
+      return;
+    }
     setDialogOpen(true);
   };
 
@@ -135,6 +144,18 @@ export function ExportGDocsButton({
             Reconnect
           </a>
         </div>
+      )}
+
+      {confirmOpen && competitorMatches && (
+        <CompetitorConfirmDialog
+          matches={competitorMatches}
+          destination="Google Docs"
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => {
+            setConfirmOpen(false);
+            setDialogOpen(true);
+          }}
+        />
       )}
 
       {dialogOpen && (

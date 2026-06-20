@@ -19,7 +19,7 @@ from supabase import Client
 from app.auth import verify_jwt
 from app.config import get_settings
 from app.database import get_user_client
-from app.errors import NoOrganization
+from app.errors import ModerationBlocked, NoOrganization
 from app.observability import get_logger
 from app.services.llm import Message
 from app.services.moderation import (
@@ -158,12 +158,10 @@ async def chat(
             org_id=org_id, user_id=user_id, query=body.message,
             decision=decision, action_taken="rejected",
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "This query was blocked by content moderation. If you believe "
-                "this is in error, contact your workspace admin."
-            ),
+        raise ModerationBlocked(
+            "This query was blocked by content moderation. If you believe "
+            "this is in error, contact your workspace admin.",
+            details={"reason": decision.matched_pattern} if decision.matched_pattern else None,
         )
     if decision.result == ModerationResult.FLAGGED:
         await log_moderation_event(
@@ -328,21 +326,36 @@ async def chat_stream(
     that filter on `data:` lines.
     """
     org_id, user_id, token = _require_org(current_user)
+    request_id = getattr(request.state, "request_id", None)
 
-    # V4 #79 — moderation as STEP 0. Blocked queries never start the stream;
-    # we raise so the browser sees a 400 JSON, not a half-open SSE channel.
+    # V4 #79 — moderation as STEP 0. Blocked queries are emitted as a single
+    # `moderation_block` SSE frame (HTTP 200) rather than a 400 envelope:
+    # the user bubble has already been added optimistically client-side, so
+    # delivering the refusal through the same channel lets the existing
+    # assistant-bubble error renderer stay the single source of truth and
+    # avoids a special-case "the stream is a JSON error" branch in the hook.
     decision = moderate_input(body.message)
     if decision.result == ModerationResult.BLOCKED:
         await log_moderation_event(
             org_id=org_id, user_id=user_id, query=body.message,
             decision=decision, action_taken="rejected",
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "This query was blocked by content moderation. If you believe "
-                "this is in error, contact your workspace admin."
-            ),
+        async def _moderation_block_stream() -> AsyncIterator[bytes]:
+            yield _sse({
+                "type": "moderation_block",
+                "code": "moderation_blocked",
+                "message": (
+                    "This query was blocked by content moderation. If you "
+                    "believe this is in error, contact your workspace admin."
+                ),
+                "reason": decision.matched_pattern,
+                "request_id": request_id,
+            })
+        headers = {"X-Request-ID": request_id} if request_id else None
+        return StreamingResponse(
+            _moderation_block_stream(),
+            media_type="text/event-stream",
+            headers=headers,
         )
     if decision.result == ModerationResult.FLAGGED:
         await log_moderation_event(
@@ -355,7 +368,6 @@ async def chat_stream(
     await enforce_chat_quota(user_id=user_id, org_id=org_id)
 
     client = get_user_client(token)
-    request_id = getattr(request.state, "request_id", None)
 
     # V3 #91 — wall-clock latency for the streaming path. Captured before the
     # generator's first yield so it includes everything the user perceives.

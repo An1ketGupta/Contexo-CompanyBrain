@@ -78,7 +78,7 @@ export type ChatStreamEvent =
   | { type: 'start'; conversation_id: string }
   | { type: 'searching'; query?: string }
   | { type: 'searched'; query?: string; count?: number }
-  | { type: 'sources'; sources: Array<{ doc_name: string; chunk_id?: string; excerpt?: string }> }
+  | { type: 'sources'; sources: Array<{ document_name: string; chunk_id?: string; excerpt?: string }> }
   | { type: 'token'; text: string }
   | { type: 'done'; message_id: string; tool_calls?: number }
   | { type: 'error'; message?: string; code?: string; error?: string }

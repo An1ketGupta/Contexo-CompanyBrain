@@ -58,6 +58,10 @@ export interface Document {
   review_frequency_days?: number | null;
   review_due_at?: string | null;
   last_reviewed_at?: string | null;
+  current_version_id?: string | null;
+  current_version_number?: number | null;
+  current_version_uploaded_at?: string | null;
+  version_count?: number | null;
 }
 
 export interface DocumentTag {
@@ -101,6 +105,8 @@ export interface MessageSource {
   chunk_id: string;
   document_id: string | null;
   document_name: string;
+  document_version_id?: string | null;
+  version_number?: number | null;
   page_number: number | null;
   section_heading: string | null;
   excerpt: string;
@@ -183,7 +189,17 @@ export type ChatStreamEvent =
       branch_index?: number;
       total_branches?: number;
     }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  // V4 #79 — moderation refusal delivered inline on the SSE stream (HTTP 200).
+  // We keep `code: "moderation_blocked"` consistent with the HTTP envelope so
+  // the assistant bubble's ErrorPanel renders the amber/shield variant.
+  | {
+      type: "moderation_block";
+      code: "moderation_blocked";
+      message: string;
+      reason?: string | null;
+      request_id?: string;
+    };
 
 // ── V3 Day 1: empty-state banner ─────────────────────────────────────────────
 

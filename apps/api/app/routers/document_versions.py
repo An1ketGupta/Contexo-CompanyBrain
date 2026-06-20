@@ -29,6 +29,7 @@ from app.auth import verify_jwt
 from app.config import get_settings
 from app.database import get_service_client, get_user_client
 from app.inngest import get_inngest_client
+from app.services.documents_cache import invalidate_document_caches
 
 log = logging.getLogger(__name__)
 
@@ -200,6 +201,7 @@ async def init_version_upload(
     # NEW upload as v2.
     if not rows:
         try:
+            backfill_version_id = str(uuid.uuid4())
             legacy_path_res = await asyncio.to_thread(
                 lambda: svc.table("documents")
                 .select("file_path, file_size_bytes, created_at, created_by")
@@ -211,6 +213,7 @@ async def init_version_upload(
             await asyncio.to_thread(
                 lambda: svc.table("document_versions")
                 .insert({
+                    "id": backfill_version_id,
                     "document_id": doc_id,
                     "version_number": 1,
                     "file_path": legacy.get("file_path"),
@@ -219,6 +222,12 @@ async def init_version_upload(
                     "is_current": True,
                     "created_at": legacy.get("created_at"),
                 })
+                .execute()
+            )
+            await asyncio.to_thread(
+                lambda: svc.table("documents")
+                .update({"current_version_id": backfill_version_id})
+                .eq("id", doc_id)
                 .execute()
             )
             next_version = 2
@@ -333,14 +342,16 @@ async def complete_version_upload(
     file_type = doc_res.data["file_type"]
 
     # Archive every existing chunk for this document. Idempotent: re-running
-    # complete on the same version just no-ops (chunks already archived stay
-    # archived; the new version's chunks insert fresh later).
+    # complete on the same version only archives prior-version chunks. That
+    # guard matters after a retry: once the new version has processed and owns
+    # active chunks, a duplicate /complete must not archive them back out.
     try:
         await asyncio.to_thread(
             lambda: svc.table("chunks")
             .update({"is_archived": True})
             .eq("document_id", doc_id)
             .eq("is_archived", False)
+            .or_(f"document_version_id.is.null,document_version_id.neq.{version['id']}")
             .execute()
         )
     except Exception as exc:
@@ -376,6 +387,7 @@ async def complete_version_upload(
             .update({
                 "status": "processing",
                 "file_path": version["file_path"],
+                "current_version_id": version["id"],
             })
             .eq("id", doc_id)
             .execute()
@@ -410,6 +422,8 @@ async def complete_version_upload(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Couldn't queue reprocessing. Try again.",
         ) from exc
+
+    await invalidate_document_caches(org_id)
 
     return {
         "version_number": int(version["version_number"]),

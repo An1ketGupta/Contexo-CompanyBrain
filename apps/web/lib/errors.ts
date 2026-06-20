@@ -28,6 +28,7 @@ export type ErrorCode =
   | "rate_limited"
   | "quota_exceeded"
   | "no_organization"
+  | "moderation_blocked"   // V4 #79 — input matched a moderation pattern; render amber/shield UI
   | "internal_error"
   | "upstream_unavailable"
   | "service_unavailable"
@@ -185,6 +186,14 @@ export function reportApiError(
   // 402 — over the monthly plan budget. Different copy from "slow down".
   if (err.code === "quota_exceeded") {
     toast.error("You've used this month's AI tasks.", {
+      description: err.message,
+    });
+    return err;
+  }
+
+  // V4 #79 — moderation refusal. Warning tone, not destructive, no retry hint.
+  if (err.code === "moderation_blocked") {
+    toast.warning("Query blocked by content moderation.", {
       description: err.message,
     });
     return err;

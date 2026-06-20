@@ -41,6 +41,8 @@ def sample_row(**overrides) -> dict:
         "content": "Employees get 20 vacation days per year.",
         "document_id": DOC_ID,
         "document_name": "HR Handbook",
+        "document_version_id": "ver-1",
+        "version_number": 3,
         "chunk_index": 0,
         "page_number": 3,
         "section_heading": "Leave Policy",
@@ -123,6 +125,16 @@ async def test_vector_similarity_equals_similarity_for_vector_branch(retriever):
     result = await retriever.search(query="policy", org_id=ORG_ID, client=client)
     # vector branch sets both fields to the same cosine value
     assert result[0].vector_similarity == pytest.approx(0.78)
+
+
+@pytest.mark.asyncio
+async def test_version_metadata_is_mapped_from_rpc_rows(retriever):
+    client = make_mock_client(
+        [sample_row(document_version_id="ver-9", version_number=9)]
+    )
+    result = await retriever.search(query="policy", org_id=ORG_ID, client=client)
+    assert result[0].document_version_id == "ver-9"
+    assert result[0].version_number == 9
 
 
 @pytest.mark.asyncio
