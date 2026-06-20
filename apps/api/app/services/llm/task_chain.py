@@ -45,7 +45,12 @@ from app.services.org_config import (
     get_confidence_thresholds,
     get_org_config,
 )
-from app.services.retrieval import SearchHit, hybrid_search
+from app.services.competitor_detector import (
+    CompetitorMatch,
+    detect_competitors,
+    get_competitor_terms,
+)
+from app.services.retrieval import SearchHit, hybrid_search, hybrid_search_cached
 
 from .client import SEARCH_TOOL, SEARCH_TOOL_NAME, LLMClient, LLMError, get_llm_client
 from .types import LLMResponse, Message, ToolCall, ToolResult
@@ -118,6 +123,11 @@ class FinalEvent:
     # answer. Persisted on `messages.metadata.intent` so we can slice metrics
     # by intent later (which mode is the slow one? which has lower thumbs?).
     intent: str = ""
+    # Competitor watchlist hits in `text`. Empty tuple when no watchlist is
+    # configured or no matches. Carried on the event (rather than re-scanned
+    # at persistence time) so the chat router writes the same matches the UI
+    # already rendered, with no race against a mid-flight watchlist edit.
+    competitor_matches: tuple[CompetitorMatch, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -149,6 +159,20 @@ class ConfidenceEvent:
 
 
 @dataclass(frozen=True)
+class CompetitorWarningEvent:
+    """Surfaces watchlist hits found in the just-generated assistant text.
+
+    Carries enough for the UI to render an inline banner ("Mentions: Acme,
+    Globex") and gate outbound integration sends with a confirm dialog.
+    The same payload — minus the snippets — is persisted to
+    `competitor_mentions` after the assistant message row is saved.
+    """
+
+    kind: Literal["competitor_warning"] = field(default="competitor_warning", init=False)
+    matches: tuple[CompetitorMatch, ...] = ()
+
+
+@dataclass(frozen=True)
 class KnowledgeGapEvent:
     """Emitted once after all retrieval is done if every search returned zero
     chunks. Triggers the inline "limited context found" warning in the chat UI
@@ -173,6 +197,7 @@ OrchestratorEvent = (
     | KnowledgeGapEvent
     | ConfidenceEvent
     | IntentEvent
+    | CompetitorWarningEvent
 )
 
 
@@ -523,6 +548,26 @@ async def execute_task(
             elapsed,
         )
 
+        # Competitor watchlist scan. Runs after generation so the regex
+        # never sees in-flight tokens; fires regardless of confidence /
+        # knowledge_gap because a mention is a mention. Empty watchlist
+        # short-circuits inside detect_competitors (one tuple check).
+        competitor_matches: tuple[CompetitorMatch, ...] = ()
+        if final_text:
+            try:
+                terms = await get_competitor_terms(org_id=org_id, user_id=user_id)
+                if terms.has_any:
+                    hits = detect_competitors(
+                        final_text,
+                        org_terms=terms.org_terms,
+                        user_terms=terms.user_terms,
+                    )
+                    competitor_matches = tuple(hits)
+                    if competitor_matches:
+                        yield CompetitorWarningEvent(matches=competitor_matches)
+            except Exception as exc:
+                log.warning("competitor_detection_failed: %s", exc)
+
         trace_id = current_trace_id()
         yield FinalEvent(
             text=final_text,
@@ -530,6 +575,7 @@ async def execute_task(
             tool_calls_made=tool_call_total,
             trace_id=trace_id,
             intent=intent_result.intent.value,
+            competitor_matches=competitor_matches,
         )
 
 
@@ -607,7 +653,11 @@ async def _run_search(
     document_id: str | None = None,
     document_ids: list[str] | None = None,
 ) -> list[SearchHit]:
-    return await hybrid_search(
+    # V3 #80 — cached variant. Skips embedding + RRF on cache hit; the
+    # wrapper handles fail-open semantics if Upstash is unreachable. Document-
+    # scoped (single doc) searches still bypass the cache inside the wrapper
+    # because per-conversation hit rates are too low to justify the bookkeeping.
+    return await hybrid_search_cached(
         query,
         org_id,
         client,

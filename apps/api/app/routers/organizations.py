@@ -134,6 +134,94 @@ async def get_my_org(
     return res.data
 
 
+@router.get("/recommendations")
+async def get_recommendations(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """V3 #50 — recommended-documents checklist for the Documents-page widget.
+
+    Returns the stored recommendations array (populated post-enrichment by the
+    Inngest `org/post-enrichment` handler). Empty array for orgs that haven't
+    gone through enrichment yet; the widget hides itself in that case.
+
+    Each item: { key, name, description, why, examples, matched_document_id,
+    matched_at, dismissed_at }.
+    """
+    org_id = current_user.get("org_id")
+    if not org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No organization found.")
+    client = get_user_client(current_user["token"])
+    res = await asyncio.to_thread(
+        lambda: client.table("organizations")
+        .select("recommended_documents")
+        .eq("id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not res or not res.data:
+        return {"recommendations": []}
+    recs = res.data.get("recommended_documents") or []
+    if not isinstance(recs, list):
+        recs = []
+    return {"recommendations": recs}
+
+
+class DismissRecommendationBody(BaseModel):
+    key: str = Field(..., min_length=1, max_length=80)
+
+
+@router.post("/recommendations/dismiss")
+async def dismiss_recommendation(
+    body: DismissRecommendationBody,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Soft-dismiss a single recommendation by key. The row stays in the
+    list (so the checklist still shows what's been skipped), it just won't
+    be eligible for auto-match anymore.
+
+    Any org member can dismiss — the recommendation list is org-scoped state,
+    not an admin setting. If two people dismiss the same key in parallel,
+    the second write wins (last-writer-wins on the JSONB array). Acceptable
+    because the data is idempotent: both are setting the same dismissed_at.
+    """
+    org_id = current_user.get("org_id")
+    if not org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No organization found.")
+
+    svc = get_service_client()
+    row = await asyncio.to_thread(
+        lambda: svc.table("organizations")
+        .select("recommended_documents")
+        .eq("id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not row or not row.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found.")
+    recs = row.data.get("recommended_documents") or []
+    if not isinstance(recs, list):
+        raise HTTPException(status_code=400, detail="Recommendations not initialised.")
+
+    updated = False
+    now = datetime.now(timezone.utc).isoformat()
+    for rec in recs:
+        if rec.get("key") == body.key and not rec.get("dismissed_at"):
+            rec["dismissed_at"] = now
+            updated = True
+            break
+
+    if not updated:
+        return {"dismissed": False, "reason": "not_found_or_already_dismissed"}
+
+    await asyncio.to_thread(
+        lambda: svc.table("organizations")
+        .update({"recommended_documents": recs})
+        .eq("id", org_id)
+        .execute()
+    )
+    return {"dismissed": True, "key": body.key}
+
+
 @router.post("/enrich")
 async def enrich_org(
     body: OrgEnrichmentBody,

@@ -111,7 +111,7 @@ export default function SupportQueuePage() {
           <Button
             key={tab.label}
             size="sm"
-            variant={statusFilter === tab.key ? "default" : "outline"}
+            variant={statusFilter === tab.key ? "primary" : "outline"}
             onClick={() => setStatusFilter(tab.key)}
           >
             {tab.label}
@@ -143,7 +143,8 @@ export default function SupportQueuePage() {
 
       {data && data.tickets.length > 0 && (
         <div className="overflow-hidden rounded-md border">
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
             <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">From</th>
@@ -211,6 +212,7 @@ export default function SupportQueuePage() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

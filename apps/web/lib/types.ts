@@ -141,6 +141,15 @@ export interface Message {
   created_at: string;
 }
 
+// Competitor watchlist hit reported by the post-generation detector.
+// Mirrors the row shape the API persists to `competitor_mentions` (term grain).
+export interface CompetitorMatch {
+  term: string;
+  source: "org" | "user";
+  count: number;
+  snippet: string;
+}
+
 // SSE event types emitted by POST /chat/stream and POST /chat/messages/{id}/regenerate.
 // Shape mirrors what app/api/routers/chat.py:_event_to_payload sends on the wire.
 export type ChatStreamEvent =
@@ -156,6 +165,10 @@ export type ChatStreamEvent =
   | { type: "sources"; sources: MessageSource[] }
   | { type: "token"; text: string }
   | { type: "knowledge_gap"; topics: string[] }
+  | {
+      type: "competitor_warning";
+      matches: CompetitorMatch[];
+    }
   | {
       type: "confidence";
       level: ConfidenceLevel;

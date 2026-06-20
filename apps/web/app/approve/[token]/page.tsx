@@ -45,7 +45,15 @@ export default function MagicLinkApprovalPage() {
   const params = useParams<{ token: string }>();
   const searchParams = useSearchParams();
   const token = params?.token ?? "";
-  const initialDecision = searchParams?.get("decision") as Action | null;
+  // The email magic-link sends `?decision=approve` or `?decision=reject`
+  // (short forms — see `approval_functions.py`) to pre-highlight which
+  // button the recipient came in to click. Keep this distinct from `Action`
+  // (`"approved" | "rejected"`) which is the API-facing past-tense value.
+  const decisionParam = searchParams?.get("decision");
+  const initialDecision: "approve" | "reject" | null =
+    decisionParam === "approve" || decisionParam === "reject"
+      ? decisionParam
+      : null;
 
   const [data, setData] = useState<LookupResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);

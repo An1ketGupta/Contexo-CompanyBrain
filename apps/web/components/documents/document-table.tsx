@@ -486,7 +486,7 @@ function ExpandedHeader({
       >
         {parts.join(" · ")}
       </p>
-      <Button asChild size="sm" variant="default">
+      <Button asChild size="sm" variant="primary">
         <Link
           href={`/chat?document_id=${encodeURIComponent(doc.id)}`}
           aria-label={`Ask about ${doc.name}`}

@@ -3,6 +3,7 @@
 import { use, useCallback, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { ArchivedBanner } from "@/components/chat/archived-banner";
 import { ChatMobileBar } from "@/components/chat/chat-mobile-bar";
 import { ConversationSidebar } from "@/components/chat/conversation-sidebar";
 import { DocumentStatusBanner } from "@/components/chat/document-status-banner";
@@ -36,6 +37,7 @@ export default function ChatConversationPage({
     branches: persistedBranches,
     loading,
     error,
+    refresh: refreshConversation,
   } = useConversation(id);
   const { touch, refresh } = useConversations();
 
@@ -164,6 +166,20 @@ export default function ChatConversationPage({
               title={conversation?.title ?? "Conversation"}
             />
           </div>
+        )}
+        {/* V3 #104 — surface archive state above other banners so the user
+            sees it before reading. The chat input stays enabled; sending a
+            message auto-restores via the backend. */}
+        {conversation?.is_archived && (
+          <ArchivedBanner
+            conversationId={id}
+            archivedAt={conversation.archived_at}
+            archiveReason={conversation.archive_reason}
+            onRestored={() => {
+              refreshConversation();
+              refresh();
+            }}
+          />
         )}
         {(scopedDocument || conversation?.scoped_document_id) && (
           <ScopeBanner

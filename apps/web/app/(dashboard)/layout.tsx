@@ -20,7 +20,11 @@ export default function DashboardLayout({
     <ShortcutsPanelProvider>
       <CommandPaletteProvider>
         <UploadProvider>
-          <div className="flex h-screen flex-col md:flex-row">
+          {/* `h-dvh` (dynamic viewport height) handles the iOS Safari
+              address-bar collapse that `h-screen` (= 100vh) can't. The
+              `min-h-` variant is a fallback for the rare browser without
+              dvh support — flexbox children still get the correct height. */}
+          <div className="flex h-dvh min-h-dvh flex-col md:flex-row">
             <GlobalDocumentToaster />
             <Sidebar />
             <MobileHeader />

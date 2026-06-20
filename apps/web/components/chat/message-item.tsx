@@ -236,7 +236,7 @@ export function MessageItem({
               <button
                 type="button"
                 onClick={() => setSaveTemplateOpen(true)}
-                className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="tap inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 aria-label="Save prompt as template"
                 title="Save prompt as template"
               >
@@ -248,7 +248,7 @@ export function MessageItem({
                 type="button"
                 onClick={() => setShowRefinement((v) => !v)}
                 disabled={streamingDisabled}
-                className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                className="tap inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 aria-label="Regenerate response"
                 title="Regenerate response"
               >
@@ -303,7 +303,7 @@ export function MessageItem({
                 setShowRefinement(false);
                 setRefinement("");
               }}
-              className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="tap inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
               aria-label="Cancel"
             >
               <X className="h-3.5 w-3.5" />
@@ -342,7 +342,7 @@ function FeedbackButtons({
         aria-pressed={feedback === "positive"}
         aria-label={feedback === "positive" ? "Remove positive rating" : "Mark helpful"}
         className={cn(
-          "inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+          "tap inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
           feedback === "positive" && "bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/15 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300",
         )}
       >
@@ -354,7 +354,7 @@ function FeedbackButtons({
         aria-pressed={feedback === "negative"}
         aria-label={feedback === "negative" ? "Remove negative rating" : "Mark not helpful"}
         className={cn(
-          "inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+          "tap inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
           feedback === "negative" && "bg-destructive/10 text-destructive hover:bg-destructive/15",
         )}
       >
@@ -383,7 +383,7 @@ function BranchNavigator({
         type="button"
         onClick={onPrev}
         disabled={atStart}
-        className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-background disabled:opacity-40"
+        className="tap inline-flex items-center justify-center rounded p-0.5 text-muted-foreground transition-colors hover:bg-background disabled:opacity-40"
         aria-label="Previous response"
         title="Previous response"
       >
@@ -396,7 +396,7 @@ function BranchNavigator({
         type="button"
         onClick={onNext}
         disabled={atEnd}
-        className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-background disabled:opacity-40"
+        className="tap inline-flex items-center justify-center rounded p-0.5 text-muted-foreground transition-colors hover:bg-background disabled:opacity-40"
         aria-label="Next response"
         title="Next response"
       >

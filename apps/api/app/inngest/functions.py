@@ -107,6 +107,12 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
                     embedding_stats={"embedded": 0, "failed": failed, "total": total},
                 ),
             )
+            # V3 #80 — the doc list cache held the 'processing' row; clear it
+            # so the next refresh shows 'failed' immediately.
+            await step.run(
+                "invalidate-doc-list-cache-on-failed",
+                lambda: _invalidate_doc_list(org_id=org_id),
+            )
             await step.run(
                 "webhook-document-failed",
                 lambda: _fire_doc_webhook(
@@ -127,6 +133,13 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
             await step.run(
                 "invalidate-coverage-cache",
                 lambda: _invalidate_coverage(org_id=org_id),
+            )
+            # V3 #80 — the doc list & search caches still show 'processing';
+            # bump the version so the next list call (and any in-flight chat
+            # search) sees the new ready state without waiting on TTL.
+            await step.run(
+                "invalidate-doc-list-cache-on-ready",
+                lambda: _invalidate_doc_list(org_id=org_id),
             )
             # Disabled: using browser notifications instead (placeholder for later)
             # await step.run(
@@ -198,6 +211,10 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
         await step.run(
             "mark-failed",
             lambda: mark_status(doc_id, "failed", error_reason=result["error"]),
+        )
+        await step.run(
+            "invalidate-doc-list-cache-on-pipeline-failed",
+            lambda: _invalidate_doc_list(org_id=org_id),
         )
         await step.run(
             "webhook-document-failed",
@@ -273,10 +290,12 @@ async def _refresh_after_retry(*, doc_id: str, org_id: str) -> dict[str, Any]:
             error_reason="All chunks failed to embed after retry.",
             embedding_stats={"embedded": 0, "failed": failed, "total": total},
         )
+        await _invalidate_doc_list(org_id=org_id)
     else:
         stats = {"embedded": embedded, "failed": failed, "total": total} if failed else None
         await mark_status(doc_id, "ready", chunk_count=total, embedding_stats=stats)
         await _invalidate_coverage(org_id=org_id)
+        await _invalidate_doc_list(org_id=org_id)
 
     return {"total": total, "embedded": embedded, "failed": failed}
 
@@ -291,6 +310,19 @@ async def _invalidate_coverage(*, org_id: str) -> dict[str, str]:
     from app.services.coverage import invalidate_coverage
 
     await invalidate_coverage(org_id)
+    return {"status": "invalidated"}
+
+
+async def _invalidate_doc_list(*, org_id: str) -> dict[str, str]:
+    """V3 #80 — bump the docs-list/search cache version for this org.
+
+    Called from Inngest steps after a document's status changes to a value
+    the UI cares about (ready/failed). Wrapper exists so step.run gets a
+    named function for retries + telemetry.
+    """
+    from app.services.documents_cache import invalidate_document_caches
+
+    await invalidate_document_caches(org_id)
     return {"status": "invalidated"}
 
 
@@ -757,6 +789,7 @@ async def org_post_enrichment_fn(ctx: inngest.Context) -> dict[str, Any]:
     data = ctx.event.data
     org_id: str = data["org_id"]
     use_case: str = (data.get("primary_use_case") or "").strip()
+    industry: str = (data.get("industry") or "").strip()
 
     async def _seed_ai_instructions() -> dict[str, Any]:
         instruction = _DEFAULT_AI_INSTRUCTIONS.get(use_case)
@@ -783,7 +816,38 @@ async def org_post_enrichment_fn(ctx: inngest.Context) -> dict[str, Any]:
         )
         return {"seeded": True, "use_case": use_case}
 
-    return await ctx.step.run("seed-ai-instructions", _seed_ai_instructions)
+    async def _populate_recommended_documents() -> dict[str, Any]:
+        # V3 #50 — drop a curated checklist onto the org row so the Documents
+        # page widget can render it. Idempotent: only writes if the column is
+        # still the default empty array, so a manual edit isn't clobbered.
+        from app.services.recommendations import recommendations_for
+
+        svc = get_service_client()
+        row = await asyncio.to_thread(
+            lambda: svc.table("organizations")
+            .select("recommended_documents")
+            .eq("id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        existing = (row.data or {}).get("recommended_documents") if row else None
+        if existing:
+            return {"populated": False, "reason": "already_set"}
+
+        recs = recommendations_for(primary_use_case=use_case, industry=industry)
+        await asyncio.to_thread(
+            lambda: svc.table("organizations")
+            .update({"recommended_documents": recs})
+            .eq("id", org_id)
+            .execute()
+        )
+        return {"populated": True, "count": len(recs), "use_case": use_case or "general"}
+
+    seeded = await ctx.step.run("seed-ai-instructions", _seed_ai_instructions)
+    populated = await ctx.step.run(
+        "populate-recommended-documents", _populate_recommended_documents
+    )
+    return {"ai_instructions": seeded, "recommendations": populated}
 
 
 FUNCTIONS: list = [

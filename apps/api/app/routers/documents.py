@@ -12,6 +12,11 @@ from app.auth import verify_jwt
 from app.config import get_settings
 from app.database import get_service_client, get_user_client
 from app.inngest import get_inngest_client
+from app.services.documents_cache import (
+    get_cached_document_list,
+    invalidate_document_caches,
+    set_cached_document_list,
+)
 
 log = logging.getLogger(__name__)
 
@@ -114,6 +119,10 @@ class UploadInitRequest(BaseModel):
 
 
 class UploadCompleteRequest(BaseModel):
+    doc_id: str
+
+
+class UploadRefreshRequest(BaseModel):
     doc_id: str
 
 
@@ -221,6 +230,102 @@ async def init_upload(
     return {"doc_id": doc_id, "upload_url": upload_url}
 
 
+# ── Retry path: re-mint signed URL for an existing failed/pending row ─────────
+# Frontend calls this when the user clicks "Retry failed" on an upload that
+# never reached `ready`. We reuse the existing doc row + storage path so the
+# documents grid doesn't accumulate duplicate rows for the same file.
+
+@router.post("/upload/refresh")
+async def refresh_upload(
+    body: UploadRefreshRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    org_id: str | None = current_user["org_id"]
+    if not org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No organization found.",
+        )
+
+    settings = get_settings()
+    svc = get_service_client()
+
+    existing = await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .select("file_path, status")
+        .eq("id", body.doc_id)
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not existing or not existing.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+
+    current_status = existing.data.get("status")
+    # Only retry rows that never finished. `processing` means Inngest already
+    # owns the row — use the reprocess endpoint for that. `ready` is a no-op.
+    if current_status not in ("pending", "failed"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot retry upload in status '{current_status}'.",
+        )
+
+    storage_path: str = existing.data["file_path"]
+
+    # Best-effort cleanup of any partial blob from the prior attempt — Supabase
+    # signed-upload tokens won't overwrite an existing object. Ignore failures:
+    # if the object never landed, remove() returns an empty list, not an error.
+    try:
+        await asyncio.to_thread(
+            lambda: svc.storage.from_(STORAGE_BUCKET).remove([storage_path])
+        )
+    except Exception as exc:
+        log.info("[documents] storage remove during refresh failed (non-fatal): %s", exc)
+
+    try:
+        result = await asyncio.to_thread(
+            lambda: svc.storage.from_(STORAGE_BUCKET).create_signed_upload_url(storage_path)
+        )
+    except Exception as exc:
+        log.error("[documents] create_signed_upload_url (refresh) failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create upload URL: {exc}",
+        ) from exc
+
+    if isinstance(result, dict):
+        payload = result
+    else:
+        payload = getattr(result, "data", None) or {}
+
+    raw_url: str = payload.get("signed_url") or payload.get("signedURL") or ""
+    if not raw_url:
+        log.error("[documents] unexpected signed-url response shape on refresh: %r", result)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Storage returned an empty signed URL.",
+        )
+
+    upload_url = raw_url if raw_url.startswith("http") else f"{settings.supabase_url}{raw_url}"
+
+    # Reset row to pending so the documents grid reflects the retry attempt.
+    try:
+        await asyncio.to_thread(
+            lambda: svc.table("documents")
+            .update({"status": "pending"})
+            .eq("id", body.doc_id)
+            .eq("org_id", org_id)
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to reset document status.",
+        ) from exc
+
+    return {"doc_id": body.doc_id, "upload_url": upload_url}
+
+
 # ── Step 2 (browser → Supabase Storage directly via signed URL) ───────────────
 # Nothing happens server-side during the actual file upload.
 
@@ -254,6 +359,21 @@ async def complete_upload(
     await _trigger_processing(
         body.doc_id, org_id, result.data["file_path"], result.data["file_type"]
     )
+
+    # V3 #80 — the doc row now exists in 'pending'; an org refreshing the
+    # documents page should see it immediately. Status flips later (→ ready
+    # / failed) also invalidate from the Inngest pipeline.
+    await invalidate_document_caches(org_id)
+
+    # V3 #50 — auto-match uploaded doc against the org's recommendation list.
+    # Best-effort: never block the upload response on this. The fuzzy match
+    # is pure Python (no LLM, no extra IO) so this is cheap.
+    try:
+        await _maybe_auto_match_recommendation(
+            doc_id=body.doc_id, org_id=org_id
+        )
+    except Exception as exc:
+        log.warning("auto_match_recommendation_failed: %s", exc)
 
     # V4 #18 / #57: telemetry + team activity. We log on `upload/complete`
     # rather than `upload/init` so half-finished uploads don't pollute the
@@ -375,6 +495,13 @@ async def create_document_from_url(
         source_url=body.url,
     )
 
+    await invalidate_document_caches(org_id)
+
+    try:
+        await _maybe_auto_match_recommendation(doc_id=doc_id, org_id=org_id)
+    except Exception as exc:
+        log.warning("auto_match_recommendation_failed_from_url: %s", exc)
+
     # Mirror the doc/uploaded telemetry + team activity from `complete_upload`
     # so the activity feed and analytics show extension-sourced docs alongside
     # uploaded ones.
@@ -441,6 +568,25 @@ async def list_documents(
     if sort_by not in _SORTABLE_FIELDS:
         raise HTTPException(status_code=400, detail="Invalid sort field.")
 
+    # V3 #80 — cache key folds in every filter so distinct requests hash
+    # differently. Tags are sorted lower-cased so {tag=[a,b]} and {tag=[B,A]}
+    # hit the same key. Search string normalised the same way.
+    cache_signature: tuple[Any, ...] = (
+        status_filter,
+        file_type,
+        tuple(sorted({(t or "").strip().lower() for t in (tag or []) if t})),
+        (search or "").strip().lower(),
+        sort_by,
+        sort_dir,
+        limit,
+        offset,
+    )
+    cached = await get_cached_document_list(
+        org_id=org_id, filter_signature=cache_signature
+    )
+    if cached is not None:
+        return cached
+
     client = get_user_client(current_user["token"])
 
     def _run() -> Any:
@@ -472,12 +618,16 @@ async def list_documents(
         return q.execute()
 
     result = await asyncio.to_thread(_run)
-    return {
+    payload = {
         "documents": result.data or [],
         "total": result.count or 0,
         "limit": limit,
         "offset": offset,
     }
+    await set_cached_document_list(
+        org_id=org_id, filter_signature=cache_signature, payload=payload
+    )
+    return payload
 
 
 @router.get("/tags")
@@ -721,6 +871,8 @@ async def bulk_delete_documents(
         except Exception as exc:
             log.warning("bulk storage cleanup failed for %d paths: %s", len(paths), exc)
 
+    await invalidate_document_caches(org_id)
+
     return {
         "deleted": len(owned_ids),
         "skipped": len(body.document_ids) - len(owned_ids),
@@ -800,6 +952,9 @@ async def bulk_add_tags(
         elif r:
             updated += 1
 
+    if updated:
+        await invalidate_document_caches(org_id)
+
     return {
         "updated": updated,
         "skipped": len(body.document_ids) - len(owned),
@@ -877,6 +1032,7 @@ async def update_document_review(
     )
     if not result.data:
         raise HTTPException(status_code=404, detail="Document not found.")
+    await invalidate_document_caches(org_id)
     return {"document": result.data[0]}
 
 
@@ -925,6 +1081,7 @@ async def mark_document_reviewed(
         ) from exc
 
     next_due = result.data if result else None
+    await invalidate_document_caches(org_id)
     return {"status": "ok", "next_due_at": next_due}
 
 
@@ -1005,6 +1162,7 @@ async def update_policy_flag(
         except Exception:
             pass
 
+    await invalidate_document_caches(org_id)
     return {"requires_acknowledgement": body.requires_acknowledgement, "propagation_queued": fired}
 
 
@@ -1039,6 +1197,7 @@ async def update_document_tags(
     )
     if not result.data:
         raise HTTPException(status_code=404, detail="Document not found.")
+    await invalidate_document_caches(org_id)
     return {"document": result.data[0]}
 
 
@@ -1080,6 +1239,8 @@ async def delete_document(
         )
     except Exception:
         pass
+
+    await invalidate_document_caches(org_id)
 
     try:
         from app.services.analytics import track_event
@@ -1173,6 +1334,71 @@ async def _trigger_text_processing(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Failed to queue page for processing. Please try again.",
         ) from exc
+
+
+async def _maybe_auto_match_recommendation(*, doc_id: str, org_id: str) -> None:
+    """V3 #50 — match a freshly-uploaded document against the org's
+    recommendation checklist by fuzzy name overlap (Jaccard tokens).
+
+    Read–modify–write on `organizations.recommended_documents`. Concurrent
+    uploads of two docs that match different recommendations can race; in
+    that case the second write loses one match. Acceptable trade-off — the
+    auto-match is a nice-to-have UX touch, not a billing-critical invariant.
+    Locking the row via SELECT FOR UPDATE would help but PostgREST doesn't
+    expose it cleanly.
+
+    Best-effort throughout: no return value, callers swallow exceptions.
+    """
+    from app.services.recommendations import (
+        best_recommendation_match,
+        mark_match,
+    )
+
+    svc = get_service_client()
+    doc_row = await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .select("name")
+        .eq("id", doc_id)
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not doc_row or not doc_row.data:
+        return
+    doc_name = (doc_row.data or {}).get("name") or ""
+    if not doc_name.strip():
+        return
+
+    org_row = await asyncio.to_thread(
+        lambda: svc.table("organizations")
+        .select("recommended_documents")
+        .eq("id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    recs = (org_row.data or {}).get("recommended_documents") if org_row else None
+    if not isinstance(recs, list) or not recs:
+        return
+
+    idx = best_recommendation_match(doc_name, recs)
+    if idx is None:
+        return
+
+    updated = mark_match(recs, idx, document_id=doc_id)
+    await asyncio.to_thread(
+        lambda: svc.table("organizations")
+        .update({"recommended_documents": updated})
+        .eq("id", org_id)
+        .execute()
+    )
+    log.info(
+        "recommendation_auto_matched",
+        extra={
+            "doc_id": doc_id,
+            "org_id": org_id,
+            "matched_key": updated[idx].get("key"),
+        },
+    )
 
 
 async def _trigger_chunk_retry(doc_id: str, org_id: str) -> None:

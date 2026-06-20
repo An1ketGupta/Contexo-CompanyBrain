@@ -117,24 +117,73 @@ async function processOne(
 ): Promise<void> {
   updateItem(item.key, { status: "preparing", progress: 0, error: undefined });
 
-  const initRes = await fetch("/api/documents/upload", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      filename: item.file.name,
-      content_type: item.file.type || "application/octet-stream",
-      file_size: item.file.size,
-    }),
-    signal,
-  });
-  if (!initRes.ok) {
-    const body = await initRes.json().catch(() => ({}));
-    throw new Error(body.detail ?? `Upload init failed (${initRes.status})`);
+  let doc_id: string;
+  let upload_url: string;
+
+  if (item.doc_id) {
+    // Retry path — reuse the existing failed/pending DB row instead of minting
+    // a duplicate. Backend resets status to "pending" and hands back a fresh
+    // signed URL for the same storage path.
+    const refreshRes = await fetch("/api/documents/upload/refresh", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ doc_id: item.doc_id }),
+      signal,
+    });
+    if (!refreshRes.ok) {
+      // If the prior row is gone (404) or no longer retryable (409, e.g. it
+      // somehow finished), fall back to a fresh init so the user still
+      // recovers — drop the stale doc_id and re-enter the init path.
+      if (refreshRes.status === 404 || refreshRes.status === 409) {
+        updateItem(item.key, { doc_id: undefined });
+        const initRes = await fetch("/api/documents/upload", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            filename: item.file.name,
+            content_type: item.file.type || "application/octet-stream",
+            file_size: item.file.size,
+          }),
+          signal,
+        });
+        if (!initRes.ok) {
+          const body = await initRes.json().catch(() => ({}));
+          throw new Error(body.detail ?? `Upload init failed (${initRes.status})`);
+        }
+        ({ doc_id, upload_url } = (await initRes.json()) as {
+          doc_id: string;
+          upload_url: string;
+        });
+      } else {
+        const body = await refreshRes.json().catch(() => ({}));
+        throw new Error(body.detail ?? `Retry failed (${refreshRes.status})`);
+      }
+    } else {
+      ({ doc_id, upload_url } = (await refreshRes.json()) as {
+        doc_id: string;
+        upload_url: string;
+      });
+    }
+  } else {
+    const initRes = await fetch("/api/documents/upload", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: item.file.name,
+        content_type: item.file.type || "application/octet-stream",
+        file_size: item.file.size,
+      }),
+      signal,
+    });
+    if (!initRes.ok) {
+      const body = await initRes.json().catch(() => ({}));
+      throw new Error(body.detail ?? `Upload init failed (${initRes.status})`);
+    }
+    ({ doc_id, upload_url } = (await initRes.json()) as {
+      doc_id: string;
+      upload_url: string;
+    });
   }
-  const { doc_id, upload_url } = (await initRes.json()) as {
-    doc_id: string;
-    upload_url: string;
-  };
   updateItem(item.key, { doc_id });
 
   updateItem(item.key, { status: "uploading", progress: 0 });
@@ -359,6 +408,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   }, [updateItem]);
 
   const startAll = useCallback(() => {
+    // Defensive: ignore re-entries while the runner is mid-flight. The button
+    // already disables on isRunning, but state updates lag a React tick and
+    // this prevents a rapid double-click from re-flipping in-flight rows.
+    if (runnerActive.current) return;
     // Promote any prior error rows back to pending so "Retry failed" works.
     setItems((prev) => {
       const next = prev.map((it) =>

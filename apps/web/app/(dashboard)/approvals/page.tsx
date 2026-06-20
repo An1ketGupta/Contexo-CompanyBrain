@@ -115,7 +115,7 @@ export default function ApprovalsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
+    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Approvals</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -123,20 +123,25 @@ export default function ApprovalsPage() {
         </p>
       </header>
 
-      <div className="mb-4 flex items-center gap-2 border-b">
-        <TabButton active={tab === "inbox"} onClick={() => setTab("inbox")}>
-          Inbox
-        </TabButton>
-        <TabButton active={tab === "sent"} onClick={() => setTab("sent")}>
-          Sent
-        </TabButton>
-        <div className="ml-auto flex items-center gap-2 pb-2">
+      {/* Stack the inbox/sent tabs and status filter on mobile — at 375px
+          they don't fit side-by-side without the filter chips wrapping in
+          a way that obscures the tab borders. */}
+      <div className="mb-4 border-b">
+        <div className="flex items-center gap-2">
+          <TabButton active={tab === "inbox"} onClick={() => setTab("inbox")}>
+            Inbox
+          </TabButton>
+          <TabButton active={tab === "sent"} onClick={() => setTab("sent")}>
+            Sent
+          </TabButton>
+        </div>
+        <div className="-mx-1 flex items-center gap-1 overflow-x-auto pb-2 pt-1 sm:mx-0 sm:gap-2 sm:pt-0 sm:[scrollbar-width:none]">
           {(["pending", "approved", "rejected", "all"] as StatusFilter[]).map((s) => (
             <button
               key={s}
               onClick={() => setStatus(s)}
               className={cn(
-                "rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
+                "shrink-0 rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
                 status === s
                   ? "bg-muted text-foreground"
                   : "text-muted-foreground hover:bg-muted/50",
@@ -342,7 +347,7 @@ function StatusBadge({ status }: { status: string }) {
   };
   const m = map[status] ?? { label: status, cls: "bg-muted text-muted-foreground" };
   return (
-    <Badge variant="secondary" className={cn("h-5 px-2 text-[10px]", m.cls)}>
+    <Badge variant="default" className={cn("h-5 px-2 text-[10px]", m.cls)}>
       {m.label}
     </Badge>
   );

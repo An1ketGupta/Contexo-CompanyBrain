@@ -6,7 +6,7 @@ import logging
 import re
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import inngest
 from typing import Any, AsyncIterator, Literal
@@ -33,6 +33,7 @@ from app.services.citation_tracker import record_citations
 from app.services.summarization import load_conversation_summary
 from app.services.webhooks import trigger_event as trigger_webhook_event
 from app.services.llm.task_chain import (
+    CompetitorWarningEvent,
     ConfidenceEvent,
     ErrorEvent,
     FinalEvent,
@@ -44,6 +45,10 @@ from app.services.llm.task_chain import (
     SourcesEvent,
     TokenEvent,
     execute_task,
+)
+from app.services.competitor_detector import (
+    CompetitorMatch,
+    persist_chat_mentions,
 )
 
 log = get_logger(__name__)
@@ -92,6 +97,16 @@ class UpdateConversationRequest(BaseModel):
     is_pinned: bool | None = None
 
 
+class BulkArchiveRequest(BaseModel):
+    # Capped at 200 to bound the worst-case PostgREST payload and to discourage
+    # "select-all-1M" workflows. The UI's bulk-select tops out below this.
+    conversation_ids: list[str] = Field(..., min_length=1, max_length=200)
+
+
+class BulkRestoreRequest(BaseModel):
+    conversation_ids: list[str] = Field(..., min_length=1, max_length=200)
+
+
 class RegenerateRequest(BaseModel):
     # Optional refinement steers the regeneration — appended to the original
     # user prompt as a "[Refinement: ...]" note. Capped to keep the prompt
@@ -116,6 +131,10 @@ class ChatResponse(BaseModel):
     output: str
     sources: list[dict]
     tool_calls: int
+    # Competitor watchlist hits in `output`. Empty list when nothing was
+    # flagged; same shape the streaming `competitor_warning` SSE event
+    # carries so the client can render the same banner in both flows.
+    competitor_matches: list[dict] = Field(default_factory=list)
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -155,6 +174,10 @@ async def chat(
     await enforce_chat_quota(user_id=user_id, org_id=org_id)
     client = get_user_client(token)
 
+    # V3 #91 — wall-clock latency for the query history page. Sample point is
+    # "user sent message → assistant message persisted" (excluding network).
+    _turn_started_at = time.monotonic()
+
     conversation_id, scoped_document_id, scoped_tags = await _ensure_conversation(
         client, body.conversation_id, org_id, user_id, body.message,
         scoped_document_id=body.scoped_document_id,
@@ -178,6 +201,7 @@ async def chat(
     trace_id: str | None = None
     confidence: ConfidenceEvent | None = None
     final_intent: str = ""
+    competitor_matches: tuple[CompetitorMatch, ...] = ()
     error_msg: str | None = None
 
     async for event in execute_task(
@@ -198,6 +222,7 @@ async def chat(
             tool_calls_made = event.tool_calls_made
             trace_id = event.trace_id
             final_intent = event.intent
+            competitor_matches = event.competitor_matches
         elif isinstance(event, ConfidenceEvent):
             confidence = event
         elif isinstance(event, ErrorEvent):
@@ -236,6 +261,14 @@ async def chat(
         conversation_id=conversation_id,
         org_id=org_id,
     )
+    if competitor_matches:
+        await persist_chat_mentions(
+            org_id=org_id,
+            message_id=assistant_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            matches=list(competitor_matches),
+        )
     # Day-13: notify subscribers that a turn completed. Fire-and-forget;
     # webhook delivery happens off the chat hot path via Inngest.
     await _fire_query_completed_webhook(
@@ -254,12 +287,30 @@ async def chat(
         source_count=len(final_sources or []),
     )
 
+    _log_query_history(
+        org_id=org_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        message_id=assistant_id,
+        query=body.message,
+        intent=final_intent or "",
+        response_length=len(final_text or ""),
+        source_count=len(final_sources or []),
+        tool_calls=tool_calls_made,
+        latency_ms=int((time.monotonic() - _turn_started_at) * 1000),
+        model_used=_get_active_llm_model_name(),
+    )
+
     return ChatResponse(
         conversation_id=conversation_id,
         message_id=assistant_id,
         output=final_text,
         sources=final_sources,
         tool_calls=tool_calls_made,
+        competitor_matches=[
+            {"term": m.term, "source": m.source, "count": m.count, "snippet": m.snippet}
+            for m in competitor_matches
+        ],
     )
 
 
@@ -305,6 +356,10 @@ async def chat_stream(
 
     client = get_user_client(token)
     request_id = getattr(request.state, "request_id", None)
+
+    # V3 #91 — wall-clock latency for the streaming path. Captured before the
+    # generator's first yield so it includes everything the user perceives.
+    _turn_started_at = time.monotonic()
 
     conversation_id, scoped_document_id, scoped_tags = await _ensure_conversation(
         client, body.conversation_id, org_id, user_id, body.message,
@@ -356,6 +411,7 @@ async def chat_stream(
         trace_id: str | None = None
         confidence_evt: ConfidenceEvent | None = None
         final_intent: str = ""
+        competitor_matches: tuple[CompetitorMatch, ...] = ()
         had_error = False
         error_payload: dict | None = None
 
@@ -387,6 +443,7 @@ async def chat_stream(
                     tool_calls_made = ev.tool_calls_made
                     trace_id = ev.trace_id
                     final_intent = ev.intent
+                    competitor_matches = ev.competitor_matches
                 elif isinstance(ev, ConfidenceEvent):
                     confidence_evt = ev
                 elif isinstance(ev, ErrorEvent):
@@ -443,6 +500,14 @@ async def chat_stream(
                     conversation_id=conversation_id,
                     org_id=org_id,
                 )
+                if competitor_matches:
+                    await persist_chat_mentions(
+                        org_id=org_id,
+                        message_id=assistant_id,
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        matches=list(competitor_matches),
+                    )
                 await _fire_query_completed_webhook(
                     org_id=org_id,
                     conversation_id=conversation_id,
@@ -457,6 +522,19 @@ async def chat_stream(
                     query=body.message,
                     intent=final_intent or "",
                     source_count=len(final_sources or []),
+                )
+                _log_query_history(
+                    org_id=org_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    message_id=assistant_id,
+                    query=body.message,
+                    intent=final_intent or "",
+                    response_length=len(final_text or ""),
+                    source_count=len(final_sources or []),
+                    tool_calls=tool_calls_made,
+                    latency_ms=int((time.monotonic() - _turn_started_at) * 1000),
+                    model_used=_get_active_llm_model_name(),
                 )
                 yield _sse(
                     {
@@ -503,15 +581,24 @@ async def chat_stream(
 @router.get("/conversations")
 async def list_conversations(
     q: str | None = None,
+    include_archived: bool = False,
+    archived_only: bool = False,
+    limit: int = Query(50, ge=1, le=200),
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
     """List conversations, optionally filtered by a free-text search.
 
-    With no `q`, returns the most-recently-active conversations the caller
-    owns. With `q`, runs the `search_conversations` SQL function which:
+    Modes:
+      * default: active conversations only (sidebar)
+      * archived_only=true: just the archive (for /archive page)
+      * include_archived=true with q: search across both, badge on the row
+      * include_archived=true without q: legacy "everything" mode, rarely used
+
+    With `q`, runs the `search_conversations` SQL function which:
       * Matches against both conversation titles and message contents
       * Uses `websearch_to_tsquery` for permissive user-shaped input
       * Returns relevance-ranked results (title hits weighted 2× message hits)
+      * Always returns archived hits too (caller filters if it doesn't want them)
     Search is server-side; RLS still applies via SECURITY INVOKER.
     """
     _, _, token = _require_org(current_user)
@@ -519,16 +606,32 @@ async def list_conversations(
 
     query = (q or "").strip()
     if not query:
-        # Pinned conversations come first regardless of recency, then the
-        # rest by updated_at DESC. Migration 019 adds an index that matches
-        # this exact ORDER BY so Postgres can serve it without a sort.
+        # Pinned-first then recency. The partial index `idx_conversations_active`
+        # matches this ORDER BY with the `is_archived = false` filter, so the
+        # sidebar query is index-only even as the archive grows.
+        builder = (
+            client.table("conversations")
+            .select(
+                "id, title, is_pinned, is_archived, archived_at, "
+                "archive_reason, created_at, updated_at"
+            )
+        )
+        if archived_only:
+            builder = (
+                builder
+                .eq("is_archived", True)
+                .order("archived_at", desc=True)
+            )
+        else:
+            if not include_archived:
+                builder = builder.eq("is_archived", False)
+            builder = (
+                builder
+                .order("is_pinned", desc=True)
+                .order("updated_at", desc=True)
+            )
         result = await asyncio.to_thread(
-            lambda: client.table("conversations")
-            .select("id, title, is_pinned, created_at, updated_at")
-            .order("is_pinned", desc=True)
-            .order("updated_at", desc=True)
-            .limit(50)
-            .execute()
+            lambda: builder.limit(limit).execute()
         )
         return {"conversations": result.data or []}
 
@@ -540,25 +643,51 @@ async def list_conversations(
     result = await asyncio.to_thread(
         lambda: client.rpc(
             "search_conversations",
-            {"search_query": query, "result_limit": 50},
+            {"search_query": query, "result_limit": limit},
         ).execute()
     )
     rows = result.data or []
-    # The RPC returns a `rank` column — drop it for API consumers; sidebar
-    # cares about order, not numeric weights. The pin flag rides along so
-    # the sidebar can render the icon on each row. Search results pre-RPC
-    # update may not carry the field; default to False for compatibility.
+    # Filter modes happen client-side after the RPC because the SQL function
+    # is org-wide (so RLS does the access check) and we want a consistent
+    # ranking across active + archived without splitting into two RPCs.
+    if archived_only:
+        rows = [r for r in rows if r.get("is_archived")]
+    elif not include_archived:
+        rows = [r for r in rows if not r.get("is_archived")]
     convos = [
         {
             "id": r["id"],
             "title": r["title"],
             "is_pinned": bool(r.get("is_pinned", False)),
+            "is_archived": bool(r.get("is_archived", False)),
+            "archived_at": r.get("archived_at"),
             "created_at": r["created_at"],
             "updated_at": r["updated_at"],
         }
         for r in rows
     ]
     return {"conversations": convos, "query": query}
+
+
+@router.get("/conversations/archive/count")
+async def archived_count(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, int]:
+    """Cheap COUNT(*) for the "Archived (N)" sidebar link.
+
+    Returning HEAD-only would be more idiomatic in REST, but PostgREST's
+    HEAD count + RLS combo can't share the user JWT cleanly via the Python
+    client, so we just return a tiny JSON instead.
+    """
+    _, _, token = _require_org(current_user)
+    client = get_user_client(token)
+    result = await asyncio.to_thread(
+        lambda: client.table("conversations")
+        .select("id", count="exact", head=True)
+        .eq("is_archived", True)
+        .execute()
+    )
+    return {"count": int(result.count or 0)}
 
 
 @router.get("/conversations/{conversation_id}")
@@ -572,7 +701,8 @@ async def get_conversation(
     convo = await asyncio.to_thread(
         lambda: client.table("conversations")
         .select(
-            "id, title, is_pinned, created_at, updated_at, "
+            "id, title, is_pinned, is_archived, archived_at, archive_reason, "
+            "created_at, updated_at, "
             "scoped_document_id, scoped_tags, scoped_collection_id"
         )
         .eq("id", conversation_id)
@@ -581,6 +711,17 @@ async def get_conversation(
     )
     if not convo.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+
+    # Touch last_accessed_at on read so the auto-archive cron doesn't sweep
+    # active conversations someone is still reading. Throttled to once per
+    # hour per conversation via the helper — adds at most one UPDATE per
+    # /chat/[id] tab open per hour, which is negligible compared to message
+    # writes happening in the same conversation.
+    if not convo.data.get("is_archived"):
+        await _maybe_touch_last_accessed(
+            client, conversation_id=conversation_id,
+            current=convo.data.get("updated_at"),
+        )
 
     # Load every assistant branch + every user row. Two reasons we don't
     # filter to is_active_branch=true at the DB:
@@ -628,6 +769,35 @@ async def get_conversation(
         if row.get("is_active_branch"):
             active_by_parent[parent_id] = row
 
+    # Pull open competitor mentions for this conversation in one shot, keyed
+    # by message_id, so the inline warning banner survives a page reload.
+    # Dismissed mentions (admin-resolved) are intentionally excluded — the
+    # admin already triaged them and we don't want stale warnings flashing
+    # at the user on every reload.
+    mentions_by_msg: dict[str, list[dict]] = {}
+    try:
+        mentions_result = await asyncio.to_thread(
+            lambda: client.table("competitor_mentions")
+            .select("message_id, matched_term, watchlist_source, match_count, snippet")
+            .eq("conversation_id", conversation_id)
+            .eq("status", "open")
+            .execute()
+        )
+        for row in mentions_result.data or []:
+            mid = row.get("message_id")
+            if not mid:
+                continue
+            mentions_by_msg.setdefault(mid, []).append(
+                {
+                    "term": row["matched_term"],
+                    "source": row["watchlist_source"],
+                    "count": row.get("match_count") or 1,
+                    "snippet": row.get("snippet") or "",
+                }
+            )
+    except Exception as exc:
+        log.warning("competitor_mentions_load_failed", error=str(exc))
+
     # Build the linear timeline. We rely on created_at order to interleave;
     # for each user message we emit the active assistant branch (if any)
     # immediately after.
@@ -640,6 +810,7 @@ async def get_conversation(
             active = {
                 **active,
                 "total_branches": total_branches,
+                "competitor_matches": mentions_by_msg.get(active["id"], []),
             }
             timeline.append(active)
 
@@ -647,7 +818,14 @@ async def get_conversation(
     # come back due to RLS) goes at the end so the chat doesn't look broken.
     if orphan_assistants:
         # Insert orphans by created_at so they slot near where they belong.
-        timeline.extend({**r, "total_branches": 1} for r in orphan_assistants)
+        timeline.extend(
+            {
+                **r,
+                "total_branches": 1,
+                "competitor_matches": mentions_by_msg.get(r["id"], []),
+            }
+            for r in orphan_assistants
+        )
         timeline.sort(key=lambda r: r.get("created_at") or "")
 
     return {
@@ -666,6 +844,7 @@ async def get_conversation(
                     "feedback": b.get("feedback"),
                     "metadata": b.get("metadata"),
                     "created_at": b.get("created_at"),
+                    "competitor_matches": mentions_by_msg.get(b["id"], []),
                 }
                 for b in sorted(rows, key=lambda r: r.get("branch_index", 0))
             ]
@@ -735,6 +914,190 @@ async def delete_conversation(
     )
     if not result.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+
+
+# ── Archive / restore (V3 #104) ──────────────────────────────────────────────
+#
+# Archive is a soft state — the row stays, but it's hidden from the sidebar
+# and filtered out of default reads. We keep:
+#   * archived_at   — when (for the /archive UI's "archived 3 days ago" label)
+#   * archived_by   — who (NULL = the auto-archive cron)
+#   * archive_reason — why ('manual', 'bulk_manual', or 'auto_inactive')
+#
+# A pinned conversation cannot be archived; the DB trigger enforces this and
+# we surface a friendly 409 here rather than leaking the SQLSTATE.
+
+_PINNED_ERR_FRAGMENT = "Cannot archive a pinned conversation"
+
+
+def _is_pinned_violation(exc: Exception) -> bool:
+    return _PINNED_ERR_FRAGMENT.lower() in str(exc).lower()
+
+
+@router.post("/conversations/{conversation_id}/archive")
+async def archive_conversation(
+    conversation_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Manually archive a conversation. Pinned conversations get a 409 — the
+    user has to unpin first, which is the right safety affordance for a
+    "favorite" item.
+    """
+    if not _is_uuid(conversation_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid conversation id.")
+    _, user_id, token = _require_org(current_user)
+    client = get_user_client(token)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        result = await asyncio.to_thread(
+            lambda: client.table("conversations")
+            .update(
+                {
+                    "is_archived": True,
+                    "archived_at": now_iso,
+                    "archived_by": user_id,
+                    "archive_reason": "manual",
+                }
+            )
+            .eq("id", conversation_id)
+            .eq("is_archived", False)  # idempotency: don't bump archived_at on a re-archive
+            .execute()
+        )
+    except Exception as exc:
+        if _is_pinned_violation(exc):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Unpin this conversation before archiving it.",
+            ) from exc
+        raise
+
+    if not result.data:
+        # Either the row doesn't exist or it's already archived. Distinguish
+        # so the client knows whether to retry or just re-fetch.
+        existing = await asyncio.to_thread(
+            lambda: client.table("conversations")
+            .select("id, is_archived")
+            .eq("id", conversation_id)
+            .maybe_single()
+            .execute()
+        )
+        if not existing or not existing.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+        return {"conversation": existing.data}
+    return {"conversation": result.data[0]}
+
+
+@router.post("/conversations/{conversation_id}/restore")
+async def restore_conversation(
+    conversation_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Restore an archived conversation. Also resets last_accessed_at so the
+    next cron doesn't immediately re-archive it.
+    """
+    if not _is_uuid(conversation_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid conversation id.")
+    _, _, token = _require_org(current_user)
+    client = get_user_client(token)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    result = await asyncio.to_thread(
+        lambda: client.table("conversations")
+        .update(
+            {
+                "is_archived": False,
+                "archived_at": None,
+                "archived_by": None,
+                "archive_reason": None,
+                "last_accessed_at": now_iso,
+            }
+        )
+        .eq("id", conversation_id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+    return {"conversation": result.data[0]}
+
+
+@router.post("/conversations/archive/bulk")
+async def bulk_archive_conversations(
+    body: BulkArchiveRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Archive up to 200 conversations in one call. Pinned ids are skipped
+    silently (the row stays untouched); the response reports counts so the
+    UI can render "Archived 7 of 10 (3 pinned, skipped)".
+    """
+    ids = [cid for cid in body.conversation_ids if _is_uuid(cid)]
+    if not ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid conversation ids.")
+    _, user_id, token = _require_org(current_user)
+    client = get_user_client(token)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    # The trigger blocks pinned rows individually, which would 500 the whole
+    # bulk call. Filter pinned out at the WHERE clause so the UPDATE only
+    # touches eligible rows; the trigger then becomes a defence-in-depth.
+    result = await asyncio.to_thread(
+        lambda: client.table("conversations")
+        .update(
+            {
+                "is_archived": True,
+                "archived_at": now_iso,
+                "archived_by": user_id,
+                "archive_reason": "bulk_manual",
+            }
+        )
+        .in_("id", ids)
+        .eq("is_archived", False)
+        .eq("is_pinned", False)
+        .execute()
+    )
+    archived = result.data or []
+    archived_ids = {row["id"] for row in archived}
+    skipped_ids = [cid for cid in ids if cid not in archived_ids]
+    return {
+        "archived_count": len(archived_ids),
+        "skipped_count": len(skipped_ids),
+        "archived_ids": list(archived_ids),
+        "skipped_ids": skipped_ids,
+    }
+
+
+@router.post("/conversations/archive/bulk-restore")
+async def bulk_restore_conversations(
+    body: BulkRestoreRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    ids = [cid for cid in body.conversation_ids if _is_uuid(cid)]
+    if not ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid conversation ids.")
+    _, _, token = _require_org(current_user)
+    client = get_user_client(token)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    result = await asyncio.to_thread(
+        lambda: client.table("conversations")
+        .update(
+            {
+                "is_archived": False,
+                "archived_at": None,
+                "archived_by": None,
+                "archive_reason": None,
+                "last_accessed_at": now_iso,
+            }
+        )
+        .in_("id", ids)
+        .eq("is_archived", True)
+        .execute()
+    )
+    restored = result.data or []
+    return {
+        "restored_count": len(restored),
+        "restored_ids": [r["id"] for r in restored],
+    }
 
 
 @router.patch("/messages/{message_id}/feedback")
@@ -1055,6 +1418,7 @@ async def regenerate_message(
         trace_id: str | None = None
         confidence_evt: ConfidenceEvent | None = None
         final_intent: str = ""
+        competitor_matches: tuple[CompetitorMatch, ...] = ()
         had_error = False
         error_payload: dict | None = None
 
@@ -1085,6 +1449,7 @@ async def regenerate_message(
                     tool_calls_made = ev.tool_calls_made
                     trace_id = ev.trace_id
                     final_intent = ev.intent
+                    competitor_matches = ev.competitor_matches
                 elif isinstance(ev, ConfidenceEvent):
                     confidence_evt = ev
                 elif isinstance(ev, ErrorEvent):
@@ -1159,6 +1524,14 @@ async def regenerate_message(
                 conversation_id=conversation_id,
                 org_id=org_id,
             )
+            if competitor_matches:
+                await persist_chat_mentions(
+                    org_id=org_id,
+                    message_id=new_id,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    matches=list(competitor_matches),
+                )
             yield _sse(
                 {
                     "type": "done",
@@ -1404,13 +1777,32 @@ async def _ensure_conversation(
     if conversation_id:
         check = await asyncio.to_thread(
             lambda: client.table("conversations")
-            .select("id, scoped_document_id, scoped_tags")
+            .select("id, scoped_document_id, scoped_tags, is_archived")
             .eq("id", conversation_id)
             .maybe_single()
             .execute()
         )
         if not check.data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+        # V3 #104 — auto-restore on new activity. Sending a message in an
+        # archived conversation un-archives it silently; this is the UX
+        # users expect from Gmail/Notion-style archive. Clearing
+        # archived_at + archive_reason keeps the row's audit trail clean.
+        if check.data.get("is_archived"):
+            await asyncio.to_thread(
+                lambda: client.table("conversations")
+                .update(
+                    {
+                        "is_archived": False,
+                        "archived_at": None,
+                        "archived_by": None,
+                        "archive_reason": None,
+                        "last_accessed_at": "now()",
+                    }
+                )
+                .eq("id", conversation_id)
+                .execute()
+            )
         return (
             conversation_id,
             check.data.get("scoped_document_id"),
@@ -1619,6 +2011,58 @@ async def _save_message(
     return new_id
 
 
+def _get_active_llm_model_name() -> str | None:
+    """V3 #91 — short label of the currently-configured chat model for the
+    query history page. Reads from settings (the same source the LLM client
+    uses) so we never get out of sync. Returns None if the setting is empty.
+    """
+    try:
+        name = (get_settings().llm_model or "").strip()
+        return name[:50] if name else None
+    except Exception:
+        return None
+
+
+def _log_query_history(
+    *,
+    org_id: str,
+    user_id: str,
+    conversation_id: str | None,
+    message_id: str | None,
+    query: str,
+    intent: str,
+    response_length: int,
+    source_count: int,
+    tool_calls: int,
+    latency_ms: int | None,
+    model_used: str | None,
+) -> None:
+    """V3 #91 — fire-and-forget write into `query_logs` for the /history page.
+
+    Never raises; the inner writer swallows exceptions. We use the synchronous
+    `log_query_async` (which schedules the IO on an asyncio task) so the
+    request handler returns immediately without awaiting the DB insert.
+    """
+    try:
+        from app.services.query_logs import log_query_async
+
+        log_query_async(
+            user_id=user_id,
+            org_id=org_id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            query_text=query,
+            intent=intent or None,
+            response_length=response_length,
+            source_count=source_count,
+            tool_calls=tool_calls,
+            latency_ms=latency_ms,
+            model_used=model_used,
+        )
+    except Exception as exc:
+        log.warning("query_log_schedule_failed", error=str(exc))
+
+
 async def _emit_chat_analytics(
     *,
     org_id: str,
@@ -1804,13 +2248,48 @@ async def _touch_conversation(client: Client, conversation_id: str) -> None:
     try:
         await asyncio.to_thread(
             lambda: client.table("conversations")
-            .update({"updated_at": "now()"})
+            .update({"updated_at": "now()", "last_accessed_at": "now()"})
             .eq("id", conversation_id)
             .execute()
         )
     except Exception as exc:
         # Not critical; conversation listing just won't bump.
         log.warning("conversation_touch_failed", conversation_id=conversation_id, error=str(exc))
+
+
+# Touch last_accessed_at on read paths, but throttle aggressively so a chat
+# tab refresh doesn't generate a write storm. We only update if the previous
+# value is older than the throttle window; the SQL itself short-circuits via
+# the WHERE clause so this is one round trip with no read first.
+_LAST_ACCESS_THROTTLE_SECONDS = 3600  # 1h
+
+
+async def _maybe_touch_last_accessed(
+    client: Client,
+    conversation_id: str,
+    current: str | None = None,
+) -> None:
+    try:
+        # Use the WHERE clause as the throttle: only write if the stored
+        # last_accessed_at is older than the window. This is a single
+        # statement, no read-then-write race.
+        cutoff = (
+            datetime.now(timezone.utc)
+            - timedelta(seconds=_LAST_ACCESS_THROTTLE_SECONDS)
+        ).isoformat()
+        await asyncio.to_thread(
+            lambda: client.table("conversations")
+            .update({"last_accessed_at": "now()"})
+            .eq("id", conversation_id)
+            .lt("last_accessed_at", cutoff)
+            .execute()
+        )
+    except Exception as exc:
+        # Best-effort signal; never block the chat path on it.
+        log.warning(
+            "last_accessed_touch_failed",
+            conversation_id=conversation_id, error=str(exc),
+        )
 
 
 def _derive_title(message: str) -> str:
@@ -1837,6 +2316,19 @@ def _event_to_payload(event: OrchestratorEvent) -> dict | None:
         return {"type": "sources", "sources": event.sources}
     if isinstance(event, KnowledgeGapEvent):
         return {"type": "knowledge_gap", "topics": list(event.topics)}
+    if isinstance(event, CompetitorWarningEvent):
+        return {
+            "type": "competitor_warning",
+            "matches": [
+                {
+                    "term": m.term,
+                    "source": m.source,
+                    "count": m.count,
+                    "snippet": m.snippet,
+                }
+                for m in event.matches
+            ],
+        }
     if isinstance(event, ConfidenceEvent):
         return {
             "type": "confidence",

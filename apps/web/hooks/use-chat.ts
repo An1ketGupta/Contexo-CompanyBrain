@@ -6,6 +6,7 @@ import { networkError, parseApiError, type ApiError, type ErrorCode } from "@/li
 import { newRequestId, REQUEST_ID_HEADER } from "@/lib/request-id";
 import type {
   ChatStreamEvent,
+  CompetitorMatch,
   MessageConfidence,
   MessageFeedback,
   MessageSource,
@@ -44,6 +45,7 @@ export interface InactiveBranch {
   feedback: MessageFeedback | null;
   confidence: MessageConfidence | null;
   intent: QueryIntent | null;
+  competitor_matches: CompetitorMatch[];
 }
 
 export interface DisplayMessage {
@@ -66,6 +68,10 @@ export interface DisplayMessage {
   // V3 Day 4 #51 — which prompt mode the orchestrator picked. UI shows
   // "Writing mode" / "Analysis mode" while the answer streams.
   intent: QueryIntent | null;
+  // Competitor watchlist hits flagged by the post-generation detector.
+  // Empty array on user bubbles and on clean assistant turns. Drives the
+  // inline warning banner and the export-confirm dialogs.
+  competitor_matches: CompetitorMatch[];
   error?: MessageError;
   /**
    * The text we sent to produce this assistant message — kept on the user
@@ -172,6 +178,7 @@ function persistedToDisplay(
       feedback: b.feedback,
       confidence: b.metadata?.confidence ?? null,
       intent: b.metadata?.intent ?? null,
+      competitor_matches: b.competitor_matches ?? [],
     };
   }
   return {
@@ -185,6 +192,7 @@ function persistedToDisplay(
     feedback: m.feedback ?? null,
     confidence: m.confidence ?? null,
     intent: m.intent ?? null,
+    competitor_matches: m.competitor_matches ?? [],
     created_at: m.created_at,
     parent_user_message_id: parentId,
     active_branch_index: activeIdx,
@@ -306,6 +314,7 @@ export function useChat({
           feedback: null,
           confidence: null,
           intent: null,
+          competitor_matches: [],
           pending_text: trimmed,
           client_message_id: clientMessageId,
           created_at: new Date().toISOString(),
@@ -324,6 +333,7 @@ export function useChat({
           feedback: null,
           confidence: null,
           intent: null,
+          competitor_matches: [],
           pending_text: trimmed,
           client_message_id: clientMessageId,
           created_at: new Date().toISOString(),
@@ -523,6 +533,7 @@ export function useChat({
         feedback: target.feedback,
         confidence: target.confidence,
         intent: target.intent,
+        competitor_matches: target.competitor_matches,
       };
 
       setMessages((prev) =>
@@ -537,6 +548,7 @@ export function useChat({
                 feedback: null,
                 confidence: null,
                 intent: null,
+                competitor_matches: [],
                 error: undefined,
                 server_id: null,
                 other_branches: {
@@ -912,6 +924,16 @@ function handleEvent(
         topics: event.topics ?? [],
         detected_at: Date.now(),
       });
+      return;
+    }
+    case "competitor_warning": {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.local_id === assistantLocalId
+            ? { ...m, competitor_matches: event.matches ?? [] }
+            : m,
+        ),
+      );
       return;
     }
     case "confidence": {

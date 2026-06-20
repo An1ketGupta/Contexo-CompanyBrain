@@ -43,7 +43,7 @@ export function CopyButton({ text, className, label = "Copy", messageId }: CopyB
       type="button"
       onClick={onCopy}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground",
+        "tap inline-flex items-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground",
         className,
       )}
       aria-label={copied ? "Copied" : label}

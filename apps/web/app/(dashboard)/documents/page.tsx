@@ -8,6 +8,8 @@ import { DocumentCardList } from "@/components/documents/document-card-list";
 import { DocumentTable } from "@/components/documents/document-table";
 import { DocumentFiltersBar } from "@/components/documents/document-filters";
 import { BulkActionBar } from "@/components/documents/bulk-action-bar";
+import { RecommendationsWidget } from "@/components/documents/recommendations-widget";
+import { refreshRecommendations } from "@/hooks/use-recommendations";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   DEFAULT_FILTERS,
@@ -49,7 +51,11 @@ export default function DocumentsPage() {
   // Realtime usually beats this to the punch, but the explicit refetch keeps
   // the row visible immediately even if the Realtime channel is reconnecting.
   useEffect(() => {
-    const handler = () => refresh();
+    const handler = () => {
+      refresh();
+      // Upload may have auto-matched a recommendation — refetch the widget.
+      refreshRecommendations();
+    };
     window.addEventListener(DOCUMENTS_REFRESH_EVENT, handler);
     return () => window.removeEventListener(DOCUMENTS_REFRESH_EVENT, handler);
   }, [refresh]);
@@ -70,6 +76,8 @@ export default function DocumentsPage() {
         </div>
         <UploadDialog />
       </div>
+
+      <RecommendationsWidget />
 
       <DocumentFiltersBar
         filters={filters}

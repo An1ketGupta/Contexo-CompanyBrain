@@ -363,7 +363,7 @@ function RunRow({ run, onClick }: { run: AgentRunRow; onClick: () => void }) {
             <span className="truncate text-sm font-medium">
               {prettyAgent(run.agent_type)}
             </span>
-            <Badge variant="secondary" className={cn("h-5 px-2 text-[10px]", meta.cls)}>
+            <Badge variant="default" className={cn("h-5 px-2 text-[10px]", meta.cls)}>
               {meta.label}
             </Badge>
           </div>

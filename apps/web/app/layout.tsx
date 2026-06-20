@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "sonner";
@@ -17,6 +17,19 @@ export const metadata: Metadata = {
   },
   description:
     "Your company's AI-powered brain. Centralize all company knowledge and execute any work task with full context.",
+};
+
+// `viewport-fit=cover` lets layout extend under the iOS notch / home indicator
+// so `env(safe-area-inset-*)` returns non-zero values. Without it, sticky
+// bottom inputs sit awkwardly above the home indicator on iPhone.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b1120" },
+  ],
 };
 
 export default function RootLayout({

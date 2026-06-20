@@ -8,6 +8,7 @@ from .hybrid_search import (
     hybrid_search,
     reciprocal_rank_fusion,
 )
+from .search_cache import hybrid_search_cached
 from .vector_search import (
     Retriever,
     SearchHit,
@@ -30,6 +31,7 @@ __all__ = [
     "get_hybrid_retriever",
     "get_vector_retriever",
     "hybrid_search",
+    "hybrid_search_cached",
     "reciprocal_rank_fusion",
     "vector_search",
 ]

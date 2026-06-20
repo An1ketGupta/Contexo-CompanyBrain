@@ -98,7 +98,7 @@ export function SendGmailButton({ messageId, body }: SendGmailButtonProps) {
         type="button"
         onClick={handleClick}
         className={cn(
-          "inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+          "tap inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
         )}
         title={
           status?.connected && status.has_send_scope

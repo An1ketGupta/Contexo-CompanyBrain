@@ -505,7 +505,7 @@ function DocumentsTable({
   }
   return (
     <div className="overflow-x-auto rounded-lg border bg-card">
-      <table className="w-full text-sm">
+      <table className="w-full min-w-[640px] text-sm">
         <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
             <th className="px-4 py-3 text-left">Document</th>
@@ -581,7 +581,7 @@ function UsersTable({ users }: { users: UserRow[] }) {
   }
   return (
     <div className="overflow-x-auto rounded-lg border bg-card">
-      <table className="w-full text-sm">
+      <table className="w-full min-w-[640px] text-sm">
         <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
             <th className="px-4 py-3 text-left">Employee</th>

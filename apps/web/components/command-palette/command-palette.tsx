@@ -118,6 +118,12 @@ const NAV_ACTIONS: NavAction[] = [
     adminOnly: true,
   },
   {
+    label: "Archived conversations",
+    icon: Archive,
+    href: "/archive",
+    keywords: ["archive", "archived", "old", "hidden", "restore"],
+  },
+  {
     label: "Settings",
     icon: Settings,
     href: "/settings",

@@ -12,6 +12,7 @@ import {
   Gauge,
   HeartPulse,
   HelpCircle,
+  History,
   Inbox,
   LineChart,
   MessageSquare,
@@ -34,6 +35,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
+  { href: "/history", label: "History", icon: History },
   { href: "/chat/meeting-prep", label: "Meeting prep", icon: CalendarDays },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/activity", label: "Team activity", icon: Users },

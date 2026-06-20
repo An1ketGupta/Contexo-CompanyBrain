@@ -117,7 +117,10 @@ export default function ChatNewPage() {
         )}
         {isEmpty ? (
           <div className="flex flex-1 overflow-y-auto">
-            <EmptyState hasDocuments={hasDocuments} />
+            <EmptyState
+              hasDocuments={hasDocuments}
+              documentsLoading={loadingDocs}
+            />
           </div>
         ) : (
           <MessageList messages={messages} onRetry={retry} onFeedback={setFeedback} />

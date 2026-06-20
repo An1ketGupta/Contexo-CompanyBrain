@@ -37,7 +37,10 @@ export function MobileHeader() {
           <div className="flex-1 overflow-y-auto py-2">
             <SidebarNav onNavigate={() => setOpen(false)} />
           </div>
-          <div className="border-t border-border p-2">
+          {/* `pb-safe-2` keeps the user menu clear of the iOS home indicator
+              while preserving the base 0.5rem padding on devices without an
+              inset. */}
+          <div className="border-t border-border p-2 pb-safe-2">
             <UserMenu user={user} organization={organization} />
           </div>
         </SheetContent>

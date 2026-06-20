@@ -78,7 +78,7 @@ export function SubmitApprovalButton({ messageId, body }: SubmitApprovalButtonPr
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className="tap inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         title="Submit for approval"
         aria-label="Submit for approval"
       >

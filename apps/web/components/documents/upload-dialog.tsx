@@ -11,13 +11,13 @@ import {
 } from "lucide-react";
 
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogFooter,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle,
+} from "@/components/ui/responsive-dialog";
 import { Button } from "@/components/ui/button";
 import { FileIcon } from "./file-icon";
 import { cn } from "@/lib/utils";
@@ -118,64 +118,72 @@ export function UploadDialogHost() {
   }
 
   return (
-    <Dialog open={dialogOpen} onOpenChange={handleOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Upload Documents</DialogTitle>
-          <DialogDescription>
+    // ResponsiveDialog: centered Radix Dialog on desktop, vaul bottom sheet
+    // on mobile. Body content is wrapped in a `contents` shim on desktop so
+    // the Dialog's grid + gap-4 still applies; on mobile it becomes an
+    // explicit flex column with horizontal padding (the drawer primitive
+    // intentionally leaves body padding to callers so headers/footers can
+    // bleed differently).
+    <ResponsiveDialog open={dialogOpen} onOpenChange={handleOpenChange}>
+      <ResponsiveDialogContent>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Upload Documents</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             You can close this dialog — uploads keep running.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
 
-        <Dropzone hasQueue={hasQueue} onPick={enqueue} inputRef={inputRef} />
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept={ACCEPTED_TYPES}
-          onChange={(e) => {
-            if (e.target.files) enqueue(e.target.files);
-            // Allow re-selecting the same file after a failure.
-            if (inputRef.current) inputRef.current.value = "";
-          }}
-          className="hidden"
-        />
+        <div className="flex flex-col gap-4 px-4 pb-4 md:contents">
+          <Dropzone hasQueue={hasQueue} onPick={enqueue} inputRef={inputRef} />
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            accept={ACCEPTED_TYPES}
+            onChange={(e) => {
+              if (e.target.files) enqueue(e.target.files);
+              // Allow re-selecting the same file after a failure.
+              if (inputRef.current) inputRef.current.value = "";
+            }}
+            className="hidden"
+          />
 
-        {hasQueue && (
-          <div className="max-h-64 overflow-y-auto rounded-md border border-border">
-            <ul className="divide-y divide-border">
-              {items.map((item) => (
-                <QueueRow
-                  key={item.key}
-                  item={item}
-                  onRemove={() => remove(item.key)}
-                  onCancel={() => cancel(item.key)}
-                />
-              ))}
-            </ul>
-          </div>
-        )}
+          {hasQueue && (
+            <div className="max-h-64 overflow-y-auto rounded-md border border-border">
+              <ul className="divide-y divide-border">
+                {items.map((item) => (
+                  <QueueRow
+                    key={item.key}
+                    item={item}
+                    onRemove={() => remove(item.key)}
+                    onCancel={() => cancel(item.key)}
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
 
-        {hasQueue && (
-          <p
-            className={cn(
-              "text-xs",
-              summary.failed > 0
-                ? "text-destructive"
-                : "text-muted-foreground",
-            )}
-          >
-            {isRunning
-              ? `Uploading ${summary.done + summary.inFlight} of ${summary.total}…`
-              : allDone
-                ? summary.failed > 0
-                  ? `${summary.done} uploaded, ${summary.failed} failed.`
-                  : `All ${summary.done} uploaded.`
-                : `${summary.total} file${summary.total === 1 ? "" : "s"} ready.`}
-          </p>
-        )}
+          {hasQueue && (
+            <p
+              className={cn(
+                "text-xs",
+                summary.failed > 0
+                  ? "text-destructive"
+                  : "text-muted-foreground",
+              )}
+            >
+              {isRunning
+                ? `Uploading ${summary.done + summary.inFlight} of ${summary.total}…`
+                : allDone
+                  ? summary.failed > 0
+                    ? `${summary.done} uploaded, ${summary.failed} failed.`
+                    : `All ${summary.done} uploaded.`
+                  : `${summary.total} file${summary.total === 1 ? "" : "s"} ready.`}
+            </p>
+          )}
+        </div>
 
-        <DialogFooter>
+        <ResponsiveDialogFooter>
           {isRunning ? (
             <Button variant="outline" onClick={cancelAll}>
               Cancel all
@@ -201,9 +209,9 @@ export function UploadDialogHost() {
               ? `Uploading ${summary.done + summary.inFlight}/${summary.total}…`
               : startLabel}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </ResponsiveDialogFooter>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }
 

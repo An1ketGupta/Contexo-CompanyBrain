@@ -11,12 +11,14 @@ import {
   Mail,
   MoreHorizontal,
   Plug,
+  ShieldAlert,
   ThumbsDown,
   ThumbsUp,
   Trash2,
   UserMinus,
   UserPlus,
   Webhook,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -88,7 +90,11 @@ export default function SettingsPage() {
 
       <AIInstructionsCard canEdit={user?.role === "admin"} />
 
+      <CompetitorWatchlistCard canEditOrg={user?.role === "admin"} />
+
       <SharingCard canEdit={user?.role === "admin"} />
+
+      <ArchiveCard canEdit={user?.role === "admin"} />
 
       {user?.role === "admin" && (
         <Card
@@ -1056,6 +1062,237 @@ function AIInstructionsCard({ canEdit }: { canEdit: boolean }) {
 }
 
 
+// ── Competitor watchlist ────────────────────────────────────────────────────
+//
+// Two layers, surfaced as sub-sections of a single card so the user
+// understands the org list is the policy floor and the personal list is an
+// optional overlay. Both lists save independently.
+//
+// Editor pattern: chip input. Type a name, press Enter / comma / Tab to
+// commit, click X on a chip to remove. Save button is per-section and
+// only enabled when the list differs from the server snapshot.
+
+interface CompetitorListResponse {
+  names: string[];
+  max: number;
+}
+
+function CompetitorWatchlistCard({
+  canEditOrg,
+}: {
+  canEditOrg: boolean;
+}) {
+  return (
+    <Card
+      title="Competitor watch"
+      description="Flag when AI outputs mention specific companies. We highlight matches inline, ask you to confirm before exporting flagged content, and surface a review queue for admins."
+    >
+      <div className="space-y-6">
+        <CompetitorListEditor
+          endpoint="/api/organizations/me/competitors"
+          label="Workspace list"
+          help={
+            canEditOrg
+              ? "Applied to every chat and agent output in this workspace. Whole-word, case-insensitive."
+              : "Workspace-wide list managed by your admins. Visible so you know what's being watched."
+          }
+          canEdit={canEditOrg}
+          icon={<ShieldAlert className="h-4 w-4 text-amber-600" />}
+        />
+        <div className="border-t border-border" />
+        <CompetitorListEditor
+          endpoint="/api/users/me/competitors"
+          label="Your personal watchlist"
+          help="Extra terms layered on top of the workspace list — only your own outputs are scanned."
+          canEdit={true}
+          icon={null}
+        />
+      </div>
+    </Card>
+  );
+}
+
+function CompetitorListEditor({
+  endpoint,
+  label,
+  help,
+  canEdit,
+  icon,
+}: {
+  endpoint: string;
+  label: string;
+  help: string;
+  canEdit: boolean;
+  icon: React.ReactNode;
+}) {
+  const { data, error, isLoading, mutate } = useSWR<CompetitorListResponse>(
+    endpoint,
+    jsonFetcher,
+    { revalidateOnFocus: false },
+  );
+
+  const initial = data?.names ?? [];
+  const max = data?.max ?? 100;
+
+  const [names, setNames] = useState<string[]>(initial);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Sync local state when server-side list arrives or refreshes.
+  useEffect(() => {
+    setNames(initial);
+    // Intentionally use the joined snapshot as the dep so a refetch with the
+    // same array contents doesn't churn local state mid-edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial.join("")]);
+
+  const dirty =
+    names.length !== initial.length ||
+    names.some((n, i) => n !== initial[i]);
+
+  const commitDraft = () => {
+    const cleaned = draft.trim();
+    if (!cleaned) {
+      setDraft("");
+      return;
+    }
+    if (cleaned.length > 200) {
+      toast.error("Competitor name is too long (max 200 chars).");
+      return;
+    }
+    if (names.length >= max) {
+      toast.error(`Limit reached — at most ${max} names.`);
+      return;
+    }
+    if (names.some((n) => n.toLowerCase() === cleaned.toLowerCase())) {
+      setDraft("");
+      return;
+    }
+    setNames([...names, cleaned]);
+    setDraft("");
+  };
+
+  const removeAt = (idx: number) => {
+    setNames(names.filter((_, i) => i !== idx));
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(endpoint, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ names }),
+      });
+      if (!res.ok) throw await parseApiError(res);
+      const next = (await res.json()) as CompetitorListResponse;
+      await mutate(next, { revalidate: false });
+      toast.success("Watchlist updated.");
+    } catch (err) {
+      reportApiError(err as Awaited<ReturnType<typeof parseApiError>>);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" || e.key === "," || e.key === "Tab") {
+      if (draft.trim()) {
+        e.preventDefault();
+        commitDraft();
+      }
+      return;
+    }
+    if (e.key === "Backspace" && !draft && names.length > 0) {
+      // Quick undo of the most recent chip without aiming for it.
+      e.preventDefault();
+      setNames(names.slice(0, -1));
+    }
+  };
+
+  if (isLoading) {
+    return <Skeleton className="h-24" />;
+  }
+  if (error || !data) {
+    return (
+      <p className="text-sm text-destructive">
+        Couldn&apos;t load the watchlist. Try again later.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-start gap-2">
+        {icon}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-foreground">{label}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{help}</p>
+        </div>
+      </div>
+
+      <div
+        className={`flex flex-wrap items-center gap-1.5 rounded-md border border-input bg-background p-2 text-sm ${
+          canEdit ? "" : "opacity-70"
+        }`}
+      >
+        {names.map((name, idx) => (
+          <span
+            key={`${name}-${idx}`}
+            className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-xs"
+          >
+            {name}
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => removeAt(idx)}
+                className="rounded-full p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                aria-label={`Remove ${name}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </span>
+        ))}
+        {canEdit && (
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onBlur={() => draft.trim() && commitDraft()}
+            placeholder={
+              names.length === 0
+                ? "Type a name and press Enter…"
+                : "Add another…"
+            }
+            disabled={saving || names.length >= max}
+            className="flex-1 min-w-[10rem] bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+            maxLength={200}
+          />
+        )}
+      </div>
+
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+        <span>
+          {names.length}/{max}
+        </span>
+        {canEdit && (
+          <Button
+            onClick={save}
+            disabled={!dirty || saving}
+            size="sm"
+            variant={dirty ? "default" : "ghost"}
+          >
+            {saving && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+            Save
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 // ── Sharing toggle (V3 Day 4 #62) ──────────────────────────────────────────
 
 function SharingCard({ canEdit }: { canEdit: boolean }) {
@@ -1136,6 +1373,194 @@ function SharingCard({ canEdit }: { canEdit: boolean }) {
               }`}
             />
           </button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+
+// ── Conversation archive (V3 #104) ──────────────────────────────────────────
+
+interface ArchiveSettings {
+  auto_archive_enabled: boolean;
+  threshold_days: number;
+  delete_after_archive_days: number | null;
+  allowed_threshold_days: number[];
+}
+
+function ArchiveCard({ canEdit }: { canEdit: boolean }) {
+  const { data, error, isLoading, mutate } = useSWR<ArchiveSettings>(
+    "/api/organizations/me/archive-settings",
+    jsonFetcher,
+    { revalidateOnFocus: false },
+  );
+  const [busy, setBusy] = useState(false);
+
+  const patch = async (
+    body: {
+      auto_archive_enabled?: boolean;
+      threshold_days?: number;
+      delete_after_archive_days?: number | null;
+      clear_delete_retention?: boolean;
+    },
+    optimistic?: Partial<ArchiveSettings>,
+  ) => {
+    if (!data) return;
+    const previous = data;
+    if (optimistic) {
+      await mutate({ ...data, ...optimistic } as ArchiveSettings, {
+        revalidate: false,
+      });
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/organizations/me/archive-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw await parseApiError(res);
+      const next = (await res.json()) as ArchiveSettings;
+      await mutate(next, { revalidate: false });
+      toast.success("Archive settings updated.");
+    } catch (err) {
+      await mutate(previous, { revalidate: false });
+      reportApiError(err as Awaited<ReturnType<typeof parseApiError>>);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Conversation archive"
+      description={
+        canEdit
+          ? "Auto-archive idle conversations to keep the sidebar tidy. Pinned conversations are never auto-archived."
+          : "How conversations are auto-archived for your workspace. Only admins can change these settings."
+      }
+    >
+      {isLoading ? (
+        <Skeleton className="h-24" />
+      ) : error || !data ? (
+        <p className="text-sm text-destructive">
+          Couldn&apos;t load archive settings. Try again later.
+        </p>
+      ) : (
+        <div className="space-y-5">
+          {/* Auto-archive toggle */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-foreground">
+                Auto-archive idle conversations
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Hides conversations from the sidebar after a period of
+                inactivity. They stay searchable and can be restored.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={data.auto_archive_enabled}
+              disabled={!canEdit || busy}
+              onClick={() =>
+                patch(
+                  { auto_archive_enabled: !data.auto_archive_enabled },
+                  { auto_archive_enabled: !data.auto_archive_enabled },
+                )
+              }
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                data.auto_archive_enabled ? "bg-primary" : "bg-muted"
+              }`}
+            >
+              <span
+                aria-hidden
+                className={`inline-block h-5 w-5 transform rounded-full bg-background shadow ring-0 transition-transform ${
+                  data.auto_archive_enabled ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Threshold select */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <Label
+                htmlFor="archive-threshold"
+                className="text-sm font-medium text-foreground"
+              >
+                Archive after
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Time without any read or write activity before a conversation is
+                archived.
+              </p>
+            </div>
+            <select
+              id="archive-threshold"
+              value={data.threshold_days}
+              disabled={!canEdit || busy || !data.auto_archive_enabled}
+              onChange={(e) =>
+                patch(
+                  { threshold_days: Number(e.target.value) },
+                  { threshold_days: Number(e.target.value) },
+                )
+              }
+              className="h-9 rounded-md border border-border bg-background px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {(data.allowed_threshold_days ?? [30, 45, 60, 90, 180]).map(
+                (d) => (
+                  <option key={d} value={d}>
+                    {d} days
+                  </option>
+                ),
+              )}
+            </select>
+          </div>
+
+          {/* Delete-after-archive (retention tier) */}
+          <div className="flex flex-col gap-2 rounded-md border border-dashed border-border bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-foreground">
+                Permanently delete after archive
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Optional retention window. Archived conversations beyond this
+                age are deleted forever. Off by default.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={data.delete_after_archive_days ?? "off"}
+                disabled={!canEdit || busy}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === "off") {
+                    patch(
+                      { clear_delete_retention: true },
+                      { delete_after_archive_days: null },
+                    );
+                  } else {
+                    const n = Number(value);
+                    patch(
+                      { delete_after_archive_days: n },
+                      { delete_after_archive_days: n },
+                    );
+                  }
+                }}
+                className="h-9 rounded-md border border-border bg-background px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <option value="off">Never</option>
+                <option value="30">30 days</option>
+                <option value="60">60 days</option>
+                <option value="90">90 days</option>
+                <option value="180">180 days</option>
+                <option value="365">365 days</option>
+              </select>
+            </div>
+          </div>
         </div>
       )}
     </Card>

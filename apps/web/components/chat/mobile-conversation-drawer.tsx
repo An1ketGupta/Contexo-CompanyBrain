@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  Archive,
   MessageSquare,
   MessageSquarePlus,
   Pin,
@@ -32,6 +33,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  useArchivedCount,
   useConversations,
   type ConversationSummary,
 } from "@/hooks/use-conversations";
@@ -50,8 +52,10 @@ export function MobileConversationDrawer({ activeId }: MobileConversationDrawerP
   const debouncedSearch = useDebounced(searchInput, 300);
   const searching = debouncedSearch.trim().length > 0;
 
-  const { conversations, loading, error, remove, setPinned } =
+  const { conversations, loading, error, remove, setPinned, archive } =
     useConversations(debouncedSearch);
+  const { count: archivedCount, refresh: refreshArchivedCount } =
+    useArchivedCount();
 
   const [confirmDelete, setConfirmDelete] =
     useState<ConversationSummary | null>(null);
@@ -63,6 +67,18 @@ export function MobileConversationDrawer({ activeId }: MobileConversationDrawerP
   const togglePin = async (c: ConversationSummary) => {
     try {
       await setPinned(c.id, !c.is_pinned);
+    } catch (err) {
+      reportApiError(err as ApiError);
+    }
+  };
+
+  const doArchive = async (c: ConversationSummary) => {
+    try {
+      await archive(c.id);
+      toast.success("Archived. Send a new message to restore.");
+      refreshArchivedCount();
+      if (c.id === activeId) router.push("/chat");
+      setOpen(false);
     } catch (err) {
       reportApiError(err as ApiError);
     }
@@ -167,6 +183,7 @@ export function MobileConversationDrawer({ activeId }: MobileConversationDrawerP
                       active={c.id === activeId}
                       onNavigate={() => setOpen(false)}
                       onTogglePin={() => togglePin(c)}
+                      onArchive={() => doArchive(c)}
                       onDelete={() => setConfirmDelete(c)}
                     />
                   ))}
@@ -185,6 +202,7 @@ export function MobileConversationDrawer({ activeId }: MobileConversationDrawerP
                           active={c.id === activeId}
                           onNavigate={() => setOpen(false)}
                           onTogglePin={() => togglePin(c)}
+                          onArchive={() => doArchive(c)}
                           onDelete={() => setConfirmDelete(c)}
                         />
                       ))}
@@ -194,6 +212,25 @@ export function MobileConversationDrawer({ activeId }: MobileConversationDrawerP
               </>
             )}
           </div>
+
+          {/* Archived link mirrors the desktop sidebar so the affordance is
+              consistent across breakpoints. `pb-safe-3` reserves room for
+              the iOS home indicator beneath this last interactive row. */}
+          <Link
+            href="/archive"
+            onClick={() => setOpen(false)}
+            className="flex items-center justify-between border-t border-border px-4 py-3 pb-safe-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <span className="flex items-center gap-2">
+              <Archive className="h-4 w-4" />
+              Archived
+            </span>
+            {archivedCount > 0 && (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium">
+                {archivedCount > 999 ? "999+" : archivedCount}
+              </span>
+            )}
+          </Link>
         </SheetContent>
       </Sheet>
 
@@ -243,16 +280,19 @@ function MobileRow({
   active,
   onNavigate,
   onTogglePin,
+  onArchive,
   onDelete,
 }: {
   convo: ConversationSummary;
   active: boolean;
   onNavigate: () => void;
   onTogglePin: () => void;
+  onArchive: () => void;
   onDelete: () => void;
 }) {
   const title = (convo.title ?? "").trim() || "Untitled";
   const isPinned = !!convo.is_pinned;
+  const isArchived = !!convo.is_archived;
 
   return (
     <li className="flex items-center gap-1">
@@ -269,6 +309,9 @@ function MobileRow({
         {isPinned && (
           <Pin className="h-3 w-3 shrink-0 fill-current text-primary" />
         )}
+        {isArchived && (
+          <Archive className="h-3 w-3 shrink-0 text-muted-foreground/70" />
+        )}
         <span className="line-clamp-1 flex-1">{title}</span>
       </Link>
       <button
@@ -282,6 +325,16 @@ function MobileRow({
         ) : (
           <Pin className="h-4 w-4" />
         )}
+      </button>
+      <button
+        type="button"
+        onClick={onArchive}
+        disabled={isPinned}
+        className="flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        aria-label="Archive conversation"
+        title={isPinned ? "Unpin this conversation before archiving." : undefined}
+      >
+        <Archive className="h-4 w-4" />
       </button>
       <button
         type="button"

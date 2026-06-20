@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  Archive,
   MessageSquarePlus,
   MoreHorizontal,
   Pencil,
@@ -14,7 +15,11 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useConversations, type ConversationSummary } from "@/hooks/use-conversations";
+import {
+  useArchivedCount,
+  useConversations,
+  type ConversationSummary,
+} from "@/hooks/use-conversations";
 import { useDebounced } from "@/hooks/use-debounced";
 import { reportApiError, type ApiError } from "@/lib/errors";
 import { Input } from "@/components/ui/input";
@@ -49,8 +54,17 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
   const debouncedSearch = useDebounced(searchInput, 300);
   const searching = debouncedSearch.trim().length > 0;
 
-  const { conversations, loading, error, rename, remove, setPinned } =
-    useConversations(debouncedSearch);
+  const {
+    conversations,
+    loading,
+    error,
+    rename,
+    remove,
+    setPinned,
+    archive,
+  } = useConversations(debouncedSearch);
+  const { count: archivedCount, refresh: refreshArchivedCount } =
+    useArchivedCount();
 
   const pinnedConvos = conversations.filter((c) => c.is_pinned);
   const otherConvos = conversations.filter((c) => !c.is_pinned);
@@ -58,6 +72,17 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
   const togglePin = async (c: ConversationSummary) => {
     try {
       await setPinned(c.id, !c.is_pinned);
+    } catch (err) {
+      reportApiError(err as ApiError);
+    }
+  };
+
+  const doArchive = async (c: ConversationSummary) => {
+    try {
+      await archive(c.id);
+      toast.success("Archived. Send a new message to restore.");
+      refreshArchivedCount();
+      if (c.id === activeId) router.push("/chat");
     } catch (err) {
       reportApiError(err as ApiError);
     }
@@ -155,6 +180,7 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
                   onRename={() => setRenaming(c)}
                   onDelete={() => setConfirmDelete(c)}
                   onTogglePin={() => togglePin(c)}
+                  onArchive={() => doArchive(c)}
                 />
               ))}
             </ul>
@@ -173,6 +199,7 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
                       onRename={() => setRenaming(c)}
                       onDelete={() => setConfirmDelete(c)}
                       onTogglePin={() => togglePin(c)}
+                      onArchive={() => doArchive(c)}
                     />
                   ))}
                 </ul>
@@ -193,6 +220,7 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
                       onRename={() => setRenaming(c)}
                       onDelete={() => setConfirmDelete(c)}
                       onTogglePin={() => togglePin(c)}
+                      onArchive={() => doArchive(c)}
                     />
                   ))}
                 </ul>
@@ -201,6 +229,28 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
           </>
         )}
       </div>
+
+      {/* Bottom archive link. Hidden while searching so the result list owns
+          the full height; shown otherwise even when count is 0 so users have
+          a discoverable entry point to "where did my archived chats go?". */}
+      {!searching && (
+        <Link
+          href="/archive"
+          className={cn(
+            "mx-2 mb-2 flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+          )}
+        >
+          <span className="flex items-center gap-1.5">
+            <Archive className="h-3.5 w-3.5" />
+            Archived
+          </span>
+          {archivedCount > 0 && (
+            <span className="rounded-full bg-muted px-1.5 text-[10px] font-medium">
+              {archivedCount > 999 ? "999+" : archivedCount}
+            </span>
+          )}
+        </Link>
+      )}
 
       {renaming && (
         <RenameDialog
@@ -258,6 +308,7 @@ interface ConversationRowProps {
   onRename: () => void;
   onDelete: () => void;
   onTogglePin: () => void;
+  onArchive: () => void;
 }
 
 function ConversationRow({
@@ -266,9 +317,11 @@ function ConversationRow({
   onRename,
   onDelete,
   onTogglePin,
+  onArchive,
 }: ConversationRowProps) {
   const title = (convo.title ?? "").trim() || "Untitled";
   const isPinned = !!convo.is_pinned;
+  const isArchived = !!convo.is_archived;
 
   return (
     <li className="group relative">
@@ -285,6 +338,14 @@ function ConversationRow({
           <Pin
             className="h-3 w-3 shrink-0 fill-current text-primary"
             aria-label="Pinned"
+          />
+        )}
+        {/* Archived hits surface in search results; render a small badge so
+            the user knows why they don't see the row in the main list. */}
+        {isArchived && (
+          <Archive
+            className="h-3 w-3 shrink-0 text-muted-foreground/70"
+            aria-label="Archived"
           />
         )}
         <span className="line-clamp-1 flex-1 pr-6">{title}</span>
@@ -324,6 +385,20 @@ function ConversationRow({
             <Pencil className="h-3.5 w-3.5" />
             Rename
           </DropdownMenuItem>
+          {/* Archive sits next to Delete because they're conceptually a pair:
+              one is reversible, one isn't. We disable archive on pinned rows;
+              the menu item is a hint rather than a hidden affordance so the
+              user learns the constraint. */}
+          <DropdownMenuItem
+            onClick={onArchive}
+            disabled={isPinned}
+            title={
+              isPinned ? "Unpin this conversation before archiving." : undefined
+            }
+          >
+            <Archive className="h-3.5 w-3.5" />
+            Archive
+          </DropdownMenuItem>
           <DropdownMenuItem
             onClick={onDelete}
             className="text-destructive focus:text-destructive"
@@ -336,3 +411,4 @@ function ConversationRow({
     </li>
   );
 }
+

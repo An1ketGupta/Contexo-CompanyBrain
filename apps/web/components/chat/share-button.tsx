@@ -129,7 +129,7 @@ export function ShareButton({ messageId }: { messageId: string }) {
             }
           }}
           disabled={busy}
-          className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+          className="tap inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
           aria-label="Share this output"
           title="Share this output"
         >

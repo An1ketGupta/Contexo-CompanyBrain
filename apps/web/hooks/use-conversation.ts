@@ -2,6 +2,7 @@
 
 import useSWR from "swr";
 import type {
+  CompetitorMatch,
   MessageConfidence,
   MessageFeedback,
   MessageMetadata,
@@ -21,6 +22,7 @@ export interface PersistedMessage {
   branch_index?: number;
   is_active_branch?: boolean;
   total_branches?: number;
+  competitor_matches?: CompetitorMatch[];
 }
 
 export interface PersistedBranch {
@@ -32,6 +34,7 @@ export interface PersistedBranch {
   feedback: MessageFeedback | null;
   metadata: MessageMetadata | null;
   created_at: string;
+  competitor_matches?: CompetitorMatch[];
 }
 
 interface ConversationResponse {
@@ -39,6 +42,9 @@ interface ConversationResponse {
     id: string;
     title: string | null;
     is_pinned?: boolean;
+    is_archived?: boolean;
+    archived_at?: string | null;
+    archive_reason?: string | null;
     created_at: string;
     updated_at: string;
     scoped_document_id?: string | null;

@@ -92,6 +92,62 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-inter, system-ui, sans-serif);
+  /* `manipulation` removes the legacy 300ms tap delay iOS Safari adds while
+     it waits to disambiguate single-tap vs double-tap zoom. We keep pinch-zoom
+     (`pan-x pan-y pinch-zoom`-ish behavior) but trade away double-tap zoom for
+     snappier UI — the standard chat-app tradeoff. */
+  touch-action: manipulation;
+  /* Suppress the blue tap flash on Android Chrome — Radix/shadcn already
+     provides focus + active states, so the OS overlay is noise. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* iOS Safari auto-zooms any input with computed font-size < 16px on focus.
+   We size most inputs at 14px for density, so opt them out on touch devices
+   by bumping to 16px below the md breakpoint. */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Safe-area utilities. We expose them as Tailwind-style classes rather than
+   inline `env()` calls so usage stays readable in JSX. */
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+@utility pl-safe {
+  padding-left: env(safe-area-inset-left);
+}
+@utility pr-safe {
+  padding-right: env(safe-area-inset-right);
+}
+/* WCAG 2.5.5 — minimum 44×44 CSS px tap target on touch devices. Apply via
+   the `tap` Tailwind utility on small icon buttons that compress under
+   `p-1`/`p-1.5`. We expand only at `<md` so desktop dense layouts are not
+   affected. */
+@utility tap {
+  @media (max-width: 767px) {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Composite — sticky bottom bars need bottom inset; we add the base padding
+   ourselves on top of it. */
+@utility pb-safe-2 {
+  padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+}
+@utility pb-safe-3 {
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+}
+@utility pb-safe-4 {
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom));
 }
 
 /* Indeterminate progress bar — used for document processing rows. The bar

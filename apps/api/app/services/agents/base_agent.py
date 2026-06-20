@@ -39,6 +39,47 @@ from app.observability import get_logger
 log = get_logger(__name__)
 
 
+# Hard cap on the flattened text we hand to the competitor regex. Agents
+# can emit large outputs (meeting transcripts, policy diffs); 200KB is
+# well above any realistic chat output while still bounding the worst-case
+# regex sweep at a few milliseconds.
+_AGENT_TEXT_SCAN_CAP = 200_000
+
+
+def _flatten_text(value: Any) -> str:
+    """Walk an agent output value and collect every string node into one
+    blob, joined with newlines. Lists and dicts recurse; primitives that
+    aren't strings (numbers, bools, None) are skipped. Capped so a
+    pathological transcript can't pin the regex on a slow scan.
+    """
+    parts: list[str] = []
+    remaining = _AGENT_TEXT_SCAN_CAP
+
+    def walk(node: Any) -> None:
+        nonlocal remaining
+        if remaining <= 0:
+            return
+        if isinstance(node, str):
+            piece = node[:remaining]
+            parts.append(piece)
+            remaining -= len(piece)
+            return
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+                if remaining <= 0:
+                    return
+            return
+        if isinstance(node, (list, tuple)):
+            for v in node:
+                walk(v)
+                if remaining <= 0:
+                    return
+
+    walk(value)
+    return "\n".join(parts)
+
+
 class BaseAgent:
     """Lifecycle + audit-log wrapper for an autonomous agent run.
 
@@ -181,6 +222,7 @@ class BaseAgent:
             .eq("id", self.run_id)
             .execute()
         )
+        await self._scan_competitor_mentions(output)
         await self._fire_lifecycle("completed", output=output, error=None)
 
     async def fail(self, error: str) -> None:
@@ -203,6 +245,54 @@ class BaseAgent:
             .execute()
         )
         await self._fire_lifecycle("failed", output=None, error=error)
+
+    async def _scan_competitor_mentions(
+        self, output: dict[str, Any] | None
+    ) -> None:
+        """Run the competitor watchlist over every string in the agent's
+        output dict. Best-effort: a failure here must not block the
+        agent's lifecycle (the run is already marked completed in the DB).
+
+        We flatten the output to a single text blob so a 'summary' and
+        'action_items[0].text' both get scanned. Lists and dicts recurse;
+        non-strings are ignored.
+        """
+        if not output:
+            return
+        try:
+            from app.services.competitor_detector import (
+                detect_competitors,
+                get_competitor_terms,
+                persist_agent_mentions,
+            )
+
+            text_blob = _flatten_text(output)
+            if not text_blob.strip():
+                return
+            terms = await get_competitor_terms(
+                org_id=self.org_id, user_id=self.triggered_by_user_id
+            )
+            if not terms.has_any:
+                return
+            matches = detect_competitors(
+                text_blob,
+                org_terms=terms.org_terms,
+                user_terms=terms.user_terms,
+            )
+            if not matches:
+                return
+            await persist_agent_mentions(
+                org_id=self.org_id,
+                agent_run_id=self.run_id,
+                user_id=self.triggered_by_user_id,
+                matches=matches,
+            )
+        except Exception as exc:
+            log.warning(
+                "competitor_scan_agent_failed run_id=%s err=%s",
+                self.run_id,
+                exc,
+            )
 
     async def _fire_lifecycle(
         self,

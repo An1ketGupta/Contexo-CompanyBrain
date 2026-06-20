@@ -242,8 +242,8 @@ function AnalyticsBody({
             No user activity in this window yet.
           </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <div className="-mx-4 overflow-x-auto md:mx-0">
+            <table className="w-full min-w-[480px] text-sm">
               <thead>
                 <tr className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
                   <th className="pb-2 font-medium">User</th>

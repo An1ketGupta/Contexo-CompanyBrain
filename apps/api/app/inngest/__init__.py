@@ -4,6 +4,7 @@ from app.services.email.worker import FUNCTIONS as _EMAIL_FUNCTIONS
 
 from .api_trigger_functions import FUNCTIONS as _API_TRIGGER_FUNCTIONS
 from .approval_functions import FUNCTIONS as _APPROVAL_FUNCTIONS
+from .archive_functions import FUNCTIONS as _ARCHIVE_FUNCTIONS
 from .client import get_inngest_client
 from .feedback_functions import FUNCTIONS as _FEEDBACK_FUNCTIONS
 from .functions import FUNCTIONS as _DOC_FUNCTIONS
@@ -21,6 +22,7 @@ from .webhook_functions import FUNCTIONS as _WEBHOOK_FUNCTIONS
 from .integration_functions import FUNCTIONS as _INTEGRATION_FUNCTIONS
 from .support_functions import FUNCTIONS as _SUPPORT_FUNCTIONS
 from .meeting_functions import FUNCTIONS as _MEETING_FUNCTIONS
+from .query_log_retention import FUNCTIONS as _QUERY_LOG_RETENTION_FUNCTIONS
 
 FUNCTIONS = [
     *_DOC_FUNCTIONS,
@@ -41,6 +43,8 @@ FUNCTIONS = [
     *_API_TRIGGER_FUNCTIONS,
     *_FEEDBACK_FUNCTIONS,
     *_VERSION_DIFF_FUNCTIONS,
+    *_ARCHIVE_FUNCTIONS,
+    *_QUERY_LOG_RETENTION_FUNCTIONS,
 ]
 
 __all__ = ["FUNCTIONS", "get_inngest_client", "process_document"]

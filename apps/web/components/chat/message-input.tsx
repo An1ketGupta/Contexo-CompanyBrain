@@ -58,7 +58,10 @@ export function MessageInput({
   const canSubmit = !disabled && !isStreaming && value.trim().length > 0 && !overLimit;
 
   return (
-    <div className="border-t border-border bg-background/95 px-4 py-3 backdrop-blur md:px-6">
+    // `pb-safe-3` adds env(safe-area-inset-bottom) to the bottom padding so
+    // the send button clears the iOS home indicator. Desktop pickup is a no-op
+    // because the inset is zero outside iOS standalone / mobile Safari.
+    <div className="border-t border-border bg-background/95 px-4 py-3 pb-safe-3 backdrop-blur md:px-6 md:pb-3">
       <div className="mx-auto max-w-3xl">
         {disabled && disabledReason && (
           <div className="mb-2 rounded-md border border-amber-300/40 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">

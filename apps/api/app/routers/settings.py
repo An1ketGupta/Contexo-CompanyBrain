@@ -61,6 +61,26 @@ class UpdateOrgSharingRequest(BaseModel):
     allow_output_sharing: bool
 
 
+# V3 #104 — conversation archive settings live in organizations.metadata.archive.
+# Defaults applied in get/patch handlers, not at the DB level, so we can change
+# them without a migration.
+ARCHIVE_THRESHOLD_CHOICES = [30, 45, 60, 90, 180]
+
+
+class UpdateArchiveSettingsRequest(BaseModel):
+    auto_archive_enabled: bool | None = None
+    # None or 0 in `threshold_days` means "use default 45". Anything else
+    # must be one of the allow-listed values so the UI Select can't push a
+    # 999-day value through.
+    threshold_days: int | None = Field(default=None, ge=1, le=3650)
+    # Optional retention tier — None = never delete (default). Cap at 365
+    # days so a typo doesn't set a 100-year window.
+    delete_after_archive_days: int | None = Field(default=None, ge=1, le=365)
+    # Explicit clear sentinel for `delete_after_archive_days` because the
+    # JSON `null` we'd otherwise need would collide with "field omitted".
+    clear_delete_retention: bool = False
+
+
 class UpdateProfileRequest(BaseModel):
     # Both optional; PATCH allows changing one without echoing the other back.
     display_name: str | None = Field(default=None, min_length=1, max_length=80)
@@ -116,6 +136,169 @@ async def update_organization(
             detail="Workspace not found.",
         )
     return {"organization": result.data[0]}
+
+
+# ── Competitor watchlist (admin org list + per-user list) ────────────────────
+
+# Length caps mirror the DB CHECK constraints — defence-in-depth so a
+# malformed client can't push a 10k-entry array that the DB would
+# eventually reject anyway.
+ORG_COMPETITORS_MAX = 200
+USER_COMPETITORS_MAX = 100
+# Per-term length cap. 200 chars is far longer than any real company
+# name but bounded enough that the compiled regex stays cheap.
+COMPETITOR_TERM_MAX_CHARS = 200
+
+
+def _clean_competitor_list(raw: list[str] | None, *, cap: int) -> list[str]:
+    """Strip, collapse whitespace, drop empties, dedupe case-insensitively,
+    enforce per-entry max length. Order preserved on first-seen so the UI's
+    drag-to-reorder (future) doesn't get rearranged on every save.
+    """
+    if not raw:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for term in raw:
+        if not isinstance(term, str):
+            continue
+        cleaned = " ".join(term.split()).strip()
+        if not cleaned:
+            continue
+        if len(cleaned) > COMPETITOR_TERM_MAX_CHARS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Competitor name exceeds {COMPETITOR_TERM_MAX_CHARS} characters.",
+            )
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+    if len(out) > cap:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"At most {cap} competitor names allowed.",
+        )
+    return out
+
+
+class UpdateCompetitorListRequest(BaseModel):
+    # `None` is treated as "leave alone"; `[]` clears the list. Sized at
+    # the higher of the two caps so a stale client doesn't get rejected
+    # on the org endpoint for being one entry over the user cap.
+    names: list[str] = Field(..., max_length=ORG_COMPETITORS_MAX)
+
+
+@router.get("/organizations/me/competitors")
+async def get_org_competitors(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Read the org-wide competitor watchlist. All members can read; only
+    admins can write — matches the AI settings pattern above."""
+    _, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+    result = await asyncio.to_thread(
+        lambda: client.table("organizations")
+        .select("competitor_names")
+        .eq("id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not result or not result.data:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    return {
+        "names": result.data.get("competitor_names") or [],
+        "max": ORG_COMPETITORS_MAX,
+    }
+
+
+@router.put("/organizations/me/competitors")
+async def update_org_competitors(
+    body: UpdateCompetitorListRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Admin-only. Replaces the org-wide watchlist atomically. Invalidates
+    the per-request detector cache so the next chat turn uses the new
+    list within the writer's worker; other workers age out via TTL."""
+    user_id, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+
+    me = await asyncio.to_thread(
+        lambda: client.table("users")
+        .select("role")
+        .eq("id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not me.data or me.data.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workspace admins can change the org competitor list.",
+        )
+
+    cleaned = _clean_competitor_list(body.names, cap=ORG_COMPETITORS_MAX)
+    result = await asyncio.to_thread(
+        lambda: client.table("organizations")
+        .update({"competitor_names": cleaned})
+        .eq("id", org_id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+
+    from app.services.competitor_detector import invalidate as _invalidate
+    _invalidate(org_id)
+
+    return {"names": cleaned, "max": ORG_COMPETITORS_MAX}
+
+
+@router.get("/users/me/competitors")
+async def get_user_competitors(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Read the caller's personal watchlist. Every user has one; the list
+    is empty by default."""
+    user_id, _org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+    result = await asyncio.to_thread(
+        lambda: client.table("users")
+        .select("competitor_names")
+        .eq("id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not result or not result.data:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return {
+        "names": result.data.get("competitor_names") or [],
+        "max": USER_COMPETITORS_MAX,
+    }
+
+
+@router.put("/users/me/competitors")
+async def update_user_competitors(
+    body: UpdateCompetitorListRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """All authenticated users can set their own watchlist."""
+    user_id, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+
+    cleaned = _clean_competitor_list(body.names, cap=USER_COMPETITORS_MAX)
+    result = await asyncio.to_thread(
+        lambda: client.table("users")
+        .update({"competitor_names": cleaned})
+        .eq("id", user_id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    from app.services.competitor_detector import invalidate as _invalidate
+    _invalidate(org_id, user_id)
+
+    return {"names": cleaned, "max": USER_COMPETITORS_MAX}
 
 
 # ── Org-wide AI settings (Day 9 / #67) ────────────────────────────────────────
@@ -211,6 +394,104 @@ async def get_org_sharing(
     }
 
 
+@router.get("/organizations/me/archive-settings")
+async def get_org_archive_settings(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Read the archive config block out of org metadata, with defaults."""
+    _, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+    result = await asyncio.to_thread(
+        lambda: client.table("organizations")
+        .select("metadata")
+        .eq("id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not result or not result.data:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    archive_cfg = (result.data.get("metadata") or {}).get("archive") or {}
+    return {
+        "auto_archive_enabled": bool(archive_cfg.get("auto_archive_enabled", True)),
+        "threshold_days": int(archive_cfg.get("threshold_days") or 45),
+        "delete_after_archive_days": archive_cfg.get("delete_after_archive_days"),
+        "allowed_threshold_days": ARCHIVE_THRESHOLD_CHOICES,
+    }
+
+
+@router.patch("/organizations/me/archive-settings")
+async def update_org_archive_settings(
+    body: UpdateArchiveSettingsRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Admin-only. Update auto-archive + retention settings.
+
+    We do a read-modify-write so we don't clobber other top-level keys living
+    in ``metadata`` (onboarding, compliance, etc.). PostgREST's JSONB merge
+    operator isn't exposed through the Python client, so this is the cleanest
+    portable path.
+    """
+    user_id, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+
+    me = await asyncio.to_thread(
+        lambda: client.table("users")
+        .select("role")
+        .eq("id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not me.data or me.data.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workspace admins can change archive settings.",
+        )
+
+    if (
+        body.threshold_days is not None
+        and body.threshold_days not in ARCHIVE_THRESHOLD_CHOICES
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"threshold_days must be one of {ARCHIVE_THRESHOLD_CHOICES}.",
+        )
+
+    existing = await asyncio.to_thread(
+        lambda: client.table("organizations")
+        .select("metadata")
+        .eq("id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    metadata: dict[str, Any] = dict(existing.data.get("metadata") or {})
+    archive_cfg: dict[str, Any] = dict(metadata.get("archive") or {})
+
+    if body.auto_archive_enabled is not None:
+        archive_cfg["auto_archive_enabled"] = body.auto_archive_enabled
+    if body.threshold_days is not None:
+        archive_cfg["threshold_days"] = body.threshold_days
+    if body.clear_delete_retention:
+        archive_cfg.pop("delete_after_archive_days", None)
+    elif body.delete_after_archive_days is not None:
+        archive_cfg["delete_after_archive_days"] = body.delete_after_archive_days
+
+    metadata["archive"] = archive_cfg
+    await asyncio.to_thread(
+        lambda: client.table("organizations")
+        .update({"metadata": metadata})
+        .eq("id", org_id)
+        .execute()
+    )
+    return {
+        "auto_archive_enabled": bool(archive_cfg.get("auto_archive_enabled", True)),
+        "threshold_days": int(archive_cfg.get("threshold_days") or 45),
+        "delete_after_archive_days": archive_cfg.get("delete_after_archive_days"),
+        "allowed_threshold_days": ARCHIVE_THRESHOLD_CHOICES,
+    }
+
+
 @router.patch("/organizations/me/sharing")
 async def update_org_sharing(
     body: UpdateOrgSharingRequest,
@@ -242,6 +523,44 @@ async def update_org_sharing(
     if not result.data:
         raise HTTPException(status_code=404, detail="Workspace not found.")
     return {"allow_output_sharing": body.allow_output_sharing}
+
+
+# ── V3 #91 — Query history ─────────────────────────────────────────────────
+
+@router.get("/users/me/query-history")
+async def get_my_query_history(
+    cursor: str | None = None,
+    limit: int = 20,
+    intent: str | None = None,
+    search: str | None = None,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Cursor-paginated query history for the calling user.
+
+    `cursor` is the `created_at` of the last row in the previous page.
+    Limit is clamped server-side at 100. Filters:
+      * `intent` — exact match against the classifier label
+      * `search` — case-insensitive substring on `query_text`
+
+    RLS guarantees the user only ever sees their own rows.
+    """
+    from app.services.query_logs import fetch_query_history
+
+    user_id, _org_id, token = _require_user(current_user)
+    if limit < 1 or limit > 100:
+        limit = max(1, min(100, limit))
+
+    result = await asyncio.to_thread(
+        lambda: fetch_query_history(
+            user_jwt=token,
+            user_id=user_id,
+            cursor=cursor,
+            limit=limit,
+            intent=intent,
+            search=search,
+        )
+    )
+    return result
 
 
 # ── User profile ──────────────────────────────────────────────────────────────
