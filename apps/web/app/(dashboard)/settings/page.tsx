@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ChevronRight,
+  FolderOpen,
   KeyRound,
   Loader2,
   Mail,
@@ -113,6 +114,12 @@ export default function SettingsPage() {
               icon={<Webhook className="h-4 w-4" />}
               title="Webhooks"
               description="Notify external systems when documents or queries complete"
+            />
+            <SettingsLink
+              href="/settings/collections"
+              icon={<FolderOpen className="h-4 w-4" />}
+              title="Collections"
+              description="Named tag groups for scoping chat to a subset of documents"
             />
             <SettingsLink
               href="/settings/api"

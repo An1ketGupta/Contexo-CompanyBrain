@@ -11,7 +11,6 @@ import Link from "next/link";
 import {
   Check,
   ChevronDown,
-  FolderOpen,
   Search,
   Settings as SettingsIcon,
   Tag,
@@ -151,7 +150,14 @@ export function ScopePopover({ value, onChange }: Props) {
             : "border-dashed border-border bg-muted/30 text-muted-foreground hover:border-primary/40 hover:text-foreground",
         )}
       >
-        <Search className="h-3 w-3" />
+        {activeCollection ? (
+          <span
+            className="h-2 w-2 shrink-0 rounded-full"
+            style={{ backgroundColor: activeCollection.color }}
+          />
+        ) : (
+          <Search className="h-3 w-3" />
+        )}
         <span className="font-medium">Search in:</span>
         <span
           className={cn(
@@ -255,10 +261,13 @@ export function ScopePopover({ value, onChange }: Props) {
                           <Check className="h-2.5 w-2.5 text-primary-foreground" />
                         )}
                       </span>
-                      {col.icon ? (
+                      <span
+                        className="h-3 w-3 shrink-0 rounded-sm"
+                        style={{ backgroundColor: col.color }}
+                        aria-hidden
+                      />
+                      {col.icon && (
                         <span className="text-xs leading-none">{col.icon}</span>
-                      ) : (
-                        <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
                       )}
                       <span className="min-w-0 flex-1 truncate text-left">
                         {col.name}

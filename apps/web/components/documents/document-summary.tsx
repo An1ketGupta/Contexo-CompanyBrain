@@ -1,7 +1,3 @@
-"use client";
-
-import Link from "next/link";
-
 interface DocumentSummaryProps {
   summary: string;
   keyTopics?: string[];
@@ -28,16 +24,9 @@ export function DocumentSummary({ summary, keyTopics }: DocumentSummaryProps) {
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
             {keyTopics.map((topic, i) => (
               <span key={topic} className="flex items-center gap-3">
-                <Link
-                  href={`/chat?q=${encodeURIComponent(topic)}`}
-                  className="text-sm text-muted-foreground transition-colors hover:text-foreground hover:underline underline-offset-4"
-                >
-                  {topic}
-                </Link>
+                <span className="text-sm text-muted-foreground">{topic}</span>
                 {i < keyTopics.length - 1 && (
-                  <span aria-hidden className="text-muted-foreground/40">
-                    ·
-                  </span>
+                  <span aria-hidden className="text-muted-foreground/40">·</span>
                 )}
               </span>
             ))}
