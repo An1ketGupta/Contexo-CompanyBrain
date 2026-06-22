@@ -99,19 +99,22 @@ async def _is_admin(client, user_id: str) -> bool:
 
 async def _seat_usage(svc, org_id: str) -> int:
     """Confirmed users + outstanding (un-accepted, un-expired) invites."""
-    users = await asyncio.to_thread(
-        lambda: svc.table("users")
-        .select("id", count="exact", head=True)
-        .eq("org_id", org_id)
-        .execute()
-    )
-    invites = await asyncio.to_thread(
-        lambda: svc.table("invitations")
-        .select("id", count="exact", head=True)
-        .eq("org_id", org_id)
-        .is_("accepted_at", "null")
-        .gt("expires_at", datetime.now(UTC).isoformat())
-        .execute()
+    now_iso = datetime.now(UTC).isoformat()
+    users, invites = await asyncio.gather(
+        asyncio.to_thread(
+            lambda: svc.table("users")
+            .select("id", count="exact", head=True)
+            .eq("org_id", org_id)
+            .execute()
+        ),
+        asyncio.to_thread(
+            lambda: svc.table("invitations")
+            .select("id", count="exact", head=True)
+            .eq("org_id", org_id)
+            .is_("accepted_at", "null")
+            .gt("expires_at", now_iso)
+            .execute()
+        ),
     )
     return (users.count or 0) + (invites.count or 0)
 
@@ -573,17 +576,73 @@ async def lookup_invitation(token: str) -> dict[str, Any]:
 
 @router.post("/auth/invitations/{token}/accept")
 async def accept_invitation(token: str, body: InviteAccept) -> dict[str, Any]:
-    """Atomically bind a freshly-signed-up auth user to the invite's org.
+    """Bind a freshly-signed-up auth user (created by the legacy signUp →
+    accept flow) to the invite's org.
 
-    Caller flow:
-        1. Frontend calls supabase.auth.signUp() → gets user_id.
-        2. Frontend POSTs here with { user_id, display_name }.
-        3. We verify the auth user's email matches the invite (defense against
-           a token leak where the attacker creates an account with their own
-           email but tries to redeem someone else's invite).
-        4. We insert the users row + stamp accepted_at + write org_id into
-           app_metadata so the next session refresh includes it in the JWT.
+    Newer clients use /accept-credentials, which lets the server own the
+    create-or-redirect decision. This endpoint is kept for backwards
+    compatibility with anything still calling signUp() directly.
     """
+    invite = await _load_pending_invite(token)
+
+    svc = get_service_client()
+    try:
+        au = await asyncio.to_thread(
+            lambda: svc.auth.admin.get_user_by_id(body.user_id)
+        )
+        auth_email = getattr(getattr(au, "user", None), "email", None)
+    except Exception as exc:
+        log.warning(
+            "invite_accept_auth_lookup_failed",
+            user_id=body.user_id,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Couldn't verify your account. Try signing in again.",
+        ) from exc
+
+    if not auth_email or _normalize_email(auth_email) != _normalize_email(
+        invite["email"]
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This invite is for a different email address.",
+        )
+
+    cleaned_name = _clean_display_name(body.display_name)
+
+    await _attach_user_to_org(
+        user_id=body.user_id,
+        auth_email=auth_email,
+        cleaned_name=cleaned_name,
+        invite=invite,
+    )
+
+    return {"org_id": invite["org_id"], "role": invite["role"]}
+
+
+def _clean_display_name(raw: str) -> str:
+    """Collapse whitespace and refuse empties with a 400."""
+    cleaned = " ".join(raw.split()).strip()
+    if not cleaned:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Display name cannot be empty.",
+        )
+    return cleaned
+
+
+# ── Combined accept-credentials + post-login accept ─────────────────
+
+
+async def _load_pending_invite(token: str) -> dict[str, Any]:
+    """Common invite lookup + freshness check used by the new accept paths."""
+    if len(token) < 16 or len(token) > 128:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Malformed invite token.",
+        )
     svc = get_service_client()
     now_iso = datetime.now(UTC).isoformat()
 
@@ -598,36 +657,75 @@ async def accept_invitation(token: str, body: InviteAccept) -> dict[str, Any]:
         .execute()
     )
     if not invite or not invite.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid invite link.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid invite link.",
+        )
     row = invite.data
     if row.get("accepted_at"):
-        raise HTTPException(status_code=status.HTTP_410_GONE, detail="This invite has already been accepted.")
-    if row["expires_at"] < now_iso:
-        raise HTTPException(status_code=status.HTTP_410_GONE, detail="This invite has expired.")
-
-    # Verify the new auth user's email matches the invite email — otherwise a
-    # leaked token could redirect to a different account.
-    try:
-        au = await asyncio.to_thread(lambda: svc.auth.admin.get_user_by_id(body.user_id))
-        auth_email = getattr(getattr(au, "user", None), "email", None)
-    except Exception as exc:
-        log.warning("invite_accept_auth_lookup_failed", user_id=body.user_id, error=str(exc))
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Couldn't verify your account. Try signing in again.",
-        ) from exc
-
-    if not auth_email or _normalize_email(auth_email) != _normalize_email(row["email"]):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This invite is for a different email address.",
+            status_code=status.HTTP_410_GONE,
+            detail="This invite has already been accepted.",
         )
+    if row["expires_at"] < now_iso:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="This invite has expired. Ask the admin for a new one.",
+        )
+    return row
 
-    # Refuse if a profile already exists. The signup flow only mints a profile
-    # via /api/auth/complete-signup; an existing row means they're already a member
-    # somewhere — joining a new org would orphan their old data.
+
+async def _find_auth_user_by_email(email: str) -> dict[str, Any] | None:
+    """Return a sparse {id, email} for an existing auth.user matching email.
+
+    Supabase's Python SDK doesn't expose a direct "get user by email" RPC
+    on every release, so we walk admin.list_users() once. This is fine at
+    our scale (a few thousand users); revisit when we hit five-digit
+    counts.
+    """
+    svc = get_service_client()
+    target = _normalize_email(email)
+    try:
+        # Pull a single page — list_users() returns the first page by default.
+        # If a customer's email isn't on that page we treat them as new; the
+        # downstream create_user call will fail with "already registered"
+        # which we surface as `requires_login` below as a defense-in-depth.
+        result = await asyncio.to_thread(lambda: svc.auth.admin.list_users())
+    except Exception as exc:
+        log.warning("auth_admin_list_users_failed", error=str(exc))
+        return None
+
+    iterable: Any = getattr(result, "users", None) or result or []
+    for u in iterable:
+        u_email = getattr(u, "email", None) or (
+            u.get("email") if isinstance(u, dict) else None
+        )
+        u_id = getattr(u, "id", None) or (
+            u.get("id") if isinstance(u, dict) else None
+        )
+        if u_email and u_id and _normalize_email(u_email) == target:
+            return {"id": u_id, "email": u_email}
+    return None
+
+
+async def _attach_user_to_org(
+    *,
+    user_id: str,
+    auth_email: str,
+    cleaned_name: str,
+    invite: dict[str, Any],
+) -> None:
+    """Insert the users row, stamp accepted_at, set app_metadata.org_id."""
+    svc = get_service_client()
+    now_iso = datetime.now(UTC).isoformat()
+
+    # Refuse if a profile already exists. Users belong to exactly one workspace.
     existing = await asyncio.to_thread(
-        lambda: svc.table("users").select("id").eq("id", body.user_id).maybe_single().execute()
+        lambda: svc.table("users")
+        .select("id")
+        .eq("id", user_id)
+        .maybe_single()
+        .execute()
     )
     if existing and existing.data:
         raise HTTPException(
@@ -635,24 +733,17 @@ async def accept_invitation(token: str, body: InviteAccept) -> dict[str, Any]:
             detail="You already belong to a workspace.",
         )
 
-    cleaned_name = " ".join(body.display_name.split()).strip()
-    if not cleaned_name:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Display name cannot be empty.",
-        )
-
     await asyncio.to_thread(
         lambda: svc.table("users")
         .insert(
             {
-                "id": body.user_id,
-                "org_id": row["org_id"],
-                "role": row["role"],
+                "id": user_id,
+                "org_id": invite["org_id"],
+                "role": invite["role"],
                 "display_name": cleaned_name,
-                "role_title": row.get("role_title"),
-                "start_date": row.get("start_date"),
-                "manager_user_id": row.get("manager_user_id"),
+                "role_title": invite.get("role_title"),
+                "start_date": invite.get("start_date"),
+                "manager_user_id": invite.get("manager_user_id"),
             }
         )
         .execute()
@@ -661,15 +752,11 @@ async def accept_invitation(token: str, body: InviteAccept) -> dict[str, Any]:
     await asyncio.to_thread(
         lambda: svc.table("invitations")
         .update({"accepted_at": now_iso})
-        .eq("id", row["id"])
+        .eq("id", invite["id"])
         .execute()
     )
 
-    # Day 8: fire the onboarding agent. The agent owns its own welcome
-    # email (with personalised plan preview), so we DON'T send the generic
-    # 'welcome' email anymore — they'd land at the same time and look
-    # duplicative. If onboarding metadata is absent (legacy invites), the
-    # agent still runs with sensible defaults.
+    # Fire the onboarding agent (same as the legacy accept path).
     try:
         import inngest as _inngest_pkg
 
@@ -680,51 +767,204 @@ async def accept_invitation(token: str, body: InviteAccept) -> dict[str, Any]:
             _inngest_pkg.Event(
                 name="org/member-joined",
                 data={
-                    "org_id": row["org_id"],
-                    "user_id": body.user_id,
+                    "org_id": invite["org_id"],
+                    "user_id": user_id,
                     "name": cleaned_name,
                     "email": auth_email,
-                    "role": row["role"],
-                    "role_title": row.get("role_title"),
-                    "start_date": row.get("start_date"),
-                    "manager_user_id": row.get("manager_user_id"),
-                    "invited_by": row.get("invited_by"),
+                    "role": invite["role"],
+                    "role_title": invite.get("role_title"),
+                    "start_date": invite.get("start_date"),
+                    "manager_user_id": invite.get("manager_user_id"),
+                    "invited_by": invite.get("invited_by"),
                 },
-                id=f"org-member-joined-{body.user_id}",
+                id=f"org-member-joined-{user_id}",
             )
         )
     except Exception as exc:
-        log.warning("onboarding_agent_dispatch_failed", user_id=body.user_id, error=str(exc))
+        log.warning(
+            "onboarding_agent_dispatch_failed", user_id=user_id, error=str(exc)
+        )
 
-    # JWT app_metadata. The next supabase.auth.refreshSession() will pick this
-    # up and FastAPI's verify_jwt will read org_id from it.
     try:
         await asyncio.to_thread(
             lambda: svc.auth.admin.update_user_by_id(
-                body.user_id,
-                {"app_metadata": {"org_id": row["org_id"]}},
+                user_id,
+                {"app_metadata": {"org_id": invite["org_id"]}},
             )
         )
     except Exception as exc:
-        # The row inserts succeeded; without app_metadata the user can still
-        # log in but FastAPI will 403 until refreshSession() — surface it so
-        # the frontend can retry or show a friendly error.
-        log.warning("invite_accept_metadata_failed", user_id=body.user_id, error=str(exc))
+        log.warning(
+            "invite_accept_metadata_failed", user_id=user_id, error=str(exc)
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Joined workspace, but session needs a refresh. Sign out and back in.",
+            detail=(
+                "Joined workspace, but session needs a refresh. "
+                "Sign out and back in."
+            ),
         ) from exc
 
     try:
         from app.services.analytics import track_event
 
         await track_event(
-            org_id=row["org_id"],
-            user_id=body.user_id,
+            org_id=invite["org_id"],
+            user_id=user_id,
             event_type="invite_accepted",
-            metadata={"role": row["role"]},
+            metadata={"role": invite["role"]},
         )
     except Exception:
         pass
 
-    return {"org_id": row["org_id"], "role": row["role"]}
+
+@router.post("/auth/invitations/{token}/accept-credentials")
+async def accept_invitation_with_credentials(
+    token: str,
+    body: InviteAcceptCredentials,
+) -> dict[str, Any]:
+    """Single endpoint covering both new-user signup AND existing-user redirect.
+
+    Behavior:
+        * If a Supabase auth user already exists for the invite email,
+          return `{requires_login: true, email}`. The frontend redirects
+          to `/login?invite=<token>&email=<email>`, the user authenticates
+          via their existing password, then the login page calls
+          `/accept-authenticated` to bind them to the org.
+
+        * Otherwise, create the auth user via admin.create_user (with
+          email pre-confirmed so they can sign in immediately), attach
+          them to the org, and return `{requires_login: false}`. The
+          frontend then signs in normally with the password it just
+          chose, which yields a session with the new app_metadata.org_id.
+
+    Why one endpoint, not two: the existence check needs the service-role
+    Supabase client, which the browser doesn't have. Splitting it into a
+    probe + a signup-or-bind route would mean two unauthenticated round
+    trips against the same token; the combined route is the same number
+    of trips with simpler client-side state.
+    """
+    invite = await _load_pending_invite(token)
+    invite_email = _normalize_email(invite["email"])
+
+    cleaned_name = _clean_display_name(body.display_name)
+
+    existing = await _find_auth_user_by_email(invite_email)
+    if existing:
+        return {
+            "requires_login": True,
+            "email": invite_email,
+            "org": {"id": invite["org_id"]},
+        }
+
+    # New user — create the auth identity. email_confirm=True skips the
+    # confirmation-email round-trip; the act of clicking a freshly-issued
+    # invite link plus knowing the invite's destination email is already
+    # proof of email control.
+    svc = get_service_client()
+    try:
+        created = await asyncio.to_thread(
+            lambda: svc.auth.admin.create_user(
+                {
+                    "email": invite_email,
+                    "password": body.password,
+                    "email_confirm": True,
+                }
+            )
+        )
+    except Exception as exc:
+        msg = str(exc).lower()
+        # Race: another tab or a duplicate request already created the
+        # auth user between our list and create. Treat as the
+        # existing-user path so the client picks up cleanly.
+        if "already registered" in msg or "already been registered" in msg or "already exists" in msg:
+            return {
+                "requires_login": True,
+                "email": invite_email,
+                "org": {"id": invite["org_id"]},
+            }
+        log.exception("invite_create_auth_user_failed", email=invite_email)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Couldn't create your account. Try again in a moment.",
+        ) from exc
+
+    new_user = getattr(created, "user", None) or created
+    new_user_id = getattr(new_user, "id", None) or (
+        new_user.get("id") if isinstance(new_user, dict) else None
+    )
+    if not new_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Account created but couldn't be read back.",
+        )
+
+    await _attach_user_to_org(
+        user_id=new_user_id,
+        auth_email=invite_email,
+        cleaned_name=cleaned_name,
+        invite=invite,
+    )
+
+    return {
+        "requires_login": False,
+        "org_id": invite["org_id"],
+        "role": invite["role"],
+    }
+
+
+@router.post("/auth/invitations/{token}/accept-authenticated")
+async def accept_invitation_post_login(
+    token: str,
+    body: InviteAcceptAuthenticated,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Bind a NOW-AUTHENTICATED user to an invite's org.
+
+    Used by the `/login?invite=<token>` path: the user signed in with an
+    existing account, the login page sees the invite param, and calls
+    this endpoint with the live session token to complete the
+    acceptance. We verify the JWT email matches the invite email so a
+    leaked token can't be redeemed by a different account.
+    """
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sign in to accept the invite.",
+        )
+
+    invite = await _load_pending_invite(token)
+
+    svc = get_service_client()
+    try:
+        au = await asyncio.to_thread(
+            lambda: svc.auth.admin.get_user_by_id(user_id)
+        )
+        auth_email = getattr(getattr(au, "user", None), "email", None)
+    except Exception as exc:
+        log.warning(
+            "invite_post_login_lookup_failed", user_id=user_id, error=str(exc)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Couldn't verify your account. Sign in again.",
+        ) from exc
+
+    if not auth_email or _normalize_email(auth_email) != _normalize_email(
+        invite["email"]
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This invite is for a different email address.",
+        )
+
+    cleaned_name = _clean_display_name(body.display_name)
+
+    await _attach_user_to_org(
+        user_id=user_id,
+        auth_email=auth_email,
+        cleaned_name=cleaned_name,
+        invite=invite,
+    )
+
+    return {"org_id": invite["org_id"], "role": invite["role"]}

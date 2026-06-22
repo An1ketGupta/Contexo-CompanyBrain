@@ -34,21 +34,12 @@ log = get_logger(__name__)
 
 
 # ── Plan budgets ─────────────────────────────────────────────────────────────
-#
-# Day 7+: the source of truth lives in `pricing_tiers` (seeded by
-# scripts/stripe_seed.py) and is read through `services.billing.plan_limits`.
-# This file used to ship a hardcoded dict that drifted from the table
-# (e.g., it knew about 'growth' but the table was renamed to 'team') —
-# routing the read through plan_limits eliminates that class of bug.
+# Source of truth is `pricing_tiers` via `services.billing.plan_limits`.
 
 
 def monthly_budget_for(plan: str | None) -> int | None:
-    """Backwards-compatible alias for `monthly_query_limit`.
-
-    Kept because it's referenced from `get_usage_snapshot` and the public
-    API rate limiter; switching them to the new name is a Day 9 cleanup.
-    Returns None for unlimited (Business / unknown unlimited plan).
-    """
+    """Backwards-compatible alias for `monthly_query_limit`. Returns None
+    for unlimited (Business / unknown unlimited plan)."""
     from app.services.billing.plan_limits import monthly_query_limit
 
     return monthly_query_limit(plan)

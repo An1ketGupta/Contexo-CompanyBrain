@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   CalendarClock,
   ChevronRight,
+  CreditCard,
   FolderOpen,
   KeyRound,
   Loader2,
@@ -97,6 +98,20 @@ export default function SettingsPage() {
       <SharingCard canEdit={user?.role === "admin"} />
 
       <ArchiveCard canEdit={user?.role === "admin"} />
+
+      <Card
+        title="Plan & billing"
+        description="Subscription, invoices, and usage limits."
+      >
+        <div className="-mx-1 grid gap-1">
+          <SettingsLink
+            href="/settings/billing"
+            icon={<CreditCard className="h-4 w-4" />}
+            title="Billing"
+            description="Manage your plan, payment method, and invoices"
+          />
+        </div>
+      </Card>
 
       {user?.role === "admin" && (
         <Card

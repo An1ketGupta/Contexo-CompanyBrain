@@ -11,13 +11,17 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.auth import verify_jwt
 from app.config import get_settings
+from app.core.rate_limiter import upload_limiter
 from app.database import get_service_client, get_user_client
+from app.errors import QuotaExceeded
 from app.inngest import get_inngest_client
+from app.services.billing.plan_limits import document_limit
 from app.services.documents_cache import (
     get_cached_document_list,
     invalidate_document_caches,
     set_cached_document_list,
 )
+from app.services.rate_limit import get_org_plan
 
 log = logging.getLogger(__name__)
 
@@ -147,7 +151,7 @@ class DocumentFromUrlRequest(BaseModel):
 
 # ── Step 1: Init upload — validate, create DB row, return signed URL ───────────
 
-@router.post("/upload/init", status_code=status.HTTP_201_CREATED)
+@router.post("/upload/init", status_code=status.HTTP_201_CREATED, dependencies=[Depends(upload_limiter)])
 async def init_upload(
     body: UploadInitRequest,
     current_user: dict = Depends(verify_jwt),
@@ -167,6 +171,34 @@ async def init_upload(
             detail=f"File too large. Maximum size is {MAX_FILE_SIZE // 1024 // 1024} MB.",
         )
 
+    # Plan-aware document cap. We resolve the plan + current doc count in
+    # parallel — they're independent and both block the upload-init reply.
+    svc = get_service_client()
+    org_plan, doc_count_res = await asyncio.gather(
+        get_org_plan(org_id),
+        asyncio.to_thread(
+            lambda: svc.table("documents")
+            .select("id", count="exact", head=True)
+            .eq("org_id", org_id)
+            .execute()
+        ),
+    )
+    max_docs = document_limit(org_plan)
+    current_docs = doc_count_res.count or 0
+    if max_docs is not None and current_docs >= max_docs:
+        raise QuotaExceeded(
+            message=(
+                f"Your {org_plan} plan allows up to {max_docs} documents. "
+                "Upgrade or remove documents to add more."
+            ),
+            details={
+                "plan": org_plan,
+                "used": current_docs,
+                "limit": max_docs,
+                "kind": "documents",
+            },
+        )
+
     file_type = _resolve_file_type(body.filename, body.content_type)
 
     doc_id = str(uuid.uuid4())
@@ -174,7 +206,6 @@ async def init_upload(
     storage_path = f"orgs/{org_id}/docs/{doc_id}/{safe_name}"
 
     settings = get_settings()
-    svc = get_service_client()
 
     # Generate a Supabase Storage signed upload URL — the browser PUTs to this directly
     try:
@@ -333,7 +364,7 @@ async def refresh_upload(
 
 # ── Step 3: Complete — trigger async processing ───────────────────────────────
 
-@router.post("/upload/complete")
+@router.post("/upload/complete", dependencies=[Depends(upload_limiter)])
 async def complete_upload(
     body: UploadCompleteRequest,
     current_user: dict = Depends(verify_jwt),

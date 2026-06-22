@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { networkError, parseApiError, reportApiError } from "@/lib/errors";
 
 const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   oauth_failed: "Sign-in failed. Please try again.",
@@ -19,7 +20,9 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [email, setEmail] = useState("");
+  const inviteToken = searchParams.get("invite");
+  const inviteEmail = searchParams.get("email");
+  const [email, setEmail] = useState(inviteEmail ?? "");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const redirectedFrom = searchParams.get("redirectedFrom");
@@ -68,6 +71,35 @@ export default function LoginPage() {
       }
       setLoading(false);
       return;
+    }
+
+    // If a ?invite=<token> param is present, bind the now-authenticated
+    // user to that workspace. Failing here shouldn't block sign-in (they
+    // ARE signed in to their existing account); surface the error and
+    // let them retry the invite link.
+    if (inviteToken) {
+      try {
+        const acceptRes = await fetch(
+          `/api/auth/invitations/${encodeURIComponent(inviteToken)}/accept-authenticated`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              display_name: email.split("@")[0] || "Member",
+            }),
+          },
+        );
+        if (acceptRes.ok) {
+          await supabase.auth.refreshSession();
+          toast.success("Joined your workspace.");
+          router.push("/chat");
+          router.refresh();
+          return;
+        }
+        reportApiError(await parseApiError(acceptRes));
+      } catch (err) {
+        reportApiError(networkError(err));
+      }
     }
 
     const target =

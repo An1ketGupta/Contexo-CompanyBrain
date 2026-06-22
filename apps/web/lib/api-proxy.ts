@@ -121,3 +121,61 @@ export async function proxyPostJson(
   }
   return proxyJson(request, path, { method: "POST", body });
 }
+
+/**
+ * Public (no-auth) variant of proxyJson. Used by endpoints where the
+ * credential lives in the URL itself (e.g., invitation token) or where
+ * the endpoint is genuinely public (e.g., /pricing). Skips the
+ * getAccessToken / 401 short-circuit that proxyJson runs.
+ */
+export async function proxyPublicJson(
+  request: NextRequest | Request,
+  path: string,
+  options: { method?: "GET" | "POST"; body?: unknown } = {},
+): Promise<NextResponse> {
+  const requestId = coerceRequestId(request.headers.get(REQUEST_ID_HEADER));
+  const { method = "GET", body } = options;
+
+  const upstream = await fetch(`${API_URL}${path}`, {
+    method,
+    headers: {
+      [REQUEST_ID_HEADER]: requestId,
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    cache: "no-store",
+  });
+
+  const outboundRequestId =
+    upstream.headers.get(REQUEST_ID_HEADER) ?? requestId;
+  const data = await upstream.json().catch(() => ({}));
+  return NextResponse.json(data, {
+    status: upstream.status,
+    headers: { [REQUEST_ID_HEADER]: outboundRequestId },
+  });
+}
+
+/**
+ * As `proxyPostJson`, but no bearer forwarded. For token-credentialed
+ * unauthenticated POSTs like invite acceptance.
+ */
+export async function proxyPublicPostJson(
+  request: NextRequest,
+  path: string,
+): Promise<NextResponse> {
+  const requestId = coerceRequestId(request.headers.get(REQUEST_ID_HEADER));
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      {
+        code: "bad_request",
+        message: "Invalid JSON body.",
+        request_id: requestId,
+      },
+      { status: 400, headers: { [REQUEST_ID_HEADER]: requestId } },
+    );
+  }
+  return proxyPublicJson(request, path, { method: "POST", body });
+}

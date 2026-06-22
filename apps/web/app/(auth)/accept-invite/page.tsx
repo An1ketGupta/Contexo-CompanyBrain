@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { networkError, parseApiError, reportApiError } from "@/lib/errors";
 
 interface InviteLookup {
   email: string;
@@ -122,44 +123,59 @@ function AcceptInviteInner() {
     if (submitting) return;
     setSubmitting(true);
 
+    // Ask the server to either (a) create the auth user + bind to org, or
+    // (b) tell us this email already has an account so we should redirect
+    // to /login. The server is the only place that can answer (b) safely.
+    let acceptRes: Response;
+    try {
+      acceptRes = await fetch(
+        `/api/auth/invitations/${encodeURIComponent(token)}/accept-credentials`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ display_name: displayName, password }),
+        },
+      );
+    } catch (err) {
+      reportApiError(networkError(err));
+      setSubmitting(false);
+      return;
+    }
+
+    if (!acceptRes.ok) {
+      reportApiError(await parseApiError(acceptRes));
+      setSubmitting(false);
+      return;
+    }
+
+    const result = (await acceptRes.json()) as {
+      requires_login?: boolean;
+      email?: string;
+    };
+
+    if (result.requires_login) {
+      toast.info("This email already has an account. Sign in to join.");
+      const params = new URLSearchParams({ invite: token });
+      if (result.email) params.set("email", result.email);
+      router.replace(`/login?${params.toString()}`);
+      return;
+    }
+
+    // Server already created the auth user. Sign in with the password the
+    // user just chose to materialize a session, then refresh so the JWT
+    // picks up app_metadata.org_id.
     const supabase = createClient();
-    // The signup uses the invite's email — we don't let the user edit it
-    // because the FastAPI side enforces a match anyway.
-    const { data, error } = await supabase.auth.signUp({
+    const { error: signInError } = await supabase.auth.signInWithPassword({
       email: invite.email,
       password,
     });
-
-    if (error || !data.user) {
-      toast.error(error?.message ?? "Couldn't create your account.");
-      setSubmitting(false);
-      return;
-    }
-
-    const acceptRes = await fetch(
-      `/api/auth/invitations/${encodeURIComponent(token)}/accept`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: data.user.id,
-          display_name: displayName,
-        }),
-      },
-    );
-
-    if (!acceptRes.ok) {
-      const body = await acceptRes.json().catch(() => ({}));
+    if (signInError) {
       toast.error(
-        body.detail ??
-          body.message ??
-          "Account created, but joining the workspace failed. Sign in to try again.",
+        "Joined workspace, but couldn't sign you in automatically. Please sign in.",
       );
-      setSubmitting(false);
+      router.replace("/login");
       return;
     }
-
-    // Refresh so the JWT picks up org_id from app_metadata.
     await supabase.auth.refreshSession();
     toast.success(`Welcome to ${invite.org.name}.`);
     router.replace("/chat");

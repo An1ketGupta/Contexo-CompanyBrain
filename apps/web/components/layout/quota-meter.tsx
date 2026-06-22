@@ -67,7 +67,7 @@ export function QuotaMeter() {
       </div>
       {(warn || exceeded) && (
         <Link
-          href="/settings"
+          href="/settings/billing"
           className={cn(
             "mt-1 inline-block text-[11px] font-medium",
             exceeded ? "text-destructive" : "text-amber-600 dark:text-amber-400",

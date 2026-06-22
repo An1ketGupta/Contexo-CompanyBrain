@@ -8,22 +8,10 @@ consistent across the four enforcement points:
   * /invitations       — seat cap including pending invites (routers/invitations.py)
   * /settings/billing  — UI display of usage vs. limit (Next.js)
 
-Day 6 put the underlying data in the `pricing_tiers` table and exposed it
-via `app.services.billing.pricing.quota_for_plan()`. This module is a thin
-adapter that:
-
-  1. Promotes `UNLIMITED` (a giant int sentinel) to a plain Python `None`
-     at the boundary — most callers prefer `if limit is None: ...` over
-     `if limit >= UNLIMITED: ...`.
-  2. Centralises the "what does free actually allow" decision. The
-     pricing_tiers seed treats free as zero-quota (an org with no active
-     subscription should not be able to do work). Some callers want to
-     keep free orgs functional at a trial-level allowance — they read the
-     `*_trial_*` helpers instead.
-
-Why a wrapper rather than calling quota_for_plan() directly: enforcement
-sites should not import the pricing internals (UNLIMITED, PlanQuota); they
-get a small, named function whose intent reads at the call site.
+Routers should not import the pricing internals (UNLIMITED, PlanQuota);
+they get the named helpers below whose intent reads at the call site.
+The `free` plan returns a trial-level allowance rather than zero so a
+brand-new tenant can use the product before completing Checkout.
 """
 from __future__ import annotations
 
@@ -33,15 +21,19 @@ from app.services.billing.pricing import (
     quota_for_plan,
 )
 
-# Trial allowance for orgs that haven't yet completed Checkout. Keeps brand-new
-# signups usable on day one without giving them a perpetual free tier — the
-# /settings/billing page is the supposed-to-be-obvious next step.
 _FREE_TRIAL_QUERIES_PER_MONTH = 50
 _FREE_TRIAL_DOCUMENTS = 10
 _FREE_TRIAL_SEATS = 2
 
 
-def _to_optional(value: int) -> int | None:
+def to_optional(value: int | None) -> int | None:
+    """Normalize a pricing-tier quota to `None` when it represents unlimited.
+
+    Routers calling pricing_tiers directly (e.g., to render plan cards)
+    use this so they don't have to import the `UNLIMITED` sentinel.
+    """
+    if value is None:
+        return None
     return None if is_unlimited(value) else int(value)
 
 
@@ -58,7 +50,7 @@ def monthly_query_limit(plan: str | None) -> int | None:
     """
     if not plan or plan == "free":
         return _FREE_TRIAL_QUERIES_PER_MONTH
-    return _to_optional(quota_for_plan(plan).queries_monthly)
+    return to_optional(quota_for_plan(plan).queries_monthly)
 
 
 # ── Document upload cap ──────────────────────────────────────────────────────
@@ -72,7 +64,7 @@ def document_limit(plan: str | None) -> int | None:
     """
     if not plan or plan == "free":
         return _FREE_TRIAL_DOCUMENTS
-    return _to_optional(quota_for_plan(plan).documents)
+    return to_optional(quota_for_plan(plan).documents)
 
 
 # ── Seat cap (members + pending invites) ─────────────────────────────────────
@@ -82,13 +74,14 @@ def seat_limit(plan: str | None) -> int | None:
     """Max members + outstanding invites. None = unlimited."""
     if not plan or plan == "free":
         return _FREE_TRIAL_SEATS
-    return _to_optional(quota_for_plan(plan).seats)
+    return to_optional(quota_for_plan(plan).seats)
 
 
 # Re-export for callers that need the sentinel directly (e.g., admin pages
 # that want to render "Unlimited" rather than a number).
 __all__ = [
     "UNLIMITED",
+    "to_optional",
     "monthly_query_limit",
     "document_limit",
     "seat_limit",

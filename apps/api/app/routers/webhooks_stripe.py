@@ -1,35 +1,21 @@
-"""Stripe webhook receiver — Day 7 of the Production Roadmap.
+"""Stripe webhook receiver — single point at which Stripe state lands in our DB.
 
-This is the single point at which Stripe state lands in our DB. Everything
-else (UI, quota enforcement, sidebar meter) reads from `organizations.plan`,
-which is *only* ever written by this handler.
+Guardrails:
 
-Three guardrails make this safe to leave running unattended:
+  1. Signature verification on raw bytes. Re-serialising request.json()
+     would change the byte sequence and fail verification.
+  2. Write-ahead log + idempotency. Every event lands in `billing_events`
+     with status='received' BEFORE the handler runs; the UNIQUE constraint
+     on stripe_event_id dedupes Stripe's at-least-once retries. A crash
+     mid-event leaves the row so an admin can replay.
+  3. Status transitions: received → processed | failed.
 
-  1. **Signature verification on raw bytes.** Stripe signs the request
-     body byte-for-byte. We MUST read `request.body()` and hand the raw
-     bytes to `stripe.Webhook.construct_event` — re-serialising
-     `request.json()` (or any middleware that consumes the body) produces
-     a different byte sequence that fails verification.
+We return 200 on duplicates and unknown event types so Stripe stops
+retrying no-ops. Processing failures return 500 so Stripe retries on its
+exponential schedule.
 
-  2. **Write-ahead log + idempotency.** Every received event is inserted
-     into `billing_events` with `status='received'` BEFORE the handler
-     runs. The `UNIQUE(stripe_event_id)` constraint dedupes Stripe's
-     at-least-once retries: a duplicate insert raises, we mark the row
-     `status='duplicate'`, and return 200 to stop Stripe retrying. If the
-     handler crashes mid-event, the row persists so an admin can replay it.
-
-  3. **Status transitions.** A `received` row that completes successfully
-     moves to `processed`; a handler exception moves to `failed` with
-     `error_message` set. Both states are visible in the admin Stripe-events
-     page and Sentry.
-
-We deliberately return 200 on duplicates and on `unknown` event types so
-Stripe doesn't waste retries on no-ops. Genuine processing failures return
-500 so Stripe will retry with exponential backoff.
-
-Routes are NOT JWT-protected — Stripe doesn't authenticate with a bearer
-token. The HMAC signature is the credential.
+The route is NOT JWT-protected — Stripe authenticates by HMAC signature,
+not by bearer token.
 """
 from __future__ import annotations
 
@@ -54,20 +40,18 @@ log = get_logger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks-stripe"])
 
 
-# Event types we explicitly handle. Anything else is logged + acked so Stripe
-# stops retrying — adding a new event type means listing it here AND wiring
-# up the branch in `_dispatch_event`.
-_HANDLED_EVENTS = frozenset({
-    "checkout.session.completed",
+# Adding a new event type means listing it here AND wiring up the branch
+# in `_dispatch_event`. Unlisted events are acked + logged.
+_SUBSCRIPTION_EVENTS = frozenset({
     "customer.subscription.created",
     "customer.subscription.updated",
     "customer.subscription.deleted",
+})
+_HANDLED_EVENTS = frozenset({
+    "checkout.session.completed",
     "invoice.payment_failed",
     "invoice.payment_succeeded",
-})
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
+}) | _SUBSCRIPTION_EVENTS
 
 
 def _iso_from_unix(ts: int | None) -> str | None:
@@ -258,11 +242,11 @@ async def _handle_invoice_payment_failed(data: dict[str, Any]) -> str | None:
 
 
 async def _handle_invoice_payment_succeeded(data: dict[str, Any]) -> str | None:
-    """Clear a previously-past_due flag if the retry succeeded.
+    """Clear a previously-past_due flag when a retry succeeds.
 
-    Stripe sends this on every successful renewal, not just recoveries —
-    we only flip state when there's actually something to clear so we
-    don't churn the plan_updated_at trigger on routine monthly renewals.
+    Stripe sends this on every renewal, not just recoveries. The WHERE
+    filter avoids churning the plan_updated_at trigger on routine
+    monthly renewals — only past_due/unpaid rows actually update.
     """
     customer_id = data.get("customer")
     org_id = await _resolve_org_id(
@@ -274,39 +258,30 @@ async def _handle_invoice_payment_succeeded(data: dict[str, Any]) -> str | None:
         return None
 
     svc = get_service_client()
-    res = await asyncio.to_thread(
+    await asyncio.to_thread(
         lambda: svc.table("organizations")
-        .select("plan_status")
+        .update({"plan_status": "active"})
         .eq("id", org_id)
-        .maybe_single()
+        .in_("plan_status", ["past_due", "unpaid"])
         .execute()
     )
-    current_status = (res.data or {}).get("plan_status") if res else None
-    if current_status in ("past_due", "unpaid"):
-        await _update_org(org_id, {"plan_status": "active"})
     return org_id
 
 
 async def _dispatch_event(event_type: str, data: dict[str, Any]) -> str | None:
-    """Route to the right per-event handler. Returns the resolved org_id
-    (or None when the event couldn't be matched to any org)."""
+    """Route to the right per-event handler. Caller guarantees `event_type`
+    is in `_HANDLED_EVENTS`; an unknown branch raises rather than silently
+    returning so a new event added to the set without a handler fails loud.
+    """
     if event_type == "checkout.session.completed":
         return await _handle_checkout_completed(data)
-    if event_type in (
-        "customer.subscription.created",
-        "customer.subscription.updated",
-        "customer.subscription.deleted",
-    ):
+    if event_type in _SUBSCRIPTION_EVENTS:
         return await _handle_subscription_change(data, event_type=event_type)
     if event_type == "invoice.payment_failed":
         return await _handle_invoice_payment_failed(data)
     if event_type == "invoice.payment_succeeded":
         return await _handle_invoice_payment_succeeded(data)
-    # Unhandled but listed — should never get here.
-    return None
-
-
-# ── billing_events write-ahead helpers ───────────────────────────────────────
+    raise RuntimeError(f"Handler missing for {event_type!r}")
 
 
 def _is_duplicate_error(exc: Exception) -> bool:
@@ -378,19 +353,6 @@ async def _mark_failed(stripe_event_id: str, error_message: str) -> None:
     )
 
 
-async def _mark_duplicate(stripe_event_id: str) -> None:
-    svc = get_service_client()
-    # NOTE: the row already exists from the first delivery with its real
-    # status. We don't *overwrite* the original — duplicates only need to
-    # not be re-processed. The 'duplicate' status exists for events whose
-    # ORIGINAL processing failed but a later retry succeeded; for now,
-    # leaving the row alone is the right behavior.
-    log.info("stripe_webhook_duplicate", stripe_event_id=stripe_event_id)
-
-
-# ── Route ────────────────────────────────────────────────────────────────────
-
-
 @router.post("/stripe", include_in_schema=False)
 async def stripe_webhook(request: Request) -> JSONResponse:
     """Stripe -> us. Verified by signature, idempotent by stripe_event_id."""
@@ -436,17 +398,10 @@ async def stripe_webhook(request: Request) -> JSONResponse:
             detail="Invalid payload.",
         ) from exc
 
-    # `event` is a stripe.Event object; iterating/serializing to dict is
-    # safe because both .id and .type expose attribute access AND we drop
-    # the whole thing into JSONB via `dict(event)` on the WAL row.
     event_id: str = event["id"]
     event_type: str = event["type"]
     data: dict[str, Any] = event["data"]["object"]
-    payload: dict[str, Any] = (
-        event.to_dict_recursive()
-        if hasattr(event, "to_dict_recursive")
-        else dict(event)
-    )
+    payload: dict[str, Any] = event.to_dict_recursive()
 
     customer_id = (
         data.get("customer") if isinstance(data.get("customer"), str) else None
@@ -470,7 +425,7 @@ async def stripe_webhook(request: Request) -> JSONResponse:
         ) from exc
 
     if not is_new:
-        await _mark_duplicate(event_id)
+        log.info("stripe_webhook_duplicate", stripe_event_id=event_id)
         return JSONResponse({"status": "duplicate"})
 
     # Step 2 — process. Anything we don't explicitly handle is acked so
