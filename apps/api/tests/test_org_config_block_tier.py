@@ -10,7 +10,6 @@ import pytest
 
 from app.services import org_config
 
-
 # ── _parse_confidence ──────────────────────────────────────────────────────
 
 

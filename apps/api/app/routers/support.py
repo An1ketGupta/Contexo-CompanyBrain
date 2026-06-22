@@ -28,11 +28,11 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import inngest as inngest_pkg
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.auth import verify_jwt
@@ -438,7 +438,7 @@ async def send_ticket(
             "ai_draft_message_id": draft_msg_id,
             "status": "sent",
             "resolved_by": user_id,
-            "resolved_at": datetime.now(timezone.utc).isoformat(),
+            "resolved_at": datetime.now(UTC).isoformat(),
         })
         .eq("id", ticket_id)
         .execute()
@@ -448,7 +448,7 @@ async def send_ticket(
     #    semantics here — stamp delivery_status optimistically, then queue
     #    the Inngest event. This is preferred over an HTTP self-call.
     job_id = str(uuid.uuid4())
-    queued_at = datetime.now(timezone.utc).isoformat()
+    queued_at = datetime.now(UTC).isoformat()
     await asyncio.to_thread(
         lambda: svc.table("messages")
         .update({
@@ -516,7 +516,7 @@ async def reject_ticket(
         .update({
             "status": "rejected",
             "resolved_by": user_id,
-            "resolved_at": datetime.now(timezone.utc).isoformat(),
+            "resolved_at": datetime.now(UTC).isoformat(),
         })
         .eq("id", ticket_id)
         .execute()

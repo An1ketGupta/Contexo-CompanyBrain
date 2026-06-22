@@ -30,7 +30,7 @@ import asyncio
 import csv
 import io
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import inngest
@@ -163,7 +163,7 @@ async def acknowledge_document(
     # Acknowledge ALL pending rows for this user+doc. In practice there's
     # exactly one pending per (user, current version), but a no-op extra
     # update doesn't hurt and protects against weird historical states.
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     res = await asyncio.to_thread(
         lambda: client.table("acknowledgements")
         .update({"status": "acknowledged", "acknowledged_at": now})
@@ -425,7 +425,7 @@ async def compliance_report_csv(current_user: dict = Depends(verify_jwt)) -> Res
         ])
 
     csv_bytes = buf.getvalue().encode("utf-8")
-    filename = f"compliance-report-{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
+    filename = f"compliance-report-{datetime.now(UTC).strftime('%Y%m%d')}.csv"
     return Response(
         content=csv_bytes,
         media_type="text/csv",

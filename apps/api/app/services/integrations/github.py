@@ -38,7 +38,7 @@ from __future__ import annotations
 import base64
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -129,7 +129,7 @@ async def _get_installation_token(row: dict[str, Any]) -> str:
     if expiry_iso:
         try:
             exp = datetime.fromisoformat(expiry_iso.replace("Z", "+00:00"))
-            if exp > datetime.now(timezone.utc) + timedelta(seconds=60):
+            if exp > datetime.now(UTC) + timedelta(seconds=60):
                 return row["access_token"]
         except ValueError:
             pass
@@ -275,8 +275,9 @@ async def update_resources(
     row = await _unified.get_row(org_id=org_id, provider=PROVIDER)
     if not row:
         raise RuntimeError("github_not_connected")
-    from app.database import get_service_client
     import asyncio as _asyncio
+
+    from app.database import get_service_client
     svc = get_service_client()
     await _asyncio.to_thread(
         lambda: svc.table("integrations")
@@ -351,11 +352,6 @@ async def _sync_repo(
 ) -> tuple[int, str]:
     full_name = repo["full_name"]
     default_branch = repo.get("default_branch") or "main"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
     ingested = 0
     newest = since
 

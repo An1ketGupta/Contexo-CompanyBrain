@@ -5,9 +5,8 @@ ranking logic is broken, not a network or auth issue.
 """
 import pytest
 
-from app.services.retrieval.hybrid_search import reciprocal_rank_fusion, DEFAULT_RRF_K
+from app.services.retrieval.hybrid_search import DEFAULT_RRF_K, reciprocal_rank_fusion
 from app.services.retrieval.vector_search import SearchHit
-
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 

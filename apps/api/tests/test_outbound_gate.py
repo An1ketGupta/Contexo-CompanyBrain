@@ -8,7 +8,6 @@ tests stay hermetic and run in <100ms.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import pytest
 
@@ -16,7 +15,6 @@ from app.services import outbound_gate
 from app.services.competitor_detector import CompetitorMatch, CompetitorTerms
 from app.services.org_config import ConfidenceThresholds
 from app.services.rate_limit import SlidingWindowResult
-
 
 ORG_ID = "00000000-0000-0000-0000-000000000001"
 USER_ID = "00000000-0000-0000-0000-000000000002"

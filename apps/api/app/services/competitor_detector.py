@@ -22,7 +22,6 @@ without app-side aggregation.
 from __future__ import annotations
 
 import asyncio
-import logging
 import re
 import time
 from dataclasses import dataclass
@@ -48,7 +47,7 @@ _SNIPPET_RADIUS = 100
 # we'd rather hit the DB occasionally than serve a stale watchlist for
 # long. Lock guards thundering-herd on a cold (org, user) pair.
 _CACHE_TTL_SECONDS = 30.0
-_cache: dict[tuple[str, str | None], "_CachedTerms"] = {}
+_cache: dict[tuple[str, str | None], _CachedTerms] = {}
 _cache_lock = asyncio.Lock()
 
 

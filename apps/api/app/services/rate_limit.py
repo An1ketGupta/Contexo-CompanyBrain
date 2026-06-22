@@ -21,7 +21,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 import httpx
@@ -35,27 +35,23 @@ log = get_logger(__name__)
 
 # ── Plan budgets ─────────────────────────────────────────────────────────────
 #
-# Mirrors the pricing tiers from ROADMAP.md. `None` = unlimited.
-# `free` exists for users mid-signup who haven't picked a plan; we treat it
-# the same as starter so a brand-new org isn't locked out on day one.
-_MONTHLY_BUDGETS: dict[str, int | None] = {
-    "free": 50,            # generous trial — converts to a paid plan in onboarding
-    "starter": 500,
-    "growth": 2_500,
-    "business": None,      # unlimited
-}
+# Day 7+: the source of truth lives in `pricing_tiers` (seeded by
+# scripts/stripe_seed.py) and is read through `services.billing.plan_limits`.
+# This file used to ship a hardcoded dict that drifted from the table
+# (e.g., it knew about 'growth' but the table was renamed to 'team') —
+# routing the read through plan_limits eliminates that class of bug.
 
 
 def monthly_budget_for(plan: str | None) -> int | None:
-    if not plan:
-        return _MONTHLY_BUDGETS["free"]
-    settings = get_settings()
-    # Allow overrides from settings for the two paid plans without a redeploy.
-    if plan == "starter":
-        return settings.rate_limit_chat_monthly_starter
-    if plan == "growth":
-        return settings.rate_limit_chat_monthly_growth
-    return _MONTHLY_BUDGETS.get(plan, _MONTHLY_BUDGETS["free"])
+    """Backwards-compatible alias for `monthly_query_limit`.
+
+    Kept because it's referenced from `get_usage_snapshot` and the public
+    API rate limiter; switching them to the new name is a Day 9 cleanup.
+    Returns None for unlimited (Business / unknown unlimited plan).
+    """
+    from app.services.billing.plan_limits import monthly_query_limit
+
+    return monthly_query_limit(plan)
 
 
 # ── Upstash REST client ──────────────────────────────────────────────────────
@@ -148,14 +144,14 @@ class MonthlyCounterResult:
 
 
 def _month_key(now: datetime | None = None) -> str:
-    n = now or datetime.now(timezone.utc)
+    n = now or datetime.now(UTC)
     return f"{n.year}{n.month:02d}"
 
 
 def _seconds_until_next_month(now: datetime | None = None) -> int:
-    n = now or datetime.now(timezone.utc)
+    n = now or datetime.now(UTC)
     year, month = (n.year + 1, 1) if n.month == 12 else (n.year, n.month + 1)
-    next_month = datetime(year, month, 1, tzinfo=timezone.utc)
+    next_month = datetime(year, month, 1, tzinfo=UTC)
     return max(int((next_month - n).total_seconds()), 1)
 
 
@@ -273,9 +269,9 @@ async def get_usage_snapshot(org_id: str) -> UsageSnapshot:
 async def get_org_plan(org_id: str) -> str:
     """Read the org's current plan. Service-role lookup since this runs
     inside the request handler before any RLS-scoped client work."""
-    from app.database import get_service_client
-
     import asyncio
+
+    from app.database import get_service_client
     try:
         result = await asyncio.to_thread(
             lambda: get_service_client()
@@ -385,7 +381,7 @@ async def _enqueue_quota_email(
 ) -> None:
     """Best-effort dispatch. Resolves the recipient's email server-side so we
     don't trust the JWT to be fresh. Dedupes per calendar month."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from app.config import get_settings as _gs
     from app.database import get_service_client as _svc
@@ -404,8 +400,8 @@ async def _enqueue_quota_email(
     if not email:
         return
 
-    month_key = datetime.now(timezone.utc).strftime("%Y-%m")
-    billing_url = f"{settings.app_url.rstrip('/')}/settings"
+    month_key = datetime.now(UTC).strftime("%Y-%m")
+    billing_url = f"{settings.app_url.rstrip('/')}/settings/billing"
 
     if event_type == "quota_warning":
         data = {"used": used, "limit": limit, "plan": plan, "billing_url": billing_url}
@@ -426,13 +422,3 @@ async def _enqueue_quota_email(
         dedupe_key=month_key,
         data=data,
     )
-
-
-# ── Compatibility shim for existing callers ──────────────────────────────────
-
-async def enforce_chat_rate_limit(org_id: str) -> None:
-    """Deprecated: kept temporarily so older imports don't break during the
-    Phase A migration. New code calls `enforce_chat_quota(user_id, org_id)`."""
-    # We don't have user_id here, so fall back to org_id for the per-user
-    # bucket. Better than nothing while the routers are being migrated.
-    await enforce_chat_quota(user_id=org_id, org_id=org_id)

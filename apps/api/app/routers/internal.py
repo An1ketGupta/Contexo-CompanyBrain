@@ -11,7 +11,7 @@ shapes leak which other customers exist + how much they're costing us.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -68,7 +68,7 @@ async def get_llm_costs(
     promote it to a `llm_cost_rollups` materialized view, not before.
     """
     days = _PERIOD_DAYS[period]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff = now - timedelta(days=days)
     prev_cutoff = cutoff - timedelta(days=days)
     svc = get_service_client()

@@ -195,7 +195,7 @@ async def _upsert_inbound_doc(
     classified as knowledge. Same dedupe sig as before email_forward.ingest
     so re-classification doesn't double-insert.
     """
-    sig = hashlib.sha256(f"{subject}\n{body[:256]}".encode("utf-8")).hexdigest()[:24]
+    sig = hashlib.sha256(f"{subject}\n{body[:256]}".encode()).hexdigest()[:24]
     name = f"Email: {subject[:80]}" if subject else f"Email from {from_email[:60]}"
     return await upsert_external_document(
         org_id=org_id,
@@ -208,7 +208,7 @@ async def _upsert_inbound_doc(
 
 def _inbound_sig(subject: str, body: str) -> str:
     """Stable idempotency key matching the dedupe sig on support_tickets."""
-    return hashlib.sha256(f"{subject}\n{body[:256]}".encode("utf-8")).hexdigest()[:24]
+    return hashlib.sha256(f"{subject}\n{body[:256]}".encode()).hexdigest()[:24]
 
 
 FUNCTIONS = [classify_inbound_email_fn, support_email_received_fn]

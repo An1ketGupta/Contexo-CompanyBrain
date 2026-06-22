@@ -52,7 +52,7 @@ class SearchHit:
     # task_chain has a true [0,1] interpretable signal to aggregate on.
     vector_similarity: float | None = None
 
-    def with_overrides(self, **changes: Any) -> "SearchHit":
+    def with_overrides(self, **changes: Any) -> SearchHit:
         """Return a copy with selected fields replaced — used by hybrid fusion."""
         return replace(self, **changes)
 

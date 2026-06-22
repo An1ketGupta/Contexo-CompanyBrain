@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
+from datetime import UTC
 from typing import Any
 
 import httpx
@@ -298,7 +299,7 @@ def deploy_org_embedding_model(org_id: str, model_id: str) -> None:
     cached for 60s in get_org_config. No restart required after deploy.
     """
     svc = get_service_client()
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     org = (
         svc.table("organizations")
@@ -311,7 +312,7 @@ def deploy_org_embedding_model(org_id: str, model_id: str) -> None:
     )
     metadata = dict(org.get("metadata") or {})
     metadata["embedding_model"] = model_id
-    metadata["embedding_fine_tuned_at"] = datetime.now(timezone.utc).isoformat()
+    metadata["embedding_fine_tuned_at"] = datetime.now(UTC).isoformat()
     svc.table("organizations").update({"metadata": metadata}).eq("id", org_id).execute()
 
 

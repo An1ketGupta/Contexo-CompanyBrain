@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from app.database import get_service_client
@@ -74,7 +74,7 @@ async def record_queued(
             "destination": destination,
             **safe_input,
         },
-        "started_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": datetime.now(UTC).isoformat(),
     }
     try:
         await asyncio.to_thread(
@@ -102,7 +102,7 @@ async def record_sent(
     `external_id`, `slack_ts`, etc.
     """
     svc = get_service_client()
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     try:
         await asyncio.to_thread(
             lambda: svc.table("agent_runs")
@@ -127,7 +127,7 @@ async def record_failed(
     output: dict[str, Any] | None = None,
 ) -> None:
     svc = get_service_client()
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     try:
         await asyncio.to_thread(
             lambda: svc.table("agent_runs")

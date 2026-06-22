@@ -30,9 +30,10 @@ import hmac
 import json
 import logging
 import time
+from datetime import UTC
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -525,12 +526,11 @@ async def notion_create_page(
     org_id, user_id, _ = _require_org(current_user)
 
     import uuid
-    from datetime import datetime, timezone
-
-    from app.database import get_service_client as _svc
+    from datetime import datetime
 
     import inngest as _inngest_pkg
 
+    from app.database import get_service_client as _svc
     from app.inngest.client import get_inngest_client
 
     svc = _svc()
@@ -588,7 +588,7 @@ async def notion_create_page(
         )
 
     job_id = str(uuid.uuid4())
-    queued_at = datetime.now(timezone.utc).isoformat()
+    queued_at = datetime.now(UTC).isoformat()
     parent_title = body.parent_page_title or "Notion"
 
     await asyncio.to_thread(
@@ -665,12 +665,11 @@ async def gdocs_create_doc(
     org_id, user_id, _ = _require_org(current_user)
 
     import uuid
-    from datetime import datetime, timezone
-
-    from app.database import get_service_client as _svc
+    from datetime import datetime
 
     import inngest as _inngest_pkg
 
+    from app.database import get_service_client as _svc
     from app.inngest.client import get_inngest_client
 
     svc = _svc()
@@ -739,7 +738,7 @@ async def gdocs_create_doc(
             share_with_email = None
 
     job_id = str(uuid.uuid4())
-    queued_at = datetime.now(timezone.utc).isoformat()
+    queued_at = datetime.now(UTC).isoformat()
 
     await asyncio.to_thread(
         lambda: svc.table("messages")

@@ -410,8 +410,8 @@ async def record_template_use(
     # V4 #18 / #57 — analytics + team activity. Wrapped: a telemetry failure
     # must not undo the counter bump we just persisted.
     try:
-        from app.services.analytics import track_event
         from app.services.activity import log_activity, resolve_user_privacy
+        from app.services.analytics import track_event
 
         org_id = current_user["org_id"]
         user_id = current_user.get("user_id")

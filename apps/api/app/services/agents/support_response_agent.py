@@ -163,7 +163,7 @@ class SupportResponseAgent(BaseAgent):
         svc = get_service_client()
         subject = self.ticket.get("subject") or ""
         body = self.ticket.get("body") or ""
-        sig = hashlib.sha256(f"{subject}\n{body[:256]}".encode("utf-8")).hexdigest()[:24]
+        sig = hashlib.sha256(f"{subject}\n{body[:256]}".encode()).hexdigest()[:24]
 
         row = {
             "org_id": self.org_id,

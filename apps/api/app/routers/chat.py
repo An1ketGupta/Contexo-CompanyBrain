@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import re
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
 
 import inngest
-from typing import Any, AsyncIterator, Literal
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -20,18 +19,14 @@ from app.auth import verify_jwt
 from app.config import get_settings
 from app.database import get_user_client
 from app.errors import ModerationBlocked, NoOrganization
-from app.observability import get_logger
-from app.services.llm import Message
-from app.services.moderation import (
-    ModerationResult,
-    log_moderation_event,
-    moderate_input,
-)
-from app.services.rate_limit import enforce_chat_quota
 from app.inngest import get_inngest_client
+from app.observability import get_logger
 from app.services.citation_tracker import record_citations
-from app.services.summarization import load_conversation_summary
-from app.services.webhooks import trigger_event as trigger_webhook_event
+from app.services.competitor_detector import (
+    CompetitorMatch,
+    persist_chat_mentions,
+)
+from app.services.llm import Message
 from app.services.llm.task_chain import (
     CompetitorWarningEvent,
     ConfidenceEvent,
@@ -46,10 +41,14 @@ from app.services.llm.task_chain import (
     TokenEvent,
     execute_task,
 )
-from app.services.competitor_detector import (
-    CompetitorMatch,
-    persist_chat_mentions,
+from app.services.moderation import (
+    ModerationResult,
+    log_moderation_event,
+    moderate_input,
 )
+from app.services.rate_limit import enforce_chat_quota
+from app.services.summarization import load_conversation_summary
+from app.services.webhooks import trigger_event as trigger_webhook_event
 
 log = get_logger(__name__)
 
@@ -446,7 +445,7 @@ async def chat_stream(
                 try:
                     timeout = max(0.1, SSE_HEARTBEAT_SECONDS - (time.monotonic() - last_emit))
                     ev = await asyncio.wait_for(events_queue.get(), timeout=timeout)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield b": keepalive\n\n"
                     last_emit = time.monotonic()
                     continue
@@ -976,7 +975,7 @@ async def archive_conversation(
     _, user_id, token = _require_org(current_user)
     client = get_user_client(token)
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     try:
         result = await asyncio.to_thread(
             lambda: client.table("conversations")
@@ -1029,7 +1028,7 @@ async def restore_conversation(
     _, _, token = _require_org(current_user)
     client = get_user_client(token)
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     result = await asyncio.to_thread(
         lambda: client.table("conversations")
         .update(
@@ -1064,7 +1063,7 @@ async def bulk_archive_conversations(
     _, user_id, token = _require_org(current_user)
     client = get_user_client(token)
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     # The trigger blocks pinned rows individually, which would 500 the whole
     # bulk call. Filter pinned out at the WHERE clause so the UPDATE only
     # touches eligible rows; the trigger then becomes a defence-in-depth.
@@ -1105,7 +1104,7 @@ async def bulk_restore_conversations(
     _, _, token = _require_org(current_user)
     client = get_user_client(token)
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     result = await asyncio.to_thread(
         lambda: client.table("conversations")
         .update(
@@ -1234,6 +1233,7 @@ async def update_message_feedback(
     if body.feedback == "negative" and current_user.get("org_id"):
         try:
             import inngest as _inngest
+
             from app.inngest.client import get_inngest_client as _client
 
             await _client().send(
@@ -1297,7 +1297,7 @@ async def record_message_copy(
             detail="Only assistant messages can be marked as copied.",
         )
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     next_count = int(msg.get("copy_count") or 0) + 1
     patch: dict[str, Any] = {
         "copy_count": next_count,
@@ -1486,8 +1486,6 @@ async def regenerate_message(
         confidence_evt: ConfidenceEvent | None = None
         final_intent: str = ""
         competitor_matches: tuple[CompetitorMatch, ...] = ()
-        final_usage = None
-        final_retrieved_chunk_ids: tuple[str, ...] = ()
         had_error = False
         error_payload: dict | None = None
 
@@ -1499,7 +1497,7 @@ async def regenerate_message(
                 try:
                     timeout = max(0.1, SSE_HEARTBEAT_SECONDS - (time.monotonic() - last_emit))
                     ev = await asyncio.wait_for(events_queue.get(), timeout=timeout)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield b": keepalive\n\n"
                     last_emit = time.monotonic()
                     continue
@@ -1519,8 +1517,6 @@ async def regenerate_message(
                     trace_id = ev.trace_id
                     final_intent = ev.intent
                     competitor_matches = ev.competitor_matches
-                    final_usage = ev.usage
-                    final_retrieved_chunk_ids = ev.retrieved_chunk_ids
                 elif isinstance(ev, ConfidenceEvent):
                     confidence_evt = ev
                 elif isinstance(ev, ErrorEvent):
@@ -2164,12 +2160,12 @@ async def _emit_chat_analytics(
     flipping the toggle takes effect on their NEXT turn, not retroactively.
     """
     try:
-        from app.services.analytics import track_event
         from app.services.activity import (
             INTENT_FEED_LABEL,
             log_activity,
             resolve_user_privacy,
         )
+        from app.services.analytics import track_event
 
         await track_event(
             org_id=org_id,
@@ -2267,7 +2263,7 @@ def _slugify(text: str) -> str:
 
 
 def _format_export_ts() -> str:
-    return datetime.now(timezone.utc).strftime("%B %d, %Y at %H:%M UTC")
+    return datetime.now(UTC).strftime("%B %d, %Y at %H:%M UTC")
 
 
 async def _fire_query_completed_webhook(
@@ -2358,7 +2354,7 @@ async def _maybe_touch_last_accessed(
         # last_accessed_at is older than the window. This is a single
         # statement, no read-then-write race.
         cutoff = (
-            datetime.now(timezone.utc)
+            datetime.now(UTC)
             - timedelta(seconds=_LAST_ACCESS_THROTTLE_SECONDS)
         ).isoformat()
         await asyncio.to_thread(
@@ -2386,7 +2382,7 @@ def _derive_title(message: str) -> str:
 # ── SSE helpers ──────────────────────────────────────────────────────────────
 
 def _sse(payload: dict) -> bytes:
-    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n".encode("utf-8")
+    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n".encode()
 
 
 def _event_to_payload(event: OrchestratorEvent) -> dict | None:

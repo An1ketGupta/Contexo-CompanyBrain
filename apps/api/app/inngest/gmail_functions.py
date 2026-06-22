@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import inngest
@@ -51,7 +51,7 @@ async def _bump_last_used(*, org_id: str, user_id: str) -> None:
     svc = get_service_client()
     await asyncio.to_thread(
         lambda: svc.table("gmail_integrations")
-        .update({"last_used_at": datetime.now(timezone.utc).isoformat()})
+        .update({"last_used_at": datetime.now(UTC).isoformat()})
         .eq("org_id", org_id)
         .eq("user_id", user_id)
         .execute()
@@ -97,7 +97,7 @@ async def gmail_send_email(ctx: inngest.Context) -> dict[str, Any]:
                 "recipient": recipient,
                 "job_id": job_id,
                 "error": "gmail_not_connected",
-                "failed_at": datetime.now(timezone.utc).isoformat(),
+                "failed_at": datetime.now(UTC).isoformat(),
             },
         )
         await on_failed(
@@ -123,7 +123,7 @@ async def gmail_send_email(ctx: inngest.Context) -> dict[str, Any]:
                 "recipient": recipient,
                 "job_id": job_id,
                 "error": "gmail_send_scope_missing",
-                "failed_at": datetime.now(timezone.utc).isoformat(),
+                "failed_at": datetime.now(UTC).isoformat(),
             },
         )
         await on_failed(
@@ -186,7 +186,7 @@ async def gmail_send_email(ctx: inngest.Context) -> dict[str, Any]:
                 "recipient": recipient,
                 "job_id": job_id,
                 "error": reason,
-                "failed_at": datetime.now(timezone.utc).isoformat(),
+                "failed_at": datetime.now(UTC).isoformat(),
             },
         )
         await on_failed(
@@ -215,7 +215,7 @@ async def gmail_send_email(ctx: inngest.Context) -> dict[str, Any]:
                 "job_id": job_id,
                 "external_id": result.get("message_id"),
                 "thread_id": result.get("thread_id"),
-                "delivered_at": datetime.now(timezone.utc).isoformat(),
+                "delivered_at": datetime.now(UTC).isoformat(),
             },
         ),
     )

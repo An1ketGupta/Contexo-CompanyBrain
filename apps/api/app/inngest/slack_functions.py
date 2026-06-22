@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import inngest
@@ -91,7 +91,7 @@ async def slack_post_message(ctx: inngest.Context) -> dict[str, Any]:
                 "channel_id": channel_id,
                 "job_id": job_id,
                 "error": reason,
-                "failed_at": datetime.now(timezone.utc).isoformat(),
+                "failed_at": datetime.now(UTC).isoformat(),
             },
         )
         # PermissionError is terminal — no retry budget will fix a revoked
@@ -122,7 +122,7 @@ async def slack_post_message(ctx: inngest.Context) -> dict[str, Any]:
                 "job_id": job_id,
                 "external_id": result.get("ts"),
                 "thread_ts": thread_ts,
-                "delivered_at": datetime.now(timezone.utc).isoformat(),
+                "delivered_at": datetime.now(UTC).isoformat(),
             },
         ),
     )

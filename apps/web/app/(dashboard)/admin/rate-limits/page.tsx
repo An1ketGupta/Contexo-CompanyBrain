@@ -107,7 +107,7 @@ export default function RateLimitsPage() {
                 </Badge>
               )}
               {quota.unlimited && (
-                <Badge variant="secondary">Unlimited</Badge>
+                <Badge variant="default">Unlimited</Badge>
               )}
             </div>
 

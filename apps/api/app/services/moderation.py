@@ -28,7 +28,7 @@ import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Pattern
+from re import Pattern
 
 from app.database import get_service_client
 

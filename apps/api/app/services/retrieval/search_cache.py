@@ -17,7 +17,6 @@ Fail-open: any Upstash error falls through to a fresh `hybrid_search()` call.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, replace
 from typing import Any
 
 from supabase import Client

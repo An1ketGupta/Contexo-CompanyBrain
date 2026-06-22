@@ -22,6 +22,7 @@ dependencies = [
     "python-multipart>=0.0.20",
     "python-pptx>=1.0.2",
     "sentry-sdk[fastapi]>=2.20.0",
+    "stripe>=11.4.0",
     "structlog>=24.4.0",
     "supabase>=2.31.0",
     "tenacity>=9.1.4",
@@ -34,6 +35,7 @@ dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
     "httpx>=0.28.1",
+    "ruff>=0.8.0",
 ]
 
 [tool.pytest.ini_options]
@@ -43,3 +45,26 @@ markers = [
     "integration: requires live Supabase + Gemini API (excluded from default run)",
 ]
 addopts = "-m 'not integration'"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["__pycache__", ".venv", "alembic"]
+
+[tool.ruff.lint]
+# Pre-launch posture: gate CI only on real bug-finders. Style rules (B/SIM/UP)
+# are left to author discretion so review doesn't get stuck on taste. Tighten
+# this list post-launch once the team has cycles for a single cleanup pass.
+select = [
+    "E",   # pycodestyle errors (real syntax/indent issues)
+    "F",   # pyflakes — unused imports, undefined names, redefinitions
+    "I",   # isort — auto-fixable, so safe to gate on
+]
+ignore = [
+    "E501",  # line length is enforced by formatter, not lint
+    "E402",  # module-level imports below code: some bootstraps need this
+    "E741",  # single-letter variable names: tolerated in math-y code
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["F401"]  # fixtures often appear unused but are imported for side effects

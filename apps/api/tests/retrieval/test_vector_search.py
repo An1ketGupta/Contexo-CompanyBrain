@@ -6,11 +6,11 @@ and correct mapping from raw DB rows to SearchHit objects.
 """
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, call
 
-from app.services.retrieval.vector_search import VectorRetriever, SearchHit
-
+from app.services.retrieval.vector_search import SearchHit, VectorRetriever
 
 # ─── fixtures ────────────────────────────────────────────────────────────────
 

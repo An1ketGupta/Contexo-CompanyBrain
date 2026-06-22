@@ -112,7 +112,7 @@ def heuristic_classify(*, subject: str, body: str, from_email: str) -> Classific
     automated/forwarded mail — those should never spin up a support ticket.
     """
     text = f"{subject}\n{body}"
-    text_lower = text.lower()
+    text.lower()
 
     # Internal flagging (automated / forwarded). Any single hit is enough
     # because false-positives here just mean we ingest the body as a doc —

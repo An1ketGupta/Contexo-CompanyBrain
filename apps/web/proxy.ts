@@ -44,15 +44,42 @@ export async function proxy(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  const protectedRoutes = ["/chat", "/documents", "/settings"];
-  const isProtected = protectedRoutes.some((r) => pathname.startsWith(r));
+  // Every dashboard prefix that should require an authenticated session.
+  // Keep this in sync with the (dashboard) route group; missing one means
+  // the page falls back to the server-component check (slower, can flash).
+  const protectedRoutes = [
+    "/chat",
+    "/documents",
+    "/settings",
+    "/admin",
+    "/activity",
+    "/approvals",
+    "/archive",
+    "/compliance",
+    "/help",
+    "/history",
+    "/insights",
+    "/notifications",
+  ];
+  const isProtected = protectedRoutes.some(
+    (r) => pathname === r || pathname.startsWith(`${r}/`),
+  );
 
-  // Redirect unauthenticated users away from protected routes
+  // Redirect unauthenticated users away from protected routes. Carry
+  // `redirectedFrom` so the login page can deep-link back after sign-in.
   if (!user && isProtected) {
-    const redirect = NextResponse.redirect(new URL("/login", request.url));
+    const target = new URL("/login", request.url);
+    target.searchParams.set("redirectedFrom", pathname);
+    const redirect = NextResponse.redirect(target);
     redirect.headers.set(REQUEST_ID_HEADER, requestId);
     return redirect;
   }
+
+  // Note on /admin/*: the proxy only enforces "must be authenticated" here.
+  // The admin role check lives in app/(dashboard)/admin/layout.tsx — a server
+  // component that runs once per render rather than on every prefetch/nav
+  // through the proxy. Keeping role logic out of the proxy avoids a Supabase
+  // round-trip on every admin-area request.
 
   // Redirect authenticated users away from auth pages
   if (user && (pathname === "/login" || pathname === "/signup")) {

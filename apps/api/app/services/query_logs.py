@@ -12,7 +12,8 @@ user-visible chat response.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Iterable
+from datetime import UTC
+from typing import Any
 
 from app.database import get_service_client, get_user_client
 from app.observability import get_logger
@@ -215,13 +216,13 @@ def delete_old_query_logs(*, older_than_days: int = 180) -> int:
     Synchronous (supabase-py is sync). Used by the Inngest weekly cron via
     `asyncio.to_thread`. Service role only — never expose this directly.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     if older_than_days < 7:
         # Safety floor — anything < 7d is almost certainly a mis-configured cron.
         raise ValueError("Retention must be >= 7 days.")
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=older_than_days)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
     svc = get_service_client()
     res = svc.table("query_logs").delete().lt("created_at", cutoff).execute()
     return len(getattr(res, "data", None) or [])

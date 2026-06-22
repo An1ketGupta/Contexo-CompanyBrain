@@ -30,7 +30,7 @@ from __future__ import annotations
 import html
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -131,7 +131,7 @@ async def store_credentials(
     *, org_id: str, user_id: str, token_payload: dict[str, Any]
 ) -> None:
     expires_in = int(token_payload.get("expires_in") or 3600)
-    expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+    expiry = datetime.now(UTC) + timedelta(seconds=expires_in)
     scopes = (token_payload.get("scope") or "").split()
     access_token = token_payload["access_token"]
 
@@ -423,7 +423,7 @@ async def _ingest_page(
 ) -> None:
     page_id = page["id"]
     title = page.get("title") or "Untitled"
-    web_url = (
+    (
         (page.get("_links") or {}).get("webui")
         or f"/spaces/{page.get('spaceId')}/pages/{page_id}"
     )

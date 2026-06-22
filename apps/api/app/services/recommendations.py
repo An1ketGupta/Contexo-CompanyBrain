@@ -25,7 +25,7 @@ small enough to ship without a fuzzy-match dependency.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 # Each entry: name, description (one-liner for the chip), why_it_matters
@@ -367,5 +367,5 @@ def mark_match(
         return recommendations
     updated = [dict(r) for r in recommendations]
     updated[index]["matched_document_id"] = document_id
-    updated[index]["matched_at"] = datetime.now(timezone.utc).isoformat()
+    updated[index]["matched_at"] = datetime.now(UTC).isoformat()
     return updated

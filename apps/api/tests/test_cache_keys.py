@@ -5,10 +5,7 @@ cache module's filter signature actually differentiates filter combos.
 """
 import asyncio
 
-import pytest
-
 from app.services.redis_cache import hash_for_key, jittered_ttl
-
 
 # ── hash stability ──────────────────────────────────────────────────────
 

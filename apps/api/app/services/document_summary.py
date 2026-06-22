@@ -16,7 +16,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from supabase import Client
@@ -131,7 +131,7 @@ async def generate_document_summary(
         **existing,
         "summary": summary,
         "key_topics": key_topics,
-        "summary_generated_at": datetime.now(timezone.utc).isoformat(),
+        "summary_generated_at": datetime.now(UTC).isoformat(),
     }
 
     await asyncio.to_thread(

@@ -351,6 +351,7 @@ async def test_fire_webhook(
     # Side-step the trigger_event guardrails (event whitelist) by sending
     # the deliver event directly with a synthetic payload.
     import inngest
+
     from app.inngest.client import get_inngest_client
 
     client = get_inngest_client()

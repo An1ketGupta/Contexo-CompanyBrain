@@ -21,9 +21,10 @@ Test data lifecycle:
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
-import asyncio
+
 import pytest
 
 # Skip the entire module if the required env vars are absent, so the unit
@@ -44,12 +45,12 @@ if _missing:
 
 # ─── lazy imports (only evaluated when env vars present) ──────────────────────
 
-from supabase import create_client, Client
+from supabase import Client, create_client
+
 from app.services.ingestion.embedder import GoogleEmbedder
-from app.services.retrieval.vector_search import vector_search
 from app.services.retrieval.fts_search import fts_search
 from app.services.retrieval.hybrid_search import hybrid_search
-
+from app.services.retrieval.vector_search import vector_search
 
 # ─── fixtures ────────────────────────────────────────────────────────────────
 

@@ -20,7 +20,7 @@ import hashlib
 import hmac
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import inngest
@@ -57,7 +57,7 @@ def mint_token() -> tuple[str, str, datetime]:
     """
     raw = secrets.token_urlsafe(_TOKEN_BYTES)
     digest = hash_token(raw)
-    expires_at = datetime.now(timezone.utc).replace(microsecond=0)
+    expires_at = datetime.now(UTC).replace(microsecond=0)
     from datetime import timedelta
 
     expires_at = expires_at + timedelta(hours=TOKEN_TTL_HOURS)

@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.config import get_settings
@@ -42,7 +42,6 @@ from app.observability import get_logger
 from app.services.agents.base_agent import BaseAgent
 from app.services.integrations import slack as slack_service
 from app.services.llm.task_chain import execute_task_blocking
-from app.services.org_config import get_org_config
 
 log = get_logger(__name__)
 
@@ -577,7 +576,7 @@ class PolicyPropagationAgent(BaseAgent):
                 .update(
                     {
                         "current_version_id": version_id,
-                        "last_propagated_at": datetime.now(timezone.utc).isoformat(),
+                        "last_propagated_at": datetime.now(UTC).isoformat(),
                     }
                 )
                 .eq("id", self.document_id)

@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import inngest
@@ -141,7 +141,7 @@ async def create_meeting_prep(
         title = title[:80]
 
     conv_id = str(uuid.uuid4())
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     try:
         await asyncio.to_thread(
             lambda: client.table("conversations")

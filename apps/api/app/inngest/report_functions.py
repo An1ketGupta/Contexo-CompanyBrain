@@ -20,7 +20,7 @@ the email_events guard rejects same-minute duplicates if the worker retries.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import inngest
@@ -53,7 +53,7 @@ async def dispatch_due_reports(ctx: inngest.Context) -> dict[str, Any]:
 
     async def _load() -> list[dict[str, Any]]:
         svc = get_service_client()
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
 
         def _query() -> list[dict[str, Any]]:
             return (
@@ -109,7 +109,7 @@ def _load_report(report_id: str) -> dict[str, Any] | None:
 
 def _mark_sent(report_id: str, next_send_at: datetime) -> None:
     svc = get_service_client()
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     svc.table("scheduled_reports").update(
         {
             "last_sent_at": now_iso,
@@ -163,7 +163,7 @@ async def dispatch_one_report(ctx: inngest.Context) -> dict[str, Any]:
     # Per-fire dedupe_key (timestamp at minute granularity) so a retry of this
     # function lands inside the email_events guard window and short-circuits
     # rather than double-sending.
-    fire_key = datetime.now(timezone.utc).strftime("rpt-%Y%m%dT%H%M-") + report_id[:8]
+    fire_key = datetime.now(UTC).strftime("rpt-%Y%m%dT%H%M-") + report_id[:8]
     event_type = "scheduled_usage_summary" if report_type == "usage_summary" else "scheduled_knowledge_health"
 
     sent = 0

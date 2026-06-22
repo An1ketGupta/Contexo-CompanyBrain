@@ -23,12 +23,12 @@ caller retrying with the same Idempotency-Key gets exactly one agent run.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable
+from datetime import UTC, datetime
+from typing import Any
 
 import inngest
 
@@ -403,7 +403,7 @@ async def precreate_agent_run(
         "triggered_by_user_id": triggered_by_user_id,
         "status": "running",
         "input": input_data,
-        "started_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": datetime.now(UTC).isoformat(),
     }
     try:
         await asyncio.to_thread(

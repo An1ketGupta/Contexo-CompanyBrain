@@ -26,14 +26,22 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qs, urlencode
 
 import httpx
 import inngest as inngest_pkg
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from app.auth import verify_jwt
@@ -315,7 +323,7 @@ async def slack_post(
         )
 
     job_id = str(uuid.uuid4())
-    queued_at = datetime.now(timezone.utc).isoformat()
+    queued_at = datetime.now(UTC).isoformat()
 
     await asyncio.to_thread(
         lambda: svc.table("messages")
@@ -397,7 +405,7 @@ async def _verify_slack_signature(request: Request) -> bytes:
     if abs(time.time() - ts_int) > _SLACK_REPLAY_WINDOW:
         raise HTTPException(status_code=401, detail="Slack request too old.")
 
-    base = f"v0:{ts}:".encode("utf-8") + body
+    base = f"v0:{ts}:".encode() + body
     digest = hmac.new(
         settings.slack_signing_secret.encode("utf-8"),
         base,
@@ -825,7 +833,7 @@ async def _resolve_approval_from_slack(
         return
 
     # Persist resolution + (optionally) dispatch execution.
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     await asyncio.to_thread(
         lambda: svc.table("approvals")
         .update(
@@ -1143,7 +1151,7 @@ async def _send_slack_draft_email(
     )
 
     job_id = str(uuid.uuid4())
-    queued_at = datetime.now(timezone.utc).isoformat()
+    queued_at = datetime.now(UTC).isoformat()
     await asyncio.to_thread(
         lambda: svc.table("messages")
         .update({

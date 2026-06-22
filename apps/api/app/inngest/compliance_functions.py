@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import inngest
@@ -69,7 +69,7 @@ def _compliance_config(org_metadata: dict[str, Any] | None) -> dict[str, Any]:
 )
 async def compliance_daily_reminders(ctx: inngest.Context) -> dict[str, Any]:
     step = ctx.step
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
 
     org_ids = await step.run("collect-orgs-with-pending", _collect_orgs_with_pending)
     sent_total = 0
@@ -91,7 +91,7 @@ async def compliance_reminder_now(ctx: inngest.Context) -> dict[str, Any]:
     data = ctx.event.data
     org_id: str = data["org_id"]
     document_id: str | None = data.get("document_id")
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
 
     n = await ctx.step.run(
         "remind-now",
@@ -160,7 +160,7 @@ async def _send_org_reminders(
     max_reminders = cfg["max_reminders"]
     cadence_days = cfg["reminder_cadence_days"]
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     threshold_cutoff = (now - timedelta(days=threshold_days)).isoformat()
     cadence_cutoff = (now - timedelta(days=cadence_days)).isoformat()
 

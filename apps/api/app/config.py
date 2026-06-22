@@ -1,4 +1,5 @@
 from functools import lru_cache
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -196,6 +197,27 @@ class Settings(BaseSettings):
     dropbox_oauth_redirect_uri: str = (
         "http://localhost:8000/integrations/dropbox/callback"
     )
+
+    # ── Stripe billing (Production Roadmap Day 6+) ──────────────────────────
+    # `stripe_mode` decides which set of pricing_tiers rows we read at
+    # runtime: 'test' for staging + local, 'live' for production. Keeping
+    # this explicit (rather than inferring from the key prefix) protects
+    # against a half-completed Test→Live cutover where the secret key was
+    # rotated but the deploy still reads the test-mode tier table.
+    stripe_secret_key: str = ""
+    stripe_publishable_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_mode: str = "test"  # 'test' | 'live' — must match pricing_tiers.stripe_mode
+    # Pin the Stripe API version so a Stripe-side rollout doesn't change
+    # response shapes (e.g., subscription.items[].price.id structure)
+    # without us opting in. Bump deliberately when we test against a newer
+    # API version.
+    stripe_api_version: str = "2024-12-18.acacia"
+    # When true, the seed script + checkout flow include the
+    # `billing_address_collection='required'` option so Stripe collects the
+    # full address (needed for invoicing and EU VAT). Leave false until you
+    # add Tax-ID / VAT support post-launch.
+    stripe_collect_billing_address: bool = False
 
     # ── V5 Day 3 — Founder-only internal dashboards ──────────────────────────
     # Comma-separated Supabase auth user UUIDs that may hit /internal/* routes

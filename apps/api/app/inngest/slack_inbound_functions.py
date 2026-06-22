@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import inngest
@@ -353,7 +353,7 @@ async def slack_backfill_channel(ctx: inngest.Context) -> dict[str, Any]:
             svc=svc,
             org_id=org_id,
             channel_id=channel_id,
-            stamp=datetime.now(timezone.utc).isoformat(),
+            stamp=datetime.now(UTC).isoformat(),
         ),
     )
 

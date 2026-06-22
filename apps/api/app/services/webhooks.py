@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 import inngest
 

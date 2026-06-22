@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import inngest
@@ -92,7 +92,7 @@ async def notion_create_page(ctx: inngest.Context) -> dict[str, Any]:
                 "destination": parent_page_title,
                 "job_id": job_id,
                 "error": reason,
-                "failed_at": datetime.now(timezone.utc).isoformat(),
+                "failed_at": datetime.now(UTC).isoformat(),
             },
         )
         await on_failed(
@@ -120,7 +120,7 @@ async def notion_create_page(ctx: inngest.Context) -> dict[str, Any]:
                 "job_id": job_id,
                 "external_id": result.get("page_id"),
                 "url": result.get("url"),
-                "delivered_at": datetime.now(timezone.utc).isoformat(),
+                "delivered_at": datetime.now(UTC).isoformat(),
             },
         ),
     )
@@ -186,7 +186,7 @@ async def gdocs_create_doc(ctx: inngest.Context) -> dict[str, Any]:
                 "destination": "Google Docs",
                 "job_id": job_id,
                 "error": reason,
-                "failed_at": datetime.now(timezone.utc).isoformat(),
+                "failed_at": datetime.now(UTC).isoformat(),
             },
         )
         await on_failed(
@@ -214,7 +214,7 @@ async def gdocs_create_doc(ctx: inngest.Context) -> dict[str, Any]:
                 "job_id": job_id,
                 "external_id": result.get("doc_id"),
                 "url": result.get("url"),
-                "delivered_at": datetime.now(timezone.utc).isoformat(),
+                "delivered_at": datetime.now(UTC).isoformat(),
             },
         ),
     )

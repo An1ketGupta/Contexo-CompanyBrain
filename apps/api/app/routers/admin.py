@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -67,7 +67,7 @@ async def get_admin_analytics(
 ) -> dict[str, Any]:
     org_id = await _require_admin(current_user)
     days = _PERIOD_DAYS[period]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff = now - timedelta(days=days)
     week_cutoff = now - timedelta(days=7)
     svc = get_service_client()
@@ -407,7 +407,7 @@ async def get_knowledge_health(
 
     counts = {"healthy": 0, "stale": 0, "at_risk": 0, "unused": 0, "unscored": 0}
     at_risk: list[dict[str, Any]] = []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     for d in docs:
         label = d.get("health_label") or "unscored"
@@ -597,7 +597,7 @@ async def list_knowledge_gaps(
     with thousands of zero-result queries.
     """
     org_id = await _require_admin(current_user)
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
     svc = get_service_client()
 
     gaps_res = await asyncio.to_thread(
@@ -736,7 +736,7 @@ async def approve_document_draft(
         .update({
             "status": "approved",
             "reviewed_by": user_id,
-            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "reviewed_at": datetime.now(UTC).isoformat(),
             "ingested_document_id": new_doc_id,
             "title": title,
             "content": content,
@@ -775,7 +775,7 @@ async def reject_document_draft(
         .update({
             "status": "rejected",
             "reviewed_by": user_id,
-            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "reviewed_at": datetime.now(UTC).isoformat(),
         })
         .eq("id", draft_id)
         .eq("org_id", org_id)
@@ -907,7 +907,7 @@ async def agent_runs_summary(
     page's filter chips and a header strip showing volume at a glance."""
     org_id = await _require_admin(current_user)
     days = _PERIOD_DAYS[period]
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
     svc = get_service_client()
 
     rows = await asyncio.to_thread(
@@ -960,9 +960,11 @@ async def send_weekly_digest_now(
     tuning their data. Hands off to Inngest so the route returns quickly.
     """
     org_id = await _require_admin(current_user)
-    from app.inngest.client import get_inngest_client
-    import inngest as _inngest
     import uuid as _uuid
+
+    import inngest as _inngest
+
+    from app.inngest.client import get_inngest_client
 
     client = get_inngest_client()
     await client.send(
@@ -1092,7 +1094,7 @@ async def dismiss_competitor_mentions(
         )
 
     svc = get_service_client()
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     payload = {
         "status": "dismissed",
         "dismissed_by": current_user["user_id"],
@@ -1136,7 +1138,7 @@ async def get_admin_rate_limits(
     from app.services.rate_limit import get_usage_snapshot
 
     org_id = await _require_admin(current_user)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     thirty_ago = now - timedelta(days=30)
     one_day_ago = now - timedelta(days=1)
     svc = get_service_client()
@@ -1448,7 +1450,7 @@ async def list_feedback_flagged(
         raise HTTPException(status_code=400, detail="unknown_reason")
 
     svc = get_service_client()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
     def _query() -> Any:
         q = (

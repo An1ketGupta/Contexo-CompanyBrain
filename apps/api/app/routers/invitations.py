@@ -6,22 +6,20 @@ and protected by JWT + role check. The public accept endpoints live under
 freshly-signed-up Supabase user who doesn't yet have an org_id in their JWT
 (the org binding happens here).
 
-Caps:
-    free     →  2 seats
-    starter  → 10 seats
-    growth   → 30 seats
-    business → unlimited
-
 Plan caps include both confirmed users and any unaccepted, non-expired
 invites — so an admin can't queue 50 invites against a 10-seat plan and have
-them all redeem.
+them all redeem. The actual cap numbers come from
+`app.services.billing.plan_limits.seat_limit(plan)`, which reads
+`pricing_tiers`. This file used to ship a hardcoded `SEAT_CAPS` dict that
+drifted from the seeded tiers (had 'growth' after the rename to 'team') —
+routing reads through plan_limits eliminates that class of bug.
 """
 from __future__ import annotations
 
 import asyncio
 import re
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -31,18 +29,11 @@ from app.auth import verify_jwt
 from app.database import get_service_client, get_user_client
 from app.errors import NoOrganization
 from app.observability import get_logger
+from app.services.billing.plan_limits import seat_limit
 
 log = get_logger(__name__)
 
 router = APIRouter(tags=["invitations"])
-
-# ── Plan seat caps. None = unlimited. ────────────────────────────────────────
-SEAT_CAPS: dict[str, int | None] = {
-    "free": 2,
-    "starter": 10,
-    "growth": 30,
-    "business": None,
-}
 
 INVITE_TTL = timedelta(days=15)
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -66,6 +57,21 @@ class InviteAccept(BaseModel):
     # (creating the auth identity), then calls accept with this id so we can
     # bind the org/role + app_metadata.
     user_id: str = Field(..., min_length=8, max_length=64)
+    display_name: str = Field(..., min_length=1, max_length=80)
+
+
+# Day 8 — combined "accept with credentials" payload. Replaces the
+# accept-invite page's brittle "always signUp() then bind" path with one
+# that asks the server whether the email belongs to an existing user.
+class InviteAcceptCredentials(BaseModel):
+    display_name: str = Field(..., min_length=1, max_length=80)
+    password: str = Field(..., min_length=8, max_length=200)
+
+
+# Post-login bind path: an already-authenticated user accepting an invite
+# only sends the token + their chosen display name (their identity is in
+# the JWT). No password needed — they're already signed in.
+class InviteAcceptAuthenticated(BaseModel):
     display_name: str = Field(..., min_length=1, max_length=80)
 
 
@@ -104,7 +110,7 @@ async def _seat_usage(svc, org_id: str) -> int:
         .select("id", count="exact", head=True)
         .eq("org_id", org_id)
         .is_("accepted_at", "null")
-        .gt("expires_at", datetime.now(timezone.utc).isoformat())
+        .gt("expires_at", datetime.now(UTC).isoformat())
         .execute()
     )
     return (users.count or 0) + (invites.count or 0)
@@ -165,7 +171,7 @@ async def list_invitations(current_user: dict = Depends(verify_jwt)) -> dict[str
     _, _org_id, token = _require_user(current_user)
     client = get_user_client(token)
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     rows = await asyncio.to_thread(
         lambda: client.table("invitations")
         .select("id, email, role, expires_at, created_at, invited_by")
@@ -200,7 +206,7 @@ async def create_invitation(
 
     svc = get_service_client()
     org = await _get_org(svc, org_id)
-    cap = SEAT_CAPS.get(org["plan"], SEAT_CAPS["free"])
+    cap = seat_limit(org["plan"])
 
     # Block already-a-member checks via auth.users (a confirmed user has a row
     # in both auth.users and our users table; the email is in auth.users).
@@ -246,7 +252,7 @@ async def create_invitation(
         )
 
     token_str = secrets.token_urlsafe(32)
-    expires_at = datetime.now(timezone.utc) + INVITE_TTL
+    expires_at = datetime.now(UTC) + INVITE_TTL
 
     # Validate manager_user_id (if provided) belongs to the same org.
     manager_user_id: str | None = None
@@ -314,7 +320,7 @@ async def create_invitation(
         # admin with no way to revoke. Auto-clean expired conflicts here so
         # re-inviting a stale email "just works"; preserve the 409 for
         # genuinely pending invites that the admin should revoke explicitly.
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         existing = await asyncio.to_thread(
             lambda: svc.table("invitations")
             .select("id, expires_at")
@@ -540,7 +546,7 @@ async def lookup_invitation(token: str) -> dict[str, Any]:
             detail="Malformed invite token.",
         )
     svc = get_service_client()
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
 
     invite = await asyncio.to_thread(
         lambda: svc.table("invitations")
@@ -579,7 +585,7 @@ async def accept_invitation(token: str, body: InviteAccept) -> dict[str, Any]:
            app_metadata so the next session refresh includes it in the JWT.
     """
     svc = get_service_client()
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
 
     invite = await asyncio.to_thread(
         lambda: svc.table("invitations")

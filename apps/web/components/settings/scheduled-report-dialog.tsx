@@ -253,7 +253,7 @@ export function ScheduledReportDialog({
             <Label>Recipients</Label>
             <div className="flex flex-wrap gap-1">
               {recipients.map((r) => (
-                <Badge key={r} variant="secondary" className="gap-1">
+                <Badge key={r} variant="default" className="gap-1">
                   {r}
                   <button
                     type="button"

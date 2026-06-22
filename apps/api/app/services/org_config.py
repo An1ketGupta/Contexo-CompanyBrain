@@ -74,7 +74,7 @@ class ConfidenceThresholds:
     block: float = DEFAULT_CONFIDENCE_BLOCK
 
     @classmethod
-    def default(cls) -> "ConfidenceThresholds":
+    def default(cls) -> ConfidenceThresholds:
         return cls(
             high=DEFAULT_CONFIDENCE_HIGH,
             medium=DEFAULT_CONFIDENCE_MEDIUM,

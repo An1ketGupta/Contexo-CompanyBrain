@@ -31,7 +31,6 @@ from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from app.config import Settings
 
-
 # ── Sentry ─────────────────────────────────────────────────────────────────────
 
 def _before_send(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] | None:

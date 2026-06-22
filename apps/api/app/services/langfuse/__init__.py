@@ -20,9 +20,9 @@ Why v3:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from functools import wraps
-from typing import Any, Callable, Iterator
+from typing import Any
 
 from app.config import get_settings
 

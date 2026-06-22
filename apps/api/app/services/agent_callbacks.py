@@ -27,9 +27,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import inngest
@@ -81,7 +80,7 @@ async def fire_agent_lifecycle_events(
         "status": status,
         "output": output or {},
         "error": error,
-        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": datetime.now(UTC).isoformat(),
     }
 
     # Path 1: configured outbound webhooks for the org.

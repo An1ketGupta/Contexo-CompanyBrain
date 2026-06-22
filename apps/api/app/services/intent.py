@@ -21,8 +21,8 @@ later quality review.
 from __future__ import annotations
 
 import re
-from enum import Enum
 from dataclasses import dataclass
+from enum import Enum
 
 
 class QueryIntent(str, Enum):

@@ -27,7 +27,7 @@ sync several folders per install.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -130,7 +130,7 @@ async def store_credentials(
     *, org_id: str, user_id: str, token_payload: dict[str, Any]
 ) -> None:
     expires_in = int(token_payload.get("expires_in") or 3600)
-    expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+    expiry = datetime.now(UTC) + timedelta(seconds=expires_in)
     scope_list = (token_payload.get("scope") or "").split()
     access_token = token_payload["access_token"]
     account = await _fetch_account(access_token)
@@ -232,8 +232,9 @@ async def update_resources(
     row = await _unified.get_row(org_id=org_id, provider=PROVIDER)
     if not row:
         raise RuntimeError("dropbox_not_connected")
-    from app.database import get_service_client
     import asyncio as _asyncio
+
+    from app.database import get_service_client
     svc = get_service_client()
     await _asyncio.to_thread(
         lambda: svc.table("integrations")

@@ -8,7 +8,6 @@ from app.services.recommendations import (
     recommendations_for,
 )
 
-
 # ── template selection ────────────────────────────────────────────────────
 
 

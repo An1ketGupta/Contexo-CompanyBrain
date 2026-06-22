@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import calendar
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.database import get_service_client
@@ -56,7 +56,7 @@ def compute_next_send_at(
           enforces this; we belt-and-braces in code so a mis-typed migration
           doesn't crash the scheduler).
     """
-    now = after or datetime.now(timezone.utc)
+    now = after or datetime.now(UTC)
     hour = max(0, min(23, int(send_time_utc)))
 
     if frequency == "daily":
@@ -80,7 +80,7 @@ def compute_next_send_at(
         year, month = now.year, now.month
         # Try this month first.
         candidate = datetime(
-            year, month, dom, hour, 0, 0, tzinfo=timezone.utc
+            year, month, dom, hour, 0, 0, tzinfo=UTC
         )
         if candidate <= now:
             # Roll to next month, handling year wrap.
@@ -94,7 +94,7 @@ def compute_next_send_at(
             last_dom = calendar.monthrange(year, month)[1]
             dom_clamped = min(dom, last_dom)
             candidate = datetime(
-                year, month, dom_clamped, hour, 0, 0, tzinfo=timezone.utc
+                year, month, dom_clamped, hour, 0, 0, tzinfo=UTC
             )
         return candidate
 
@@ -109,7 +109,7 @@ def compute_next_send_at(
 
 
 def _last_n_days_iso(days: int) -> str:
-    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
 
 async def gather_usage_summary(org_id: str, *, window_days: int = 7) -> dict[str, Any]:

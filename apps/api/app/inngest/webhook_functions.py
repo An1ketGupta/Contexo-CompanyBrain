@@ -25,7 +25,7 @@ import hmac
 import json
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -102,7 +102,7 @@ async def deliver_webhook(ctx: inngest.Context) -> dict[str, Any]:
     body_json = {
         "event": event,
         "data": payload,
-        "delivered_at": datetime.now(timezone.utc).isoformat(),
+        "delivered_at": datetime.now(UTC).isoformat(),
         "attempt": attempt,
     }
     raw = json.dumps(body_json, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -231,7 +231,7 @@ async def check_document_reviews(ctx: inngest.Context) -> dict[str, Any]:
     for d in due:
         by_org[d["org_id"]].append(d)
 
-    iso_week = datetime.now(timezone.utc).strftime("%Y-W%V")
+    iso_week = datetime.now(UTC).strftime("%Y-W%V")
     sent = 0
 
     for org_id, docs in by_org.items():
@@ -249,7 +249,7 @@ async def _fetch_due_documents() -> list[dict[str, Any]]:
     """Documents with review_due_at in the past. Cheap thanks to the partial
     index on (org_id, review_due_at) WHERE review_due_at IS NOT NULL."""
     svc = get_service_client()
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     def _run() -> list[dict[str, Any]]:
         result = (

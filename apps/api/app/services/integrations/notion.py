@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode
 
@@ -60,7 +60,7 @@ def build_auth_url(*, state: str) -> str:
 
 async def exchange_code(*, code: str) -> dict[str, Any]:
     settings = get_settings()
-    creds = f"{settings.notion_client_id}:{settings.notion_client_secret}".encode("utf-8")
+    creds = f"{settings.notion_client_id}:{settings.notion_client_secret}".encode()
     auth = base64.b64encode(creds).decode("ascii")
     async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
         resp = await client.post(
@@ -218,6 +218,7 @@ async def sync_org(*, org_id: str) -> dict[str, Any]:
                 user_id=integ.data.get("connected_by"),
             )
             import inngest
+
             from app.inngest.client import get_inngest_client
             client = get_inngest_client()
             await client.send(
@@ -233,7 +234,7 @@ async def sync_org(*, org_id: str) -> dict[str, Any]:
 
     await asyncio.to_thread(
         lambda: svc.table("notion_integrations")
-        .update({"last_synced_at": datetime.now(timezone.utc).isoformat()})
+        .update({"last_synced_at": datetime.now(UTC).isoformat()})
         .eq("org_id", org_id).execute()
     )
     return {"status": "ok", "ingested": ingested}

@@ -26,7 +26,7 @@ from app.database import get_service_client
 from app.services.langfuse import observe
 
 from .chunker import chunk_segments
-from .embedder import Embedder, EmbeddingError, _augment_for_embedding, get_embedder
+from .embedder import Embedder, _augment_for_embedding, get_embedder
 from .parser import EmptyDocumentError, ParseError, parse_document
 from .store import (
     PersistedChunk,

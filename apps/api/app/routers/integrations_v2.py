@@ -23,7 +23,7 @@ import logging
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -33,9 +33,15 @@ from app.database import get_user_client
 from app.errors import NoOrganization
 from app.services.integrations import (
     _unified,
-    confluence as confluence_svc,
     dropbox_svc,
+)
+from app.services.integrations import (
+    confluence as confluence_svc,
+)
+from app.services.integrations import (
     github as github_svc,
+)
+from app.services.integrations import (
     onedrive as onedrive_svc,
 )
 

@@ -30,7 +30,7 @@ import asyncio
 import json
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import inngest
@@ -434,7 +434,7 @@ class MeetingNotesAgent(BaseAgent):
                 channel_id=channel_id,
                 text=text,
             )
-            posted_at = datetime.now(timezone.utc).isoformat()
+            posted_at = datetime.now(UTC).isoformat()
             if summary_id:
                 await asyncio.to_thread(
                     lambda: svc.table("meeting_summaries").update({

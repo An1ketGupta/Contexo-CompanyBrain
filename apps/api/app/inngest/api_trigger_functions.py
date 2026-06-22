@@ -30,7 +30,7 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -229,7 +229,7 @@ async def weekly_digest_api_triggered(ctx: inngest.Context) -> dict[str, Any]:
             raise RuntimeError("no_recipients")
 
         sent = 0
-        nonce = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        nonce = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
         for user_id, email in recipients:
             await send_email_event(
                 event_type="weekly_digest",
@@ -252,7 +252,7 @@ async def weekly_digest_api_triggered(ctx: inngest.Context) -> dict[str, Any]:
                 {
                     "status": "completed",
                     "output": result,
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "completed_at": datetime.now(UTC).isoformat(),
                 }
             )
             .eq("id", run_id)
@@ -270,7 +270,7 @@ async def weekly_digest_api_triggered(ctx: inngest.Context) -> dict[str, Any]:
                 {
                     "status": "failed",
                     "error": error[:2000],
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "completed_at": datetime.now(UTC).isoformat(),
                 }
             )
             .eq("id", run_id)
@@ -322,14 +322,14 @@ async def agent_api_callback(ctx: inngest.Context) -> dict[str, Any]:
     run_id: str = data["run_id"]
     webhook_url: str = data["webhook_url"]
     api_key_id: str | None = data.get("api_key_id")
-    org_id: str = data["org_id"]
+    data["org_id"]
     payload: dict[str, Any] = data.get("payload") or {}
     attempt = (getattr(ctx, "attempt", 0) or 0) + 1
 
     body = {
         "event": "agent.completed" if payload.get("status") == "completed" else "agent.failed",
         "data": payload,
-        "delivered_at": datetime.now(timezone.utc).isoformat(),
+        "delivered_at": datetime.now(UTC).isoformat(),
         "attempt": attempt,
     }
     raw = json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8")

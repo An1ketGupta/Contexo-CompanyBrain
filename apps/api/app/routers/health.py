@@ -64,7 +64,7 @@ async def _probe_supabase() -> tuple[str, str | None]:
             timeout=_PROBE_TIMEOUT_SECONDS,
         )
         return "ok", None
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return "timeout", f"{_PROBE_TIMEOUT_SECONDS}s"
     except Exception as exc:
         # Don't expose the exception text in the response body — exception

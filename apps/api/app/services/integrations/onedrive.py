@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -126,7 +126,7 @@ async def store_credentials(
     """Persist tokens + the connecting admin's identity so the UI can label
     the install with the right account."""
     expires_in = int(token_payload.get("expires_in") or 3600)
-    expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+    expiry = datetime.now(UTC) + timedelta(seconds=expires_in)
     scopes = (token_payload.get("scope") or "").split()
 
     # Fetch /me so we can show "OneDrive — alice@acme.com" rather than the
@@ -419,7 +419,7 @@ async def _sync_drive(
                     continue
                 if "folder" in item:
                     continue
-                file_info = item.get("file") or {}
+                item.get("file") or {}
                 name = item.get("name") or "Untitled"
                 ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
                 file_type = _SUPPORTED_EXT.get(ext)

@@ -7,7 +7,7 @@ top-cited and never-cited documents per org.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -27,7 +27,7 @@ async def get_my_usage(current_user: dict = Depends(verify_jwt)) -> dict[str, An
         raise NoOrganization("No organization found. Please sign out and sign back in.")
 
     snap = await get_usage_snapshot(org_id)
-    reset_at = datetime.now(timezone.utc) + timedelta(seconds=snap.seconds_until_reset)
+    reset_at = datetime.now(UTC) + timedelta(seconds=snap.seconds_until_reset)
     return {
         "plan": snap.plan,
         "used": snap.used,

@@ -17,7 +17,7 @@ Functions:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import inngest
@@ -249,7 +249,7 @@ async def approval_requested_function(ctx: inngest.Context) -> dict[str, Any]:
         svc = get_service_client()
         await asyncio.to_thread(
             lambda: svc.table("approvals")
-            .update({"reminder_sent_at": datetime.now(timezone.utc).isoformat()})
+            .update({"reminder_sent_at": datetime.now(UTC).isoformat()})
             .eq("id", approval_id)
             .execute()
         )

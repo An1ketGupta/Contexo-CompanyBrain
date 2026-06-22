@@ -10,33 +10,81 @@ from app.middleware.request_context import RequestContextMiddleware
 from app.observability import init_observability
 from app.routers import (
     admin as admin_router,
+)
+from app.routers import (
     approvals as approvals_router,
+)
+from app.routers import (
     auth as auth_router,
+)
+from app.routers import (
+    billing as billing_router,
+)
+from app.routers import (
     chat,
-    collections as collections_router,
-    compliance as compliance_router,
-    document_versions as document_versions_router,
     documents,
     gmail_router,
     health,
-    integrations as integrations_router,
-    integrations_v2 as integrations_v2_router,
-    internal as internal_router,
     invitations,
-    meeting_prep as meeting_prep_router,
-    notifications as notifications_router,
-    organizations as organizations_router,
     public_api,
-    scheduled_reports as scheduled_reports_router,
     search,
-    settings as settings_router,
-    sharing as sharing_router,
     slack_router,
+)
+from app.routers import (
+    webhooks_stripe as webhooks_stripe_router,
+)
+from app.routers import (
+    collections as collections_router,
+)
+from app.routers import (
+    compliance as compliance_router,
+)
+from app.routers import (
+    document_versions as document_versions_router,
+)
+from app.routers import (
+    integrations as integrations_router,
+)
+from app.routers import (
+    integrations_v2 as integrations_v2_router,
+)
+from app.routers import (
+    internal as internal_router,
+)
+from app.routers import (
+    meeting_prep as meeting_prep_router,
+)
+from app.routers import (
+    notifications as notifications_router,
+)
+from app.routers import (
+    organizations as organizations_router,
+)
+from app.routers import (
+    scheduled_reports as scheduled_reports_router,
+)
+from app.routers import (
+    settings as settings_router,
+)
+from app.routers import (
+    sharing as sharing_router,
+)
+from app.routers import (
     support as support_router,
+)
+from app.routers import (
     team as team_router,
+)
+from app.routers import (
     templates as templates_router,
+)
+from app.routers import (
     time_savings as time_savings_router,
+)
+from app.routers import (
     usage as usage_router,
+)
+from app.routers import (
     webhooks as webhooks_router,
 )
 
@@ -142,6 +190,8 @@ app.include_router(support_router.router)
 app.include_router(notifications_router.router)
 app.include_router(internal_router.router)
 app.include_router(scheduled_reports_router.router)
+app.include_router(billing_router.router)
+app.include_router(webhooks_stripe_router.router)
 
 # Inngest serve endpoint — webhook the Inngest server hits to invoke our functions.
 # Mounts at /api/inngest by default.

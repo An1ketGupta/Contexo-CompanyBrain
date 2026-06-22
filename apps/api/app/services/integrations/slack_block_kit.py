@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 # Slack hard-caps mrkdwn text at 3000 chars per block. We leave headroom for
 # code-fence wrappers + the surrounding line.
 _DRAFT_TEXT_CAP = 2700
@@ -159,7 +158,7 @@ def approval_request_blocks(
         "gdocs": "Create Google Doc",
     }.get(channel, channel.title())
 
-    header_bits = [f"*Approval requested*"]
+    header_bits = ["*Approval requested*"]
     if requester_name:
         header_bits.append(f"_From:_ {requester_name}")
     header_bits.append(f"_Action:_ {channel_label}")

@@ -17,7 +17,6 @@ from app.services.network_security import (
     validate_outbound_url,
 )
 
-
 # ── Literal-IP rejections (no DNS needed) ─────────────────────────────────────
 
 
@@ -84,9 +83,8 @@ def test_blocks_hostname_resolving_to_private_ip() -> None:
     with patch(
         "app.services.network_security.socket.getaddrinfo",
         return_value=_fake_getaddrinfo([(socket.AF_INET, "10.0.0.5")]),
-    ):
-        with pytest.raises(UnsafeURLError):
-            validate_outbound_url("https://attacker-controlled.example/")
+    ), pytest.raises(UnsafeURLError):
+        validate_outbound_url("https://attacker-controlled.example/")
 
 
 def test_blocks_hostname_with_mixed_public_and_private_records() -> None:
@@ -100,9 +98,8 @@ def test_blocks_hostname_with_mixed_public_and_private_records() -> None:
                 (socket.AF_INET, "192.168.0.1"),
             ]
         ),
-    ):
-        with pytest.raises(UnsafeURLError):
-            validate_outbound_url("https://rebinding.example/")
+    ), pytest.raises(UnsafeURLError):
+        validate_outbound_url("https://rebinding.example/")
 
 
 def test_allows_public_resolved_hostname() -> None:
@@ -117,18 +114,16 @@ def test_rejects_unresolvable_hostname() -> None:
     with patch(
         "app.services.network_security.socket.getaddrinfo",
         side_effect=socket.gaierror("name does not resolve"),
-    ):
-        with pytest.raises(UnsafeURLError):
-            validate_outbound_url("https://does-not-resolve.invalid/")
+    ), pytest.raises(UnsafeURLError):
+        validate_outbound_url("https://does-not-resolve.invalid/")
 
 
 def test_rejects_empty_address_records() -> None:
     with patch(
         "app.services.network_security.socket.getaddrinfo",
         return_value=[],
-    ):
-        with pytest.raises(UnsafeURLError):
-            validate_outbound_url("https://empty.example/")
+    ), pytest.raises(UnsafeURLError):
+        validate_outbound_url("https://empty.example/")
 
 
 def test_is_url_safe_returns_boolean() -> None:

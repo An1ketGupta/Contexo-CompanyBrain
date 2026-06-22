@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC
 from typing import Any
 
 from supabase import Client
@@ -113,9 +114,9 @@ async def unread_count(*, client: Client) -> int:
 async def mark_read(*, client: Client, notification_id: str) -> bool:
     """RLS-scoped: only the owner can flip their own row. Returns True if a
     row was actually updated (False if already read or not owned)."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
 
     def _run() -> int:
         result = (
@@ -133,9 +134,9 @@ async def mark_read(*, client: Client, notification_id: str) -> bool:
 
 async def mark_all_read(*, client: Client) -> int:
     """Flip every unread row for the caller. RLS confines this to their own."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
 
     def _run() -> int:
         result = (

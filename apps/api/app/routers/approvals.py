@@ -20,7 +20,7 @@ Execution model:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import inngest
@@ -111,7 +111,7 @@ def _audit_from_request(request: Request) -> dict[str, Any]:
     return {
         "ip": ip,
         "ua": request.headers.get("user-agent"),
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
     }
 
 
@@ -126,7 +126,7 @@ async def _execute_and_finalize(
     """Common tail for every resolve path: persist resolution, dispatch the
     side-effect when approved, fire the resolved-notify event."""
     svc = get_service_client()
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
 
     # Critical: we set status='approved' optimistically and update to
     # 'executed' / 'execution_failed' from the post-dispatch outcome below.
@@ -494,7 +494,7 @@ async def lookup_by_token(token: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="approval_not_found")
     data = row.data
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     if data["token_expires_at"] < now_iso:
         raise HTTPException(status_code=410, detail="token_expired")
     if data["status"] != "pending":
@@ -568,7 +568,7 @@ async def resolve_by_token(
     if not consteq(approval["token_hash"], th):
         raise HTTPException(status_code=404, detail="approval_not_found")
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     if approval["token_expires_at"] < now_iso:
         raise HTTPException(status_code=410, detail="token_expired")
     if approval["status"] != "pending":

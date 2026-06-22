@@ -23,15 +23,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Literal
+from typing import Literal
 
 from supabase import Client
 
 from app.config import get_settings
+from app.services.competitor_detector import (
+    CompetitorMatch,
+    detect_competitors,
+    get_competitor_terms,
+)
 from app.services.intent import (
     QueryIntent,
     classify_intent,
+)
+from app.services.intent import (
     overlay_for as intent_overlay_for,
 )
 from app.services.langfuse import (
@@ -43,15 +51,9 @@ from app.services.langfuse import (
 from app.services.llm_cost import TurnUsage, end_turn, start_turn
 from app.services.org_config import (
     ConfidenceThresholds,
-    get_confidence_thresholds,
     get_org_config,
 )
-from app.services.competitor_detector import (
-    CompetitorMatch,
-    detect_competitors,
-    get_competitor_terms,
-)
-from app.services.retrieval import SearchHit, hybrid_search, hybrid_search_cached
+from app.services.retrieval import SearchHit, hybrid_search_cached
 
 from .client import SEARCH_TOOL, SEARCH_TOOL_NAME, LLMClient, LLMError, get_llm_client
 from .types import LLMResponse, Message, ToolCall, ToolResult

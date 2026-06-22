@@ -132,7 +132,7 @@ async def list_versions(
         "versions": [
             {
                 **v,
-                "uploaded_by_name": names_by_id.get(v.get("uploaded_by") or "", None),
+                "uploaded_by_name": names_by_id.get(v.get("uploaded_by") or ""),
             }
             for v in versions
         ]

@@ -275,7 +275,7 @@ export default function ScheduledReportsPage() {
           if (!open) setEditing(null);
         }}
         report={editing}
-        defaultRecipient={user?.email}
+        defaultRecipient={user?.email ?? undefined}
       />
 
       <AlertDialog

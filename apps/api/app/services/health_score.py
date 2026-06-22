@@ -22,9 +22,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Iterable
+from datetime import UTC, datetime, timedelta
 
 from app.database import get_service_client
 
@@ -94,7 +94,7 @@ async def recompute_org_health(org_id: str) -> int:
     to be called from the nightly Inngest cron only.
     """
     svc = get_service_client()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff_90d = now - timedelta(days=90)
 
     docs_res = await asyncio.to_thread(
@@ -170,7 +170,7 @@ async def touch_last_accessed(document_ids: Iterable[str]) -> None:
         return
     try:
         svc = get_service_client()
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         await asyncio.to_thread(
             lambda: svc.table("documents")
             .update({"last_accessed_at": now_iso})
@@ -190,7 +190,7 @@ def _parse_ts(value: str | None) -> datetime | None:
             value = value[:-1] + "+00:00"
         dt = datetime.fromisoformat(value)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
     except (ValueError, TypeError):
         return None

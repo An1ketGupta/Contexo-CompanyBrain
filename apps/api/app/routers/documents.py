@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 import uuid
+from datetime import UTC
 from typing import Any, Literal
 
 import inngest
@@ -391,8 +392,8 @@ async def complete_upload(
     # rather than `upload/init` so half-finished uploads don't pollute the
     # feed. file_size lookup is cheap because the row just landed in cache.
     try:
-        from app.services.analytics import track_event
         from app.services.activity import log_activity, resolve_user_privacy
+        from app.services.analytics import track_event
 
         meta_res = await asyncio.to_thread(
             lambda: svc.table("documents")
@@ -518,8 +519,8 @@ async def create_document_from_url(
     # so the activity feed and analytics show extension-sourced docs alongside
     # uploaded ones.
     try:
-        from app.services.analytics import track_event
         from app.services.activity import log_activity, resolve_user_privacy
+        from app.services.analytics import track_event
 
         await track_event(
             org_id=org_id,
@@ -1033,8 +1034,9 @@ async def update_document_review(
         # Always anchor to "now" so the FIRST review window starts today.
         # Anchoring to created_at would email the admin on Monday for a doc
         # they uploaded an hour earlier — surprising and annoying.
-        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
-        next_due = _dt.now(_tz.utc) + _td(days=body.review_frequency_days)
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        next_due = _dt.now(UTC) + _td(days=body.review_frequency_days)
         update = {
             "review_frequency_days": body.review_frequency_days,
             "review_due_at": next_due.isoformat(),
@@ -1163,8 +1165,9 @@ async def update_policy_flag(
     fired = False
     if body.requires_acknowledgement and not was and (doc_res.data or {}).get("status") == "ready":
         try:
-            from app.inngest.client import get_inngest_client
             import inngest as _inngest
+
+            from app.inngest.client import get_inngest_client
 
             client = get_inngest_client()
             await client.send(

@@ -21,7 +21,7 @@ from app.services.ingestion import (
     mark_status,
     persist_chunks_pending,
 )
-from app.services.ingestion.embedder import _augment_for_embedding, get_embedder
+from app.services.ingestion.embedder import get_embedder
 from app.services.ingestion.pipeline import _embed_with_per_chunk_fallback
 from app.services.ingestion.store import record_embeddings  # noqa: F401  (re-exported via helpers)
 from app.services.ingestion.types import RawSegment

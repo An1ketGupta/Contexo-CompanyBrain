@@ -4,7 +4,8 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Any, AsyncIterator, Protocol
+from collections.abc import AsyncIterator
+from typing import Any, Protocol
 
 from google import genai
 from google.genai import errors as genai_errors
@@ -148,7 +149,7 @@ class GeminiClient:
                 ),
                 timeout=timeout or self._default_timeout,
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise LLMError("AI is taking too long to respond. Please try again.") from exc
         except genai_errors.APIError as exc:
             raise LLMError(f"AI service error: {exc}") from exc
@@ -215,7 +216,7 @@ class GeminiClient:
                 while True:
                     try:
                         item = await asyncio.wait_for(queue.get(), timeout=time_budget)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         yield StreamChunk(kind="error", error=f"Stream timed out after {time_budget}s")
                         return
                     if item is None:

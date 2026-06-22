@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -92,7 +92,7 @@ async def my_time_savings(
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
     org_id, user_id, _token = _require_org(current_user)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     convs = await _convs_for_user(org_id=org_id, user_id=user_id)
     if not convs:
@@ -102,7 +102,7 @@ async def my_time_savings(
         _sum_for_conversations(org_id=org_id, conv_ids=convs, cutoff=now - timedelta(days=7)),
         _sum_for_conversations(org_id=org_id, conv_ids=convs, cutoff=now - timedelta(days=30)),
         # Epoch — pick anything safely older than any plausible signup.
-        _sum_for_conversations(org_id=org_id, conv_ids=convs, cutoff=datetime(2020, 1, 1, tzinfo=timezone.utc)),
+        _sum_for_conversations(org_id=org_id, conv_ids=convs, cutoff=datetime(2020, 1, 1, tzinfo=UTC)),
     )
     return {
         "this_week": week_total,
@@ -118,7 +118,7 @@ async def org_time_savings(
 ) -> dict[str, Any]:
     org_id, user_id, token = _require_org(current_user)
     await _require_admin(token, user_id)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff = now - timedelta(days=30)
     svc = get_service_client()
 

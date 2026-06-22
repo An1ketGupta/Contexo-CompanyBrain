@@ -30,19 +30,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid as _uuid
-from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field, HttpUrl
 
+from app.config import get_settings
 from app.database import get_service_client
 from app.errors import RateLimited
-from app.services.api_keys import ApiKeyContext, verify_key
-from app.services.approvals import (
-    mint_token,
-    validate_execution_action,
-)
 from app.services.agent_registry import (
     AGENT_REGISTRY,
     AgentInputError,
@@ -54,6 +49,11 @@ from app.services.agent_registry import (
     run_id_from_idempotency_key,
     validate_agent_input,
 )
+from app.services.api_keys import ApiKeyContext, verify_key
+from app.services.approvals import (
+    mint_token,
+    validate_execution_action,
+)
 from app.services.llm.task_chain import execute_task_blocking
 from app.services.network_security import UnsafeURLError, validate_outbound_url
 from app.services.rate_limit import (
@@ -62,7 +62,6 @@ from app.services.rate_limit import (
     get_org_plan,
     monthly_budget_for,
 )
-from app.config import get_settings
 
 log = logging.getLogger(__name__)
 
@@ -458,6 +457,7 @@ async def trigger_agent(
         # persisted.
         try:
             import inngest
+
             from app.inngest.client import get_inngest_client
 
             client = get_inngest_client()

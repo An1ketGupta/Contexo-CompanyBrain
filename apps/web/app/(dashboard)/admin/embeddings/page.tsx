@@ -125,7 +125,7 @@ export default function EmbeddingsAdminPage() {
       {/* Plan gate */}
       {!isLoading && data && !eligible && (
         <div className="rounded-xl border border-border bg-muted/30 p-6 text-center">
-          <Badge variant="secondary" className="mb-3">
+          <Badge variant="default" className="mb-3">
             {data.plan} plan
           </Badge>
           <p className="text-sm font-medium">Custom embedding models require Business</p>
@@ -202,7 +202,7 @@ export default function EmbeddingsAdminPage() {
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Retrieval accuracy delta</span>
                 <Badge
-                  variant={data.eval_improvement > 0 ? "secondary" : "outline"}
+                  variant={data.eval_improvement > 0 ? "default" : "outline"}
                   className={cn(
                     data.eval_improvement > 0 &&
                       "border-emerald-500/40 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode
 
@@ -123,7 +123,7 @@ async def store_credentials(
     svc = get_service_client()
     expires_in = int(token_payload.get("expires_in") or 0)
     expiry = (
-        datetime.now(timezone.utc).replace(microsecond=0)
+        datetime.now(UTC).replace(microsecond=0)
         + _timedelta(seconds=expires_in)
         if expires_in
         else None
@@ -245,7 +245,7 @@ async def sync_org(*, org_id: str) -> dict[str, Any]:
 
     await asyncio.to_thread(
         lambda: svc.table("drive_integrations")
-        .update({"last_synced_at": datetime.now(timezone.utc).isoformat()})
+        .update({"last_synced_at": datetime.now(UTC).isoformat()})
         .eq("org_id", org_id).execute()
     )
     return {"status": "ok", "ingested": ingested}
@@ -257,7 +257,7 @@ async def _ensure_fresh_token(integ: dict[str, Any]) -> str:
     if expiry:
         try:
             exp = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
-            if exp > datetime.now(timezone.utc):
+            if exp > datetime.now(UTC):
                 return integ["access_token"]
         except ValueError:
             pass
@@ -278,7 +278,7 @@ async def _ensure_fresh_token(integ: dict[str, Any]) -> str:
     payload = resp.json()
     new_access = payload["access_token"]
     new_expiry = (
-        datetime.now(timezone.utc) + _timedelta(seconds=int(payload.get("expires_in") or 3600))
+        datetime.now(UTC) + _timedelta(seconds=int(payload.get("expires_in") or 3600))
     ).isoformat()
 
     svc = get_service_client()
@@ -368,6 +368,7 @@ async def _ingest_file(
     # Queue ingestion via the standard text-document event so we share the
     # chunk/embed pipeline with the email-forward path.
     import inngest
+
     from app.inngest.client import get_inngest_client
     client = get_inngest_client()
     await client.send(

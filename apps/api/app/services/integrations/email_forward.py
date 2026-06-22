@@ -19,8 +19,8 @@ import asyncio
 import hashlib
 import hmac
 import logging
-import secrets
 import re
+import secrets
 from typing import Any
 
 from app.config import get_settings
@@ -164,9 +164,10 @@ async def ingest_email(envelope: dict[str, Any]) -> dict[str, Any]:
     from_ = envelope.get("from_") or "unknown sender"
     # Idempotency key matches the dedupe sig used in the classifier and
     # SupportResponseAgent — same forwarded email won't reroute twice.
-    sig = hashlib.sha256(f"{subject}\n{body[:256]}".encode("utf-8")).hexdigest()[:24]
+    sig = hashlib.sha256(f"{subject}\n{body[:256]}".encode()).hexdigest()[:24]
 
     import inngest
+
     from app.inngest.client import get_inngest_client
     client = get_inngest_client()
     await client.send(

@@ -17,7 +17,7 @@ we recheck inside the worker as defense-in-depth.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import inngest
@@ -101,13 +101,16 @@ async def run_embedding_fine_tune(ctx: inngest.Context) -> dict[str, Any]:
             ),
         )
     except ModalNotConfigured as exc:
+        # Capture the message now: CPython clears `exc` when the except block
+        # exits, but the lambda below executes inside step.run later.
+        modal_error_msg = f"Modal backend not configured: {exc}"
         await ctx.step.run(
             "mark-not-configured",
             lambda: asyncio.to_thread(
                 lambda: update_job_state_sync(
                     job_id,
                     status="failed",
-                    error_message=f"Modal backend not configured: {exc}",
+                    error_message=modal_error_msg,
                     completed_at=_now_iso(),
                 )
             ),
@@ -341,7 +344,7 @@ async def reembed_org_chunks(ctx: inngest.Context) -> dict[str, Any]:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 FUNCTIONS = [run_embedding_fine_tune, reembed_org_chunks]

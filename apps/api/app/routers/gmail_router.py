@@ -26,9 +26,8 @@ import hmac
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlencode
 
 import inngest
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -54,6 +53,7 @@ _PROVIDER = "gmail"
 # dependency which isn't in our base image — this regex is the smallest
 # correct-enough guard for the API surface.
 import re as _re
+
 _EMAIL_REGEX = _re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 # Catches the `[Your Name]` / `[Name]` / `[Sender]` placeholders the LLM
@@ -124,7 +124,7 @@ async def _build_sources_attachment(
         "Retrieved from the company knowledge base by NirnayaIQ and used to "
         "ground the email you just received."
     )
-    lines.append(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    lines.append(f"Generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
     lines.append("")
     lines.append("=" * 72)
     lines.append("")
@@ -449,7 +449,7 @@ async def gmail_send(
                 }
 
     job_id = str(uuid.uuid4())
-    queued_at = datetime.now(timezone.utc).isoformat()
+    queued_at = datetime.now(UTC).isoformat()
 
     # Optimistically mark queued so the UI shows "Sending…" immediately.
     await asyncio.to_thread(

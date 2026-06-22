@@ -28,8 +28,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal
 
 log = logging.getLogger(__name__)
@@ -376,7 +376,7 @@ def _extract_teams_started_at(data: dict) -> str | None:
         cleaned = candidate.replace("Z", "+00:00")
         dt = datetime.fromisoformat(cleaned)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc).isoformat()
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC).isoformat()
     except ValueError:
         return None

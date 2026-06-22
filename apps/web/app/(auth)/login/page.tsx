@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -10,11 +10,41 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  oauth_failed: "Sign-in failed. Please try again.",
+  missing_code: "That sign-in link was invalid or expired. Try again.",
+  exchange_failed: "We couldn't finish signing you in. Try again.",
+};
+
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const redirectedFrom = searchParams.get("redirectedFrom");
+
+  // One-shot toasts for ?reset=success and ?error=…. We strip the query
+  // params on first render so a refresh doesn't re-fire them.
+  useEffect(() => {
+    const reset = searchParams.get("reset");
+    const errCode = searchParams.get("error");
+    if (!reset && !errCode) return;
+
+    if (reset === "success") {
+      toast.success("Password updated. Please sign in.");
+    }
+    if (errCode) {
+      toast.error(
+        OAUTH_ERROR_MESSAGES[errCode] ?? "Sign-in failed. Please try again.",
+      );
+    }
+
+    const url = new URL(window.location.href);
+    url.searchParams.delete("reset");
+    url.searchParams.delete("error");
+    window.history.replaceState({}, "", url.toString());
+  }, [searchParams]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -40,15 +70,24 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/chat");
+    const target =
+      redirectedFrom && redirectedFrom.startsWith("/") ? redirectedFrom : "/chat";
+    router.push(target);
     router.refresh();
   }
 
   async function handleGoogle() {
     const supabase = createClient();
+    // Carry the redirect target through the OAuth round-trip via the `next`
+    // query param on /auth/callback — see auth/callback/route.ts.
+    const next =
+      redirectedFrom && redirectedFrom.startsWith("/") ? redirectedFrom : "/chat";
+    const callbackUrl = new URL("/auth/callback", window.location.origin);
+    callbackUrl.searchParams.set("next", next);
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
+      options: { redirectTo: callbackUrl.toString() },
     });
     if (error) toast.error(error.message);
   }
@@ -79,7 +118,15 @@ export default function LoginPage() {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="password">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                <Link
+                  href="/forgot-password"
+                  className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <Input
                 id="password"
                 type="password"

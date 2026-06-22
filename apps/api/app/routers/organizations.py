@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -203,7 +203,7 @@ async def dismiss_recommendation(
         raise HTTPException(status_code=400, detail="Recommendations not initialised.")
 
     updated = False
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     for rec in recs:
         if rec.get("key") == body.key and not rec.get("dismissed_at"):
             rec["dismissed_at"] = now
@@ -254,7 +254,7 @@ async def enrich_org(
         "industry": body.industry.strip(),
         "company_size": body.company_size.strip(),
         "primary_use_case": body.primary_use_case,
-        "onboarding_completed_at": datetime.now(timezone.utc).isoformat(),
+        "onboarding_completed_at": datetime.now(UTC).isoformat(),
     }
     await asyncio.to_thread(
         lambda: user_client.table("organizations")
@@ -268,8 +268,9 @@ async def enrich_org(
     # holding the HTTP response. Best-effort: an Inngest outage shouldn't
     # block the modal completing.
     try:
-        from app.inngest import get_inngest_client
         import inngest as inngest_module  # type: ignore
+
+        from app.inngest import get_inngest_client
 
         client = get_inngest_client()
         await client.send(

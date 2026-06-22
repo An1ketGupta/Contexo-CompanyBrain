@@ -34,7 +34,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import inngest
@@ -239,7 +239,7 @@ async def _classify(
     return {
         "failure_reason": (parsed.get("failure_reason") or "unknown")[:40],
         "suggested_doc": (parsed.get("suggested_doc") or "")[:400] or None,
-        "analysis_at": datetime.now(timezone.utc).isoformat(),
+        "analysis_at": datetime.now(UTC).isoformat(),
         "model": "execute_task_blocking",
     }
 
@@ -256,7 +256,7 @@ def _count_same_reason_this_week(
     *, org_id: str, failure_reason: str,
 ) -> int:
     svc = get_service_client()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=_ROLLUP_DAYS)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=_ROLLUP_DAYS)).isoformat()
     res = svc.table("messages").select(
         "id", count="exact"
     ).eq("org_id", org_id).eq(
@@ -310,7 +310,7 @@ async def _alert_admins(
     # Build the example list — most recent 3 negative-feedback messages of
     # this reason, with a short snippet so admins can immediately see what
     # broke.
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=_ROLLUP_DAYS)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=_ROLLUP_DAYS)).isoformat()
     examples_res = await asyncio.to_thread(
         lambda: svc.table("messages")
         .select("id, conversation_id, content, created_at, feedback_analysis")
@@ -332,7 +332,7 @@ async def _alert_admins(
         for e in (examples_res.data or [])
     ]
 
-    iso = datetime.now(timezone.utc).isocalendar()
+    iso = datetime.now(UTC).isocalendar()
     week_tag = f"{iso[0]}-W{iso[1]:02d}"
     dedupe_key = f"feedback-alert-{org_id}-{failure_reason}-{week_tag}"
 

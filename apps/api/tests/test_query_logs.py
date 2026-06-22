@@ -12,7 +12,6 @@ from app.services.query_logs import (
     delete_old_query_logs,
 )
 
-
 # ── retention safety floor ───────────────────────────────────────────────
 
 

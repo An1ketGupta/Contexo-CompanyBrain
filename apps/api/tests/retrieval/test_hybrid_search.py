@@ -6,13 +6,12 @@ degradation), RRF fusion wiring, k propagation, and citation boost patching.
 """
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from app.services.retrieval.hybrid_search import HybridRetriever
 from app.services.retrieval.vector_search import SearchHit, VectorRetriever
-from app.services.retrieval.fts_search import FTSRetriever
-
 
 # ─── fixtures ────────────────────────────────────────────────────────────────
 

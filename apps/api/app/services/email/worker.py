@@ -22,7 +22,7 @@ import asyncio
 import hashlib
 import hmac
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -178,7 +178,7 @@ async def _record(
         "dedupe_key": dedupe_key,
         "resend_id": resend_id,
         "metadata": metadata,
-        "sent_at": datetime.now(timezone.utc).isoformat(),
+        "sent_at": datetime.now(UTC).isoformat(),
     }
     try:
         await asyncio.to_thread(lambda: svc.table("email_events").insert(row).execute())
@@ -283,7 +283,7 @@ async def weekly_digest(ctx: inngest.Context) -> dict[str, Any]:
     step = ctx.step
 
     orgs = await step.run("collect-orgs", _collect_active_orgs)
-    iso_week = datetime.now(timezone.utc).strftime("%Y-W%V")
+    iso_week = datetime.now(UTC).strftime("%Y-W%V")
 
     for org in orgs:
         await step.run(
@@ -296,7 +296,7 @@ async def weekly_digest(ctx: inngest.Context) -> dict[str, Any]:
 
 async def _collect_active_orgs() -> list[dict[str, Any]]:
     svc = get_service_client()
-    one_week_ago = (datetime.now(timezone.utc) - _ONE_WEEK).isoformat()
+    one_week_ago = (datetime.now(UTC) - _ONE_WEEK).isoformat()
 
     def _query() -> list[dict[str, Any]]:
         # Orgs with ANY signal in the last week: a message OR a new document.
@@ -373,7 +373,7 @@ def _gather_weekly_stats(org_id: str) -> dict[str, Any]:
     this same function so what they see in-app matches the email exactly.
     """
     svc = get_service_client()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     one_week_ago = (now - _ONE_WEEK).isoformat()
 
     # ── Messages: count, time saved, feedback, low-confidence ──
@@ -582,7 +582,7 @@ async def weekly_digest_send_now(ctx: inngest.Context) -> dict[str, Any]:
     from app.services.email import send_email_event
 
     sent = 0
-    nonce = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    nonce = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
     for admin_id, admin_email in admins:
         await send_email_event(
             event_type="weekly_digest",

@@ -21,7 +21,7 @@ import hashlib
 import logging
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.database import get_service_client
@@ -122,7 +122,7 @@ async def revoke_key(*, org_id: str, key_id: str) -> bool:
     svc = get_service_client()
     result = await asyncio.to_thread(
         lambda: svc.table("api_keys")
-        .update({"revoked_at": datetime.now(timezone.utc).isoformat()})
+        .update({"revoked_at": datetime.now(UTC).isoformat()})
         .eq("id", key_id)
         .eq("org_id", org_id)
         .is_("revoked_at", "null")
@@ -184,7 +184,7 @@ async def _touch_last_used(key_id: str) -> None:
     try:
         await asyncio.to_thread(
             lambda: svc.table("api_keys")
-            .update({"last_used_at": datetime.now(timezone.utc).isoformat()})
+            .update({"last_used_at": datetime.now(UTC).isoformat()})
             .eq("id", key_id)
             .execute()
         )

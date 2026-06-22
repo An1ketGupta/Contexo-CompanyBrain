@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from supabase import Client
 
 from app.auth import verify_jwt
-from app.database import get_service_client, get_user_client
+from app.database import get_user_client
 from app.errors import NoOrganization
 
 log = logging.getLogger(__name__)
@@ -255,7 +255,7 @@ async def update_collection(
         patch["tag_filters"] = tags
     if not patch:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Nothing to update.")
-    patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+    patch["updated_at"] = datetime.now(UTC).isoformat()
 
     client = get_user_client(token)
     try:

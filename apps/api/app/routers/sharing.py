@@ -143,8 +143,8 @@ async def create_share(
         )
 
     try:
-        from app.services.analytics import track_event
         from app.services.activity import log_activity, resolve_user_privacy
+        from app.services.analytics import track_event
 
         await track_event(
             org_id=org_id,

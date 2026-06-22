@@ -7,7 +7,7 @@ reaches the return dict and we read stats.feedback_score.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -81,7 +81,7 @@ async def _call_endpoint(monkeypatch, tables: dict[str, dict[str, Any]], period:
 
 
 def _ev(feedback: str | None, days_ago: int = 1) -> dict[str, Any]:
-    ts = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    ts = datetime.now(UTC) - timedelta(days=days_ago)
     meta = {"feedback": feedback} if feedback is not None else {}
     return {"created_at": ts.isoformat(), "metadata": meta}
 
@@ -120,9 +120,9 @@ async def test_feedback_ignores_malformed_metadata(monkeypatch):
     events = [
         _ev("positive"),
         _ev("positive"),
-        {"created_at": datetime.now(timezone.utc).isoformat(), "metadata": None},
-        {"created_at": datetime.now(timezone.utc).isoformat(), "metadata": {"feedback": "meh"}},
-        {"created_at": datetime.now(timezone.utc).isoformat(), "metadata": {}},
+        {"created_at": datetime.now(UTC).isoformat(), "metadata": None},
+        {"created_at": datetime.now(UTC).isoformat(), "metadata": {"feedback": "meh"}},
+        {"created_at": datetime.now(UTC).isoformat(), "metadata": {}},
         _ev("negative"),
     ]
     result = await _call_endpoint(monkeypatch, {"analytics_events": {"data": events}})

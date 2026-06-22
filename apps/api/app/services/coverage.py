@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from supabase import Client
@@ -368,7 +368,7 @@ def _is_fresh(computed_at_iso: str | None) -> bool:
         computed_at = datetime.fromisoformat(computed_at_iso.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return False
-    return datetime.now(timezone.utc) - computed_at < CACHE_TTL
+    return datetime.now(UTC) - computed_at < CACHE_TTL
 
 
 async def _read_cached(org_id: str, *, client: Client) -> dict[str, Any] | None:
@@ -392,7 +392,7 @@ async def _write_cached(
         "org_id": org_id,
         "score_json": payload,
         "overall_score": payload["overall_score"],
-        "computed_at": datetime.now(timezone.utc).isoformat(),
+        "computed_at": datetime.now(UTC).isoformat(),
     }
     await asyncio.to_thread(
         lambda: client.table("coverage_scores").upsert(row, on_conflict="org_id").execute()

@@ -24,8 +24,7 @@ one read in the threshold check.
 from __future__ import annotations
 
 import asyncio
-import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import inngest
@@ -211,7 +210,7 @@ def _insert_gap(
 
 def _count_topic_gaps(*, org_id: str, topic: str, days: int) -> int:
     svc = get_service_client()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
     res = (
         svc.table("knowledge_gaps")
         .select("id", count="exact", head=True)

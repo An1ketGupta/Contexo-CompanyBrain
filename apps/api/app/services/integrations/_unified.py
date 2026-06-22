@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -221,7 +221,7 @@ def _is_expiring(token_expiry: str | None, *, skew_seconds: int = 60) -> bool:
         exp = datetime.fromisoformat(token_expiry.replace("Z", "+00:00"))
     except ValueError:
         return True
-    return exp <= datetime.now(timezone.utc) + timedelta(seconds=skew_seconds)
+    return exp <= datetime.now(UTC) + timedelta(seconds=skew_seconds)
 
 
 async def ensure_fresh_token(row: dict[str, Any], *, settings: Any) -> str:
@@ -275,7 +275,7 @@ async def ensure_fresh_token(row: dict[str, Any], *, settings: Any) -> str:
     new_access = payload["access_token"]
     new_refresh = payload.get("refresh_token") or refresh_token  # most providers omit on refresh
     expires_in = int(payload.get("expires_in") or 3600)
-    new_expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+    new_expiry = datetime.now(UTC) + timedelta(seconds=expires_in)
 
     await update_fields(
         org_id=row["org_id"],
@@ -301,7 +301,7 @@ async def mark_synced(
     scope_user_id: str | None = None,
 ) -> None:
     fields: dict[str, Any] = {
-        "last_synced_at": datetime.now(timezone.utc).isoformat(),
+        "last_synced_at": datetime.now(UTC).isoformat(),
         "last_error": None,
         "last_error_at": None,
     }
@@ -325,7 +325,7 @@ async def mark_error(
         scope_user_id=scope_user_id,
         fields={
             "last_error": error[:500],
-            "last_error_at": datetime.now(timezone.utc).isoformat(),
+            "last_error_at": datetime.now(UTC).isoformat(),
         },
     )
 
@@ -366,6 +366,7 @@ async def queue_binary_ingest(
     )
 
     import inngest
+
     from app.inngest.client import get_inngest_client
 
     client = get_inngest_client()
@@ -414,6 +415,7 @@ async def queue_text_ingest(
         user_id=user_id,
     )
     import inngest
+
     from app.inngest.client import get_inngest_client
 
     client = get_inngest_client()

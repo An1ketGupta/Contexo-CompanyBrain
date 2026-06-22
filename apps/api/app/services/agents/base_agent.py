@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.database import get_service_client
@@ -126,7 +126,7 @@ class BaseAgent:
             "triggered_by_user_id": self.triggered_by_user_id,
             "status": "running",
             "input": self.input_data,
-            "started_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": datetime.now(UTC).isoformat(),
         }
         try:
             await asyncio.to_thread(
@@ -167,7 +167,7 @@ class BaseAgent:
             "status": status,
             "result": result,
             "error": error,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self.steps.append(step)
 
@@ -216,7 +216,7 @@ class BaseAgent:
                     "steps": self.steps,
                     "llm_tokens_used": self.tokens_used,
                     "confidence_scores": self.confidence_scores,
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "completed_at": datetime.now(UTC).isoformat(),
                 }
             )
             .eq("id", self.run_id)
@@ -238,7 +238,7 @@ class BaseAgent:
                     "steps": self.steps,
                     "llm_tokens_used": self.tokens_used,
                     "confidence_scores": self.confidence_scores,
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "completed_at": datetime.now(UTC).isoformat(),
                 }
             )
             .eq("id", self.run_id)

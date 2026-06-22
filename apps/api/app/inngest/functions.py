@@ -13,22 +13,26 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC
 from typing import Any
 
 import inngest
 
+from app.database import get_service_client
+from app.services.document_summary import generate_document_summary
+from app.services.health_score import recompute_org_health
 from app.services.ingestion import (
     PipelineError,
     download_from_storage,
     mark_status,
-    process_document as run_pipeline,
     reembed_failed_chunks,
 )
-from app.database import get_service_client
-from app.services.document_summary import generate_document_summary
-from app.services.health_score import recompute_org_health
+from app.services.ingestion import (
+    process_document as run_pipeline,
+)
 from app.services.summarization import summarize_conversation
-from app.services.toc_extractor import extract_toc, to_json as toc_to_json
+from app.services.toc_extractor import extract_toc
+from app.services.toc_extractor import to_json as toc_to_json
 from app.services.webhooks import trigger_event as trigger_webhook_event
 
 from .client import get_inngest_client
@@ -273,8 +277,9 @@ async def retry_failed_chunks(ctx: inngest.Context) -> dict[str, Any]:
 
 async def _refresh_after_retry(*, doc_id: str, org_id: str) -> dict[str, Any]:
     """Recompute embedded/failed/total from chunks table and update status."""
-    from app.database import get_service_client
     import asyncio as _asyncio
+
+    from app.database import get_service_client
 
     svc = get_service_client()
     rows = await _asyncio.to_thread(
@@ -361,8 +366,9 @@ async def _fire_doc_webhook(
     We resolve the doc name here so receivers don't have to make a follow-up
     API call to get a human-readable identifier in their own dashboards.
     """
-    from app.database import get_service_client
     import asyncio as _asyncio
+
+    from app.database import get_service_client
 
     svc = get_service_client()
     name: str | None = None
@@ -401,10 +407,11 @@ async def _fire_doc_webhook(
 
 async def _notify_document_ready(*, doc_id: str, chunk_count: int) -> None:
     """Best-effort email to the uploader. Failures here don't fail the run."""
+    import asyncio as _asyncio
+
     from app.config import get_settings
     from app.database import get_service_client
     from app.services.email import send_email_event
-    import asyncio as _asyncio
 
     settings = get_settings()
     svc = get_service_client()
@@ -622,9 +629,9 @@ async def _maybe_route_meeting_transcript(
 
 
 def _utcnow_iso() -> str:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # ── Standalone retrigger endpoints (called by admin UI / backfill scripts) ──

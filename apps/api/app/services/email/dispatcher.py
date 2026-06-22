@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+import inngest
+
 from app.inngest.client import get_inngest_client
 from app.observability import get_logger
-
-import inngest
 
 log = get_logger(__name__)
 

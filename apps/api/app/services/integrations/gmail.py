@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
@@ -109,7 +109,7 @@ async def store_credentials(
     Gmail address via the userinfo endpoint. Returns the stored row."""
     expires_in = int(token_payload.get("expires_in") or 0)
     expiry = (
-        datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=expires_in)
+        datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=expires_in)
         if expires_in
         else None
     )
@@ -207,7 +207,7 @@ async def _ensure_fresh_token(integ: dict[str, Any], *, org_id: str, user_id: st
         try:
             exp = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
             # Refresh ~60s ahead of expiry to avoid races on the wire.
-            if exp - timedelta(seconds=60) > datetime.now(timezone.utc):
+            if exp - timedelta(seconds=60) > datetime.now(UTC):
                 return integ["access_token"]
         except ValueError:
             pass
@@ -228,7 +228,7 @@ async def _ensure_fresh_token(integ: dict[str, Any], *, org_id: str, user_id: st
     payload = resp.json()
     new_access = payload["access_token"]
     new_expiry = (
-        datetime.now(timezone.utc) + timedelta(seconds=int(payload.get("expires_in") or 3600))
+        datetime.now(UTC) + timedelta(seconds=int(payload.get("expires_in") or 3600))
     ).isoformat()
 
     svc = get_service_client()

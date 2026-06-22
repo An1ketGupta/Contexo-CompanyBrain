@@ -25,7 +25,7 @@ shouldn't fail the run.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.config import get_settings
@@ -242,7 +242,7 @@ class OnboardingAgent(BaseAgent):
                     await asyncio.to_thread(
                         lambda: get_service_client()
                         .table("onboarding_plans")
-                        .update({"welcome_email_sent_at": datetime.now(timezone.utc).isoformat()})
+                        .update({"welcome_email_sent_at": datetime.now(UTC).isoformat()})
                         .eq("id", plan_id)
                         .execute()
                     )
@@ -374,7 +374,7 @@ class OnboardingAgent(BaseAgent):
             await self.log_step("notify_manager", "skipped", {"reason": "no_manager"})
             return False
 
-        org_name = await self._resolve_org_name()
+        await self._resolve_org_name()
         plan_link = notion_url or (f"{app_url}/onboarding/{plan_id}" if plan_id else app_url)
         text = (
             f"Hi *{manager['display_name'] or 'there'}* — "
@@ -408,7 +408,7 @@ class OnboardingAgent(BaseAgent):
                 await asyncio.to_thread(
                     lambda: get_service_client()
                     .table("onboarding_plans")
-                    .update({"manager_notified_at": datetime.now(timezone.utc).isoformat()})
+                    .update({"manager_notified_at": datetime.now(UTC).isoformat()})
                     .eq("id", plan_id)
                     .execute()
                 )

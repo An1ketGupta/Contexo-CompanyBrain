@@ -10,11 +10,11 @@ Key FTS behaviors verified here (without hitting real Postgres):
 """
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock
 
-from app.services.retrieval.fts_search import FTSRetriever, SearchHit
+import pytest
 
+from app.services.retrieval.fts_search import FTSRetriever, SearchHit
 
 # ─── fixtures ────────────────────────────────────────────────────────────────
 
