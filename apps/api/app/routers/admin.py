@@ -505,6 +505,7 @@ async def get_confidence_thresholds_endpoint(
 ) -> dict[str, Any]:
     org_id = await _require_admin(current_user)
     from app.services.org_config import (
+        DEFAULT_CONFIDENCE_BLOCK,
         DEFAULT_CONFIDENCE_HIGH,
         DEFAULT_CONFIDENCE_MEDIUM,
         get_confidence_thresholds,
@@ -514,9 +515,11 @@ async def get_confidence_thresholds_endpoint(
     return {
         "high": thresholds.high,
         "medium": thresholds.medium,
+        "block": thresholds.block,
         "defaults": {
             "high": DEFAULT_CONFIDENCE_HIGH,
             "medium": DEFAULT_CONFIDENCE_MEDIUM,
+            "block": DEFAULT_CONFIDENCE_BLOCK,
         },
     }
 
@@ -527,6 +530,10 @@ class ConfidenceThresholdsBody(BaseModel):
     # is unambiguous.
     high: float = Field(..., ge=0.0, le=1.0)
     medium: float = Field(..., ge=0.0, le=1.0)
+    # `block` is optional for backward compatibility — clients that only know
+    # about the badge bands can still PUT without clobbering the gate config.
+    # When present, must satisfy 0 <= block <= medium.
+    block: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @field_validator("high")
     @classmethod
@@ -544,6 +551,16 @@ class ConfidenceThresholdsBody(BaseModel):
             raise ValueError("medium threshold must be <= high threshold")
         return v
 
+    @field_validator("block")
+    @classmethod
+    def _block_le_medium(cls, v: float | None, info: Any) -> float | None:
+        if v is None:
+            return v
+        medium = info.data.get("medium")
+        if medium is not None and v > medium:
+            raise ValueError("block threshold must be <= medium threshold")
+        return v
+
 
 @router.put("/config/confidence-thresholds")
 async def update_confidence_thresholds_endpoint(
@@ -554,9 +571,14 @@ async def update_confidence_thresholds_endpoint(
     from app.services.org_config import update_confidence_thresholds
 
     saved = await update_confidence_thresholds(
-        org_id=org_id, high=body.high, medium=body.medium
+        org_id=org_id, high=body.high, medium=body.medium, block=body.block
     )
-    return {"high": saved.high, "medium": saved.medium, "updated": True}
+    return {
+        "high": saved.high,
+        "medium": saved.medium,
+        "block": saved.block,
+        "updated": True,
+    }
 
 
 # ── Knowledge gaps (Agent Day 5) ─────────────────────────────────────────────

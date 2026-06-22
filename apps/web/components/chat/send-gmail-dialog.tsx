@@ -80,6 +80,7 @@ export function SendGmailDialog({
           body,
           cc: cc.trim() || null,
           include_sources: includeSources,
+          acknowledged_warnings: true,
         }),
       });
       if (!res.ok) {
@@ -93,6 +94,19 @@ export function SendGmailDialog({
           setErrorMessage("This message has already been sent.");
         } else if (detail === "message_not_found") {
           setErrorMessage("Could not find the original message. Try refreshing.");
+        } else if (detail === "confidence_below_block") {
+          setErrorMessage(
+            "This answer's confidence is below your workspace's publish threshold. An admin can adjust this in Admin → Confidence.",
+          );
+        } else if (detail === "outbound_rate_limited") {
+          const retry = res.headers.get("Retry-After");
+          setErrorMessage(
+            retry
+              ? `Email send rate limit hit. Try again in ${Math.ceil(Number(retry) / 60)} min.`
+              : "Email send rate limit hit. Try again later.",
+          );
+        } else if (detail === "competitor_match_unacknowledged") {
+          setErrorMessage("Competitor mentions require explicit acknowledgement — please retry.");
         } else {
           setErrorMessage("Couldn't queue the email. Please try again.");
         }

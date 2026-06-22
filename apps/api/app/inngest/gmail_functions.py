@@ -75,6 +75,10 @@ async def gmail_send_email(ctx: inngest.Context) -> dict[str, Any]:
     message_id: str = data["message_id"]
     org_id: str = data["org_id"]
     user_id: str = data["user_id"]
+    conversation_id: str | None = data.get("conversation_id")
+    recipient: str = data["to"]
+
+    from app.services.outbound_postwrite import on_failed, on_sent
 
     # Step 1: credentials (refreshes if needed).
     creds = await step.run(
@@ -90,11 +94,22 @@ async def gmail_send_email(ctx: inngest.Context) -> dict[str, Any]:
             delivery={
                 "channel": "gmail",
                 "status": "failed",
-                "recipient": data["to"],
+                "recipient": recipient,
                 "job_id": job_id,
                 "error": "gmail_not_connected",
                 "failed_at": datetime.now(timezone.utc).isoformat(),
             },
+        )
+        await on_failed(
+            run_id=job_id,
+            channel="gmail",
+            org_id=org_id,
+            user_id=user_id,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            destination=recipient,
+            reason="gmail_not_connected",
+            permanent=True,
         )
         return {"status": "failed", "reason": "gmail_not_connected"}
 
@@ -105,11 +120,22 @@ async def gmail_send_email(ctx: inngest.Context) -> dict[str, Any]:
             delivery={
                 "channel": "gmail",
                 "status": "failed",
-                "recipient": data["to"],
+                "recipient": recipient,
                 "job_id": job_id,
                 "error": "gmail_send_scope_missing",
                 "failed_at": datetime.now(timezone.utc).isoformat(),
             },
+        )
+        await on_failed(
+            run_id=job_id,
+            channel="gmail",
+            org_id=org_id,
+            user_id=user_id,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            destination=recipient,
+            reason="gmail_send_scope_missing",
+            permanent=True,
         )
         return {"status": "failed", "reason": "gmail_send_scope_missing"}
 
@@ -150,19 +176,31 @@ async def gmail_send_email(ctx: inngest.Context) -> dict[str, Any]:
             ),
         )
     except PermissionError as exc:
+        reason = str(exc) or "gmail_send_unauthorized"
         await _mark_delivery(
             message_id=message_id,
             org_id=org_id,
             delivery={
                 "channel": "gmail",
                 "status": "failed",
-                "recipient": data["to"],
+                "recipient": recipient,
                 "job_id": job_id,
-                "error": str(exc) or "gmail_send_unauthorized",
+                "error": reason,
                 "failed_at": datetime.now(timezone.utc).isoformat(),
             },
         )
-        return {"status": "failed", "reason": str(exc)}
+        await on_failed(
+            run_id=job_id,
+            channel="gmail",
+            org_id=org_id,
+            user_id=user_id,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            destination=recipient,
+            reason=reason,
+            permanent=True,
+        )
+        return {"status": "failed", "reason": reason}
 
     # Step 3: record success on the message.
     await step.run(
@@ -173,7 +211,7 @@ async def gmail_send_email(ctx: inngest.Context) -> dict[str, Any]:
             delivery={
                 "channel": "gmail",
                 "status": "sent",
-                "recipient": data["to"],
+                "recipient": recipient,
                 "job_id": job_id,
                 "external_id": result.get("message_id"),
                 "thread_id": result.get("thread_id"),
@@ -187,6 +225,18 @@ async def gmail_send_email(ctx: inngest.Context) -> dict[str, Any]:
     await step.run(
         "bump-last-used",
         lambda: _bump_last_used(org_id=org_id, user_id=user_id),
+    )
+
+    # Step 5: audit + webhook fan-out (best-effort, never affects retries).
+    await on_sent(
+        run_id=job_id,
+        channel="gmail",
+        org_id=org_id,
+        message_id=message_id,
+        destination=recipient,
+        external_id=result.get("message_id"),
+        url=None,
+        extra={"thread_id": result.get("thread_id")},
     )
 
     return {"status": "sent", "gmail_message_id": result.get("message_id")}

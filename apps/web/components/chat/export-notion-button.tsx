@@ -221,6 +221,7 @@ function ExportNotionDialog({
           parent_page_title: selectedParent.title,
           title: title.trim(),
           content,
+          acknowledged_warnings: true,
         }),
       });
       if (!res.ok) {
@@ -230,6 +231,19 @@ function ExportNotionDialog({
           setErrorMessage("Notion isn't connected for this workspace.");
         } else if (detail === "message_already_sent") {
           setErrorMessage("This message has already been delivered.");
+        } else if (detail === "confidence_below_block") {
+          setErrorMessage(
+            "This answer's confidence is below your workspace's publish threshold. An admin can adjust this in Admin → Confidence.",
+          );
+        } else if (detail === "outbound_rate_limited") {
+          const retry = res.headers.get("Retry-After");
+          setErrorMessage(
+            retry
+              ? `Notion export rate limit hit. Try again in ${Math.ceil(Number(retry) / 60)} min.`
+              : "Notion export rate limit hit. Try again later.",
+          );
+        } else if (detail === "competitor_match_unacknowledged") {
+          setErrorMessage("Competitor mentions require explicit acknowledgement — please retry.");
         } else {
           setErrorMessage("Couldn't queue the Notion page. Please try again.");
         }

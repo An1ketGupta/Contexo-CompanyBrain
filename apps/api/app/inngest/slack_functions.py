@@ -59,10 +59,15 @@ async def slack_post_message(ctx: inngest.Context) -> dict[str, Any]:
     job_id: str = data["job_id"]
     message_id: str = data["message_id"]
     org_id: str = data["org_id"]
+    user_id: str | None = data.get("user_id")
+    conversation_id: str | None = data.get("conversation_id")
     channel_id: str = data["channel_id"]
     channel_name: str = data.get("channel_name") or channel_id
     text: str = data["text"]
     thread_ts: str | None = data.get("thread_ts")
+    destination = f"#{channel_name}"
+
+    from app.services.outbound_postwrite import on_failed, on_sent
 
     try:
         result = await step.run(
@@ -89,6 +94,19 @@ async def slack_post_message(ctx: inngest.Context) -> dict[str, Any]:
                 "failed_at": datetime.now(timezone.utc).isoformat(),
             },
         )
+        # PermissionError is terminal — no retry budget will fix a revoked
+        # token or a bot kicked out of a channel.
+        await on_failed(
+            run_id=job_id,
+            channel="slack",
+            org_id=org_id,
+            user_id=user_id,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            destination=destination,
+            reason=reason,
+            permanent=True,
+        )
         return {"status": "failed", "reason": reason}
 
     await step.run(
@@ -107,6 +125,20 @@ async def slack_post_message(ctx: inngest.Context) -> dict[str, Any]:
                 "delivered_at": datetime.now(timezone.utc).isoformat(),
             },
         ),
+    )
+
+    # Slack chat.postMessage doesn't return a clickable URL, but we can build
+    # one from the team + channel + ts. We only know the channel; the team
+    # comes from the integration row. Best-effort: no URL when unresolvable.
+    await on_sent(
+        run_id=job_id,
+        channel="slack",
+        org_id=org_id,
+        message_id=message_id,
+        destination=destination,
+        external_id=result.get("ts"),
+        url=None,
+        extra={"channel_id": channel_id, "thread_ts": thread_ts},
     )
 
     return {"status": "sent", "slack_ts": result.get("ts")}

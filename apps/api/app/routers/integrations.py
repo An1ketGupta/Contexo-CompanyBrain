@@ -514,6 +514,7 @@ class CreateNotionPageBody(BaseModel):
     parent_page_title: str | None = Field(default=None, max_length=200)
     title: str = Field(..., min_length=1, max_length=200)
     content: str = Field(..., min_length=1, max_length=200_000)
+    acknowledged_warnings: bool = Field(default=False)
 
 
 @router.post("/integrations/notion/create-page")
@@ -521,7 +522,7 @@ async def notion_create_page(
     body: CreateNotionPageBody,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
-    org_id, _, _ = _require_org(current_user)
+    org_id, user_id, _ = _require_org(current_user)
 
     import uuid
     from datetime import datetime, timezone
@@ -535,10 +536,11 @@ async def notion_create_page(
     svc = _svc()
 
     # Same idempotency rails as Gmail/Slack: confirm the message exists in
-    # this org and hasn't already been delivered.
+    # this org and hasn't already been delivered. Conversation_id is pulled
+    # so the failure notification deep-links back to the source chat.
     msg = await asyncio.to_thread(
         lambda: svc.table("messages")
-        .select("id, org_id, delivery_status")
+        .select("id, org_id, conversation_id, delivery_status")
         .eq("id", body.message_id)
         .maybe_single()
         .execute()
@@ -548,6 +550,7 @@ async def notion_create_page(
     existing = msg.data.get("delivery_status") or {}
     if existing.get("status") == "sent":
         raise HTTPException(status_code=409, detail="message_already_sent")
+    conversation_id: str | None = msg.data.get("conversation_id")
 
     connected = await asyncio.to_thread(
         lambda: svc.table("notion_integrations")
@@ -558,6 +561,31 @@ async def notion_create_page(
     )
     if not connected or not connected.data:
         raise HTTPException(status_code=400, detail="notion_not_connected")
+
+    from app.services.outbound_gate import (
+        OutboundGateError,
+        enforce_outbound_write_guards,
+    )
+
+    try:
+        await enforce_outbound_write_guards(
+            channel="notion",
+            org_id=org_id,
+            user_id=user_id,
+            message_id=body.message_id,
+            content=body.content,
+            competitor_acknowledged=body.acknowledged_warnings,
+        )
+    except OutboundGateError as gate_err:
+        headers: dict[str, str] = {}
+        retry = gate_err.extra.get("retry_after")
+        if isinstance(retry, int) and retry > 0:
+            headers["Retry-After"] = str(retry)
+        raise HTTPException(
+            status_code=gate_err.status_code,
+            detail=gate_err.code,
+            headers=headers or None,
+        )
 
     job_id = str(uuid.uuid4())
     queued_at = datetime.now(timezone.utc).isoformat()
@@ -578,6 +606,23 @@ async def notion_create_page(
         .execute()
     )
 
+    from app.services.outbound_audit import record_queued
+
+    await record_queued(
+        run_id=job_id,
+        channel="notion",
+        org_id=org_id,
+        user_id=user_id,
+        message_id=body.message_id,
+        destination=parent_title,
+        input_payload={
+            "parent_page_id": body.parent_page_id,
+            "parent_page_title": parent_title,
+            "title": body.title,
+            "content": body.content,
+        },
+    )
+
     client = get_inngest_client()
     await client.send(
         _inngest_pkg.Event(
@@ -586,6 +631,8 @@ async def notion_create_page(
                 "job_id": job_id,
                 "message_id": body.message_id,
                 "org_id": org_id,
+                "user_id": user_id,
+                "conversation_id": conversation_id,
                 "parent_page_id": body.parent_page_id,
                 "parent_page_title": parent_title,
                 "title": body.title,
@@ -607,6 +654,7 @@ class CreateGoogleDocBody(BaseModel):
     # When true, the doc is shared back to the requesting user as writer
     # so it lands in their "Shared with me" without an extra step.
     share_with_me: bool = Field(default=True)
+    acknowledged_warnings: bool = Field(default=False)
 
 
 @router.post("/integrations/gdocs/create-doc")
@@ -643,7 +691,7 @@ async def gdocs_create_doc(
 
     msg = await asyncio.to_thread(
         lambda: svc.table("messages")
-        .select("id, org_id, delivery_status")
+        .select("id, org_id, conversation_id, delivery_status")
         .eq("id", body.message_id)
         .maybe_single()
         .execute()
@@ -653,6 +701,32 @@ async def gdocs_create_doc(
     existing = msg.data.get("delivery_status") or {}
     if existing.get("status") == "sent":
         raise HTTPException(status_code=409, detail="message_already_sent")
+    conversation_id: str | None = msg.data.get("conversation_id")
+
+    from app.services.outbound_gate import (
+        OutboundGateError,
+        enforce_outbound_write_guards,
+    )
+
+    try:
+        await enforce_outbound_write_guards(
+            channel="gdocs",
+            org_id=org_id,
+            user_id=user_id,
+            message_id=body.message_id,
+            content=body.content,
+            competitor_acknowledged=body.acknowledged_warnings,
+        )
+    except OutboundGateError as gate_err:
+        headers: dict[str, str] = {}
+        retry = gate_err.extra.get("retry_after")
+        if isinstance(retry, int) and retry > 0:
+            headers["Retry-After"] = str(retry)
+        raise HTTPException(
+            status_code=gate_err.status_code,
+            detail=gate_err.code,
+            headers=headers or None,
+        )
 
     # Resolve the requesting user's email server-side (don't trust the JWT
     # claim — it can be stale and we want the canonical address).
@@ -682,6 +756,22 @@ async def gdocs_create_doc(
         .execute()
     )
 
+    from app.services.outbound_audit import record_queued
+
+    await record_queued(
+        run_id=job_id,
+        channel="gdocs",
+        org_id=org_id,
+        user_id=user_id,
+        message_id=body.message_id,
+        destination="Google Docs",
+        input_payload={
+            "title": body.title,
+            "share_with_email": share_with_email,
+            "content": body.content,
+        },
+    )
+
     client = get_inngest_client()
     await client.send(
         _inngest_pkg.Event(
@@ -690,6 +780,8 @@ async def gdocs_create_doc(
                 "job_id": job_id,
                 "message_id": body.message_id,
                 "org_id": org_id,
+                "user_id": user_id,
+                "conversation_id": conversation_id,
                 "title": body.title,
                 "content": body.content,
                 "share_with_email": share_with_email,

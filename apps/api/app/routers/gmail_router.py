@@ -319,6 +319,7 @@ class SendEmailRequest(BaseModel):
     # chunk content the LLM retrieved for this turn. Gives the recipient
     # the same source material that grounded the email body.
     include_sources: bool = True
+    acknowledged_warnings: bool = Field(default=False)
 
     @field_validator("to")
     @classmethod
@@ -389,7 +390,7 @@ async def gmail_send(
     # need a second roundtrip.
     msg = await asyncio.to_thread(
         lambda: svc.table("messages")
-        .select("id, org_id, delivery_status, sources")
+        .select("id, org_id, conversation_id, delivery_status, sources")
         .eq("id", body.message_id)
         .maybe_single()
         .execute()
@@ -399,6 +400,33 @@ async def gmail_send(
     existing_delivery = msg.data.get("delivery_status") or {}
     if existing_delivery.get("status") == "sent":
         raise HTTPException(status_code=409, detail="message_already_sent")
+    conversation_id: str | None = msg.data.get("conversation_id")
+
+    # Shared outbound guard rails — same as Slack/Notion/Gdocs.
+    from app.services.outbound_gate import (
+        OutboundGateError,
+        enforce_outbound_write_guards,
+    )
+
+    try:
+        await enforce_outbound_write_guards(
+            channel="gmail",
+            org_id=org_id,
+            user_id=user_id,
+            message_id=body.message_id,
+            content=final_body,
+            competitor_acknowledged=body.acknowledged_warnings,
+        )
+    except OutboundGateError as gate_err:
+        headers: dict[str, str] = {}
+        retry = gate_err.extra.get("retry_after")
+        if isinstance(retry, int) and retry > 0:
+            headers["Retry-After"] = str(retry)
+        raise HTTPException(
+            status_code=gate_err.status_code,
+            detail=gate_err.code,
+            headers=headers or None,
+        )
 
     # Build the sources attachment (best-effort, optional). On any failure
     # we still send the email — the attachment is a nice-to-have, not a
@@ -439,6 +467,22 @@ async def gmail_send(
         .execute()
     )
 
+    from app.services.outbound_audit import record_queued
+
+    await record_queued(
+        run_id=job_id,
+        channel="gmail",
+        org_id=org_id,
+        user_id=user_id,
+        message_id=body.message_id,
+        destination=body.to,
+        input_payload={
+            "to_emails": body.to,
+            "subject": final_subject,
+            "body": final_body,
+        },
+    )
+
     # Fan out to Inngest. Idempotency id = job_id so duplicate clicks within
     # the dedupe window don't double-send.
     client = get_inngest_client()
@@ -450,6 +494,7 @@ async def gmail_send(
                 "message_id": body.message_id,
                 "org_id": org_id,
                 "user_id": user_id,
+                "conversation_id": conversation_id,
                 "to": body.to,
                 "subject": final_subject,
                 "body": final_body,

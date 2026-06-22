@@ -105,6 +105,10 @@ export function PostSlackDialog({
           channel_name: selectedChannel.name,
           text: body,
           thread_ts: threadTs.trim() || null,
+          // The user clicked through any competitor warning before opening
+          // this dialog; the server-side gate needs the explicit ack to
+          // proceed when matches exist.
+          acknowledged_warnings: true,
         }),
       });
       if (!res.ok) {
@@ -116,6 +120,19 @@ export function PostSlackDialog({
           setErrorMessage("This message has already been delivered.");
         } else if (detail === "message_not_found") {
           setErrorMessage("Could not find the original message. Try refreshing.");
+        } else if (detail === "confidence_below_block") {
+          setErrorMessage(
+            "This answer's confidence is below your workspace's publish threshold. Ask the question again to get a higher-confidence response, or have an admin lower the block threshold in Admin → Confidence.",
+          );
+        } else if (detail === "outbound_rate_limited") {
+          const retry = res.headers.get("Retry-After");
+          setErrorMessage(
+            retry
+              ? `You've hit the per-channel send limit. Try again in ${Math.ceil(Number(retry) / 60)} min.`
+              : "You've hit the per-channel send limit. Try again later.",
+          );
+        } else if (detail === "competitor_match_unacknowledged") {
+          setErrorMessage("Competitor mentions in this answer require explicit acknowledgement — please retry.");
         } else {
           setErrorMessage("Couldn't queue the post. Please try again.");
         }

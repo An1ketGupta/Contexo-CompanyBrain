@@ -51,6 +51,12 @@ ALLOWED_EVENTS: tuple[str, ...] = (
     "approval.decided",
     "compliance.acknowledged",
     "knowledge_gap.detected",
+    # Day 3-4 hardening: terminal status of every outbound write (Slack post,
+    # Gmail send, Notion create-page, Gdocs export). Lets customers route
+    # delivery telemetry into their own analytics stack. Payload carries
+    # run_id (== job_id in delivery_status), channel, destination, url.
+    "output.delivered",
+    "output.failed",
 )
 
 

@@ -235,6 +235,10 @@ class PostSlackRequest(BaseModel):
     channel_name: str = Field(..., min_length=1, max_length=200)
     text: str = Field(..., min_length=1, max_length=39_000)  # Slack mrkdwn cap
     thread_ts: str | None = Field(default=None, max_length=40)
+    # When the frontend shows the "competitor matches in this text" warning,
+    # the user clicks through; the post request then carries the explicit ack
+    # so the server-side guard knows it was a deliberate choice.
+    acknowledged_warnings: bool = Field(default=False)
 
 
 class PostSlackResponse(BaseModel):
@@ -250,7 +254,7 @@ async def slack_post(
     """Enqueue an outbound Slack post. Optimistically marks the message's
     delivery_status as `queued`; the Inngest worker flips it to sent/failed.
     """
-    org_id, _, _ = _require_org(current_user)
+    org_id, user_id, _ = _require_org(current_user)
 
     svc = get_service_client()
 
@@ -266,10 +270,11 @@ async def slack_post(
         raise HTTPException(status_code=400, detail="slack_not_connected")
 
     # Same defensive read as the Gmail path: confirm the message exists, belongs
-    # to this org, and hasn't already been delivered.
+    # to this org, and hasn't already been delivered. We also pull conversation_id
+    # so the failure notification can link back to the source chat.
     msg = await asyncio.to_thread(
         lambda: svc.table("messages")
-        .select("id, org_id, delivery_status")
+        .select("id, org_id, conversation_id, delivery_status")
         .eq("id", body.message_id)
         .maybe_single()
         .execute()
@@ -279,6 +284,35 @@ async def slack_post(
     existing = msg.data.get("delivery_status") or {}
     if existing.get("status") == "sent":
         raise HTTPException(status_code=409, detail="message_already_sent")
+    conversation_id: str | None = msg.data.get("conversation_id")
+
+    # Shared safety/quality gate: confidence floor, competitor match (with
+    # explicit ack), moderation, per-user/per-org rate limit. Any failure
+    # raises a typed OutboundGateError carrying the right HTTP code + detail.
+    from app.services.outbound_gate import (
+        OutboundGateError,
+        enforce_outbound_write_guards,
+    )
+
+    try:
+        await enforce_outbound_write_guards(
+            channel="slack",
+            org_id=org_id,
+            user_id=user_id,
+            message_id=body.message_id,
+            content=body.text,
+            competitor_acknowledged=body.acknowledged_warnings,
+        )
+    except OutboundGateError as gate_err:
+        headers: dict[str, str] = {}
+        retry = gate_err.extra.get("retry_after")
+        if isinstance(retry, int) and retry > 0:
+            headers["Retry-After"] = str(retry)
+        raise HTTPException(
+            status_code=gate_err.status_code,
+            detail=gate_err.code,
+            headers=headers or None,
+        )
 
     job_id = str(uuid.uuid4())
     queued_at = datetime.now(timezone.utc).isoformat()
@@ -299,6 +333,24 @@ async def slack_post(
         .execute()
     )
 
+    # Audit row: status='running' until the worker flips it to completed/failed.
+    from app.services.outbound_audit import record_queued
+
+    await record_queued(
+        run_id=job_id,
+        channel="slack",
+        org_id=org_id,
+        user_id=user_id,
+        message_id=body.message_id,
+        destination=f"#{body.channel_name}",
+        input_payload={
+            "channel_id": body.channel_id,
+            "channel_name": body.channel_name,
+            "thread_ts": body.thread_ts,
+            "text": body.text,
+        },
+    )
+
     client = get_inngest_client()
     await client.send(
         inngest_pkg.Event(
@@ -307,6 +359,8 @@ async def slack_post(
                 "job_id": job_id,
                 "message_id": body.message_id,
                 "org_id": org_id,
+                "user_id": user_id,
+                "conversation_id": conversation_id,
                 "channel_id": body.channel_id,
                 "channel_name": body.channel_name,
                 "text": body.text,

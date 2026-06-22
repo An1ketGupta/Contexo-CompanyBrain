@@ -48,24 +48,38 @@ INSTRUCTIONS_MAX_CHARS = 500
 # used before Day 3 made them per-org-tunable.
 DEFAULT_CONFIDENCE_HIGH = 0.75
 DEFAULT_CONFIDENCE_MEDIUM = 0.45
+# Default for the "block" tier is 0.0 = off. A brand-new org doesn't gate
+# outbound writes on confidence; admins opt in by raising it in the settings
+# UI. This preserves the v1 behavior and the existing Day 3-4 write flows.
+DEFAULT_CONFIDENCE_BLOCK = 0.0
 
 
 @dataclass(frozen=True)
 class ConfidenceThresholds:
-    """Two cutoffs that partition the cosine range into high/medium/low.
+    """Three cutoffs that partition the cosine range into high/medium/low/block.
 
     Stored on `organizations.metadata.confidence_thresholds` as
-    `{"high": 0.75, "medium": 0.45}`. `high >= medium` is enforced at write
-    time so the bands stay well-ordered (otherwise a typo could make every
-    answer "low confidence").
+    `{"high": 0.75, "medium": 0.45, "block": 0.0}`.
+    `0 <= block <= medium <= high <= 1` is enforced at write time so the
+    bands stay well-ordered (otherwise a typo could make every answer
+    "low confidence" or, worse, accidentally block every outbound write).
+
+    `block` is the cosine cutoff below which outbound writes (Slack post,
+    Gmail send, Notion create page, Gdocs export) are refused server-side.
+    `block == 0` disables the gate entirely.
     """
 
     high: float
     medium: float
+    block: float = DEFAULT_CONFIDENCE_BLOCK
 
     @classmethod
     def default(cls) -> "ConfidenceThresholds":
-        return cls(high=DEFAULT_CONFIDENCE_HIGH, medium=DEFAULT_CONFIDENCE_MEDIUM)
+        return cls(
+            high=DEFAULT_CONFIDENCE_HIGH,
+            medium=DEFAULT_CONFIDENCE_MEDIUM,
+            block=DEFAULT_CONFIDENCE_BLOCK,
+        )
 
 
 @dataclass(frozen=True)
@@ -109,7 +123,19 @@ def _parse_confidence(meta: dict[str, Any] | None) -> ConfidenceThresholds:
         return ConfidenceThresholds.default()
     if not (0.0 <= medium <= high <= 1.0):
         return ConfidenceThresholds.default()
-    return ConfidenceThresholds(high=high, medium=medium)
+    # `block` is new (Day 3-4 hardening) — older rows simply don't have it.
+    # Missing / bad value → keep the default (0.0 = off) rather than poison
+    # the row's parse; the live write gate handles this as "no block".
+    block_raw = raw.get("block")
+    block = DEFAULT_CONFIDENCE_BLOCK
+    if block_raw is not None:
+        try:
+            block_candidate = float(block_raw)
+        except (TypeError, ValueError):
+            block_candidate = None
+        if block_candidate is not None and 0.0 <= block_candidate <= medium:
+            block = block_candidate
+    return ConfidenceThresholds(high=high, medium=medium, block=block)
 
 
 async def get_org_config(org_id: str) -> OrgConfig:
@@ -172,16 +198,24 @@ async def get_confidence_thresholds(org_id: str) -> ConfidenceThresholds:
 
 
 async def update_confidence_thresholds(
-    *, org_id: str, high: float, medium: float
+    *,
+    org_id: str,
+    high: float,
+    medium: float,
+    block: float | None = None,
 ) -> ConfidenceThresholds:
     """Persist new thresholds to organizations.metadata and bust the cache.
 
     Validates ordering + range here as defense-in-depth even though the
     router does the same — anyone calling this directly (CLI, tests) gets
-    the same guard.
+    the same guard. When `block` is omitted we preserve the existing value
+    (or default 0.0) so callers that only know about high/medium continue
+    to work.
     """
     if not (0.0 <= medium <= high <= 1.0):
         raise ValueError("Thresholds must satisfy 0 <= medium <= high <= 1.")
+    if block is not None and not (0.0 <= block <= medium):
+        raise ValueError("Block threshold must satisfy 0 <= block <= medium.")
 
     svc = get_service_client()
 
@@ -194,10 +228,26 @@ async def update_confidence_thresholds(
             .execute()
         )
         meta = (existing.data or {}).get("metadata") or {} if existing else {}
-        meta = {**meta, "confidence_thresholds": {"high": high, "medium": medium}}
+        prior = meta.get("confidence_thresholds") if isinstance(meta.get("confidence_thresholds"), dict) else {}
+        # If the caller didn't pass `block`, keep what's already on disk so a
+        # PUT that only knows about high/medium can't silently clear it.
+        resolved_block = (
+            block if block is not None else float(prior.get("block", DEFAULT_CONFIDENCE_BLOCK) or 0.0)
+        )
+        meta = {
+            **meta,
+            "confidence_thresholds": {
+                "high": high,
+                "medium": medium,
+                "block": resolved_block,
+            },
+        }
         svc.table("organizations").update({"metadata": meta}).eq("id", org_id).execute()
         return meta
 
-    await asyncio.to_thread(_run)
+    saved_meta = await asyncio.to_thread(_run)
     invalidate(org_id)
-    return ConfidenceThresholds(high=high, medium=medium)
+    saved = saved_meta["confidence_thresholds"]
+    return ConfidenceThresholds(
+        high=saved["high"], medium=saved["medium"], block=saved["block"]
+    )

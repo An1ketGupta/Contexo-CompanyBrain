@@ -62,10 +62,14 @@ async def notion_create_page(ctx: inngest.Context) -> dict[str, Any]:
     job_id: str = data["job_id"]
     message_id: str = data["message_id"]
     org_id: str = data["org_id"]
+    user_id: str | None = data.get("user_id")
+    conversation_id: str | None = data.get("conversation_id")
     parent_page_id: str = data["parent_page_id"]
     parent_page_title: str = data.get("parent_page_title") or "Notion"
     title: str = data["title"]
     content: str = data["content"]
+
+    from app.services.outbound_postwrite import on_failed, on_sent
 
     try:
         result = await step.run(
@@ -91,6 +95,17 @@ async def notion_create_page(ctx: inngest.Context) -> dict[str, Any]:
                 "failed_at": datetime.now(timezone.utc).isoformat(),
             },
         )
+        await on_failed(
+            run_id=job_id,
+            channel="notion",
+            org_id=org_id,
+            user_id=user_id,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            destination=parent_page_title,
+            reason=reason,
+            permanent=True,
+        )
         return {"status": "failed", "reason": reason}
 
     await step.run(
@@ -108,6 +123,16 @@ async def notion_create_page(ctx: inngest.Context) -> dict[str, Any]:
                 "delivered_at": datetime.now(timezone.utc).isoformat(),
             },
         ),
+    )
+
+    await on_sent(
+        run_id=job_id,
+        channel="notion",
+        org_id=org_id,
+        message_id=message_id,
+        destination=parent_page_title,
+        external_id=result.get("page_id"),
+        url=result.get("url"),
     )
 
     return {"status": "sent", "page_id": result.get("page_id"), "url": result.get("url")}
@@ -132,9 +157,13 @@ async def gdocs_create_doc(ctx: inngest.Context) -> dict[str, Any]:
     job_id: str = data["job_id"]
     message_id: str = data["message_id"]
     org_id: str = data["org_id"]
+    user_id: str | None = data.get("user_id")
+    conversation_id: str | None = data.get("conversation_id")
     title: str = data["title"]
     content: str = data["content"]
     share_with_email: str | None = data.get("share_with_email")
+
+    from app.services.outbound_postwrite import on_failed, on_sent
 
     try:
         result = await step.run(
@@ -160,6 +189,17 @@ async def gdocs_create_doc(ctx: inngest.Context) -> dict[str, Any]:
                 "failed_at": datetime.now(timezone.utc).isoformat(),
             },
         )
+        await on_failed(
+            run_id=job_id,
+            channel="gdocs",
+            org_id=org_id,
+            user_id=user_id,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            destination="Google Docs",
+            reason=reason,
+            permanent=True,
+        )
         return {"status": "failed", "reason": reason}
 
     await step.run(
@@ -177,6 +217,16 @@ async def gdocs_create_doc(ctx: inngest.Context) -> dict[str, Any]:
                 "delivered_at": datetime.now(timezone.utc).isoformat(),
             },
         ),
+    )
+
+    await on_sent(
+        run_id=job_id,
+        channel="gdocs",
+        org_id=org_id,
+        message_id=message_id,
+        destination="Google Docs",
+        external_id=result.get("doc_id"),
+        url=result.get("url"),
     )
 
     return {"status": "sent", "doc_id": result.get("doc_id"), "url": result.get("url")}
