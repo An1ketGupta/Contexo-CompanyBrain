@@ -33,6 +33,7 @@ import inngest
 
 from app.database import get_service_client
 from app.inngest.client import get_inngest_client
+from app.services.network_security import UnsafeURLError, validate_outbound_url
 from app.services.webhooks import fetch_webhook, record_delivery
 
 log = logging.getLogger(__name__)
@@ -123,6 +124,36 @@ async def deliver_webhook(ctx: inngest.Context) -> dict[str, Any]:
     response_body: str | None = None
     error: str | None = None
     transient = False
+
+    # SSRF guard. Validate AS LATE as possible — right before the request —
+    # so a hostname that flipped from public to private between webhook
+    # creation and delivery still gets caught. Re-validation on every
+    # retry is intentional: a customer's DNS can rebind at any time.
+    try:
+        validate_outbound_url(hook["url"])
+    except UnsafeURLError as exc:
+        # Treat as a PERMANENT failure (transient=False) so Inngest doesn't
+        # burn retries on a URL we'll never dial. The customer-facing error
+        # in the deliveries table is a generic "destination not allowed";
+        # the specific reason is logged server-side only — confirming
+        # which internal IPs are reachable would itself be useful recon.
+        log.warning("webhook_ssrf_blocked webhook=%s reason=%s", webhook_id, exc)
+        error = "destination_not_allowed"
+        transient = False
+        await step.run(
+            "record-delivery",
+            lambda: record_delivery(
+                webhook_id=webhook_id,
+                org_id=org_id,
+                event=event,
+                payload=payload,
+                attempt=attempt,
+                status_code=None,
+                response_body=None,
+                error=error,
+            ),
+        )
+        return {"status": "blocked", "reason": "destination_not_allowed"}
 
     try:
         async with httpx.AsyncClient(

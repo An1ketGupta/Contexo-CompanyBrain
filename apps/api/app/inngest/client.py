@@ -20,6 +20,17 @@ def get_inngest_client() -> inngest.Inngest:
     settings = get_settings()
     is_production = settings.environment.lower() == "production"
 
+    # In production an unsigned client would accept any HTTP POST to the
+    # /api/inngest serve handler, letting anyone with the URL trigger
+    # ingestion, agent dispatch, or webhook delivery. The startup
+    # validation in app.config also catches this; this is defence-in-depth
+    # at construction time so even a stray cache reuse can't bypass it.
+    if is_production and not settings.inngest_signing_key:
+        raise RuntimeError(
+            "INNGEST_SIGNING_KEY is required in production. "
+            "Without it the Inngest serve handler accepts unsigned requests."
+        )
+
     kwargs: dict = {
         "app_id": APP_ID,
         "is_production": is_production,

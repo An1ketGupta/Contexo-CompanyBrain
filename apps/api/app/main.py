@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from inngest.fast_api import serve as inngest_serve
 
-from app.config import get_settings
+from app.config import get_settings, validate_production_config
 from app.errors import install_exception_handlers
 from app.inngest import FUNCTIONS as INNGEST_FUNCTIONS
 from app.inngest import get_inngest_client
@@ -44,6 +44,12 @@ from app.routers import (
 def create_app() -> FastAPI:
     settings = get_settings()
 
+    # Fail loud at boot if a production deploy is missing critical secrets.
+    # Doing this before init_observability means a misconfigured prod box
+    # never reports itself healthy to Railway, so a bad deploy gets rolled
+    # back automatically instead of accepting traffic and 500-ing.
+    validate_production_config(settings)
+
     # Bootstrap logging + Sentry before any other module-level work that might
     # try to log. Idempotent: safe to call from tests' app factories.
     init_observability(settings)
@@ -76,13 +82,26 @@ def create_app() -> FastAPI:
     # are `chrome-extension://<32-char-id>`; the id is stable per build but
     # differs between dev (load-unpacked) and Web Store builds, so a regex
     # is the only sane allow-list.
+    # Explicit method + header allowlists. `allow_credentials=True` paired with
+    # `*` is treated by browsers as null-origin and silently breaks credentialed
+    # requests, but more importantly it's a defence-in-depth gap if a future
+    # endpoint accepts a non-standard header carrying a sensitive token.
+    # Methods covers every verb our routers actually use; headers covers what
+    # the Next.js proxy + Supabase client + RequestContext middleware send.
     _app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_origin_regex=r"^chrome-extension://[a-z0-9]+$",
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "Accept",
+            "X-Request-ID",
+            "X-Org-Id",
+            "Idempotency-Key",
+        ],
         expose_headers=["X-Request-ID", "Retry-After"],
     )
     _app.add_middleware(RequestContextMiddleware)

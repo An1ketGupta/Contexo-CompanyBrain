@@ -692,11 +692,14 @@ async def admin_feedback_stats(
     """Aggregated thumbs-up/down counts for the caller's workspace.
 
     Admin-only. Powers the 'Feedback signal' card on Settings → Workspace.
-    Uses the user-scoped client so RLS keeps org isolation honest; the
-    `count='exact'` flag asks PostgREST for the row count without dragging
-    rows back.
+    Verifies admin role via the user-scoped client (so a non-admin can't
+    forge their way past), then issues the cross-user count with the
+    service-role client. We can't use the user-scoped client for the count
+    because messages RLS was tightened (043) to only return rows from
+    conversations the caller owns — counting an org's full feedback signal
+    requires bypassing per-user scoping.
     """
-    user_id, _org_id, token = _require_user(current_user)
+    user_id, org_id, token = _require_user(current_user)
     client = get_user_client(token)
 
     me = await asyncio.to_thread(
@@ -712,11 +715,14 @@ async def admin_feedback_stats(
             detail="Only workspace admins can view feedback analytics.",
         )
 
+    svc = get_service_client()
+
     async def _count(filter_value: str | None) -> int:
         def _run() -> int:
             q = (
-                client.table("messages")
+                svc.table("messages")
                 .select("id", count="exact", head=True)
+                .eq("org_id", org_id)
                 .eq("role", "assistant")
             )
             q = q.eq("feedback", filter_value) if filter_value else q.is_("feedback", "null")

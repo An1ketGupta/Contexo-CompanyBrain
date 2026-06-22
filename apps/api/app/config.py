@@ -220,6 +220,51 @@ class Settings(BaseSettings):
     embedding_finetune_recommended_pairs: int = 200
 
 
+class ProductionConfigError(RuntimeError):
+    """Raised at startup when production env vars are missing.
+
+    Inherits RuntimeError so uvicorn surfaces it as a fatal boot error
+    rather than the worker silently restarting on every request.
+    """
+
+
+# Env vars that MUST be present in production. Everything else either
+# defaults safely (e.g., disabling an integration card) or is checked
+# inline by the code path that needs it (e.g., a Stripe call fails
+# closed if STRIPE_SECRET_KEY is empty). Listed by env-var name so the
+# error message tells the operator exactly which dashboard secret to set.
+_PRODUCTION_REQUIRED: tuple[tuple[str, str], ...] = (
+    ("GEMINI_API_KEY", "gemini_api_key"),
+    ("OAUTH_STATE_SECRET", "oauth_state_secret"),
+    ("INNGEST_SIGNING_KEY", "inngest_signing_key"),
+    ("SUPABASE_SERVICE_ROLE_KEY", "supabase_service_role_key"),
+    ("UPSTASH_REDIS_REST_URL", "upstash_redis_rest_url"),
+    ("UPSTASH_REDIS_REST_TOKEN", "upstash_redis_rest_token"),
+)
+
+
+def validate_production_config(settings: Settings) -> None:
+    """Raise ProductionConfigError if any required env var is empty in prod.
+
+    Called from app.main.create_app() before the FastAPI app is constructed
+    so a misconfigured deploy fails the Railway healthcheck immediately
+    instead of accepting traffic and 500-ing on the first request.
+    """
+    if settings.environment.lower() != "production":
+        return
+    missing = [
+        env_name
+        for env_name, attr in _PRODUCTION_REQUIRED
+        if not getattr(settings, attr, None)
+    ]
+    if missing:
+        raise ProductionConfigError(
+            "Missing required production env vars: "
+            + ", ".join(missing)
+            + ". Set them in the Railway dashboard and redeploy."
+        )
+
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings()

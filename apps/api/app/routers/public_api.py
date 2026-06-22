@@ -55,6 +55,7 @@ from app.services.agent_registry import (
     validate_agent_input,
 )
 from app.services.llm.task_chain import execute_task_blocking
+from app.services.network_security import UnsafeURLError, validate_outbound_url
 from app.services.rate_limit import (
     _monthly_check_and_increment,
     _sliding_window_check,
@@ -76,9 +77,14 @@ async def get_api_context(
     try:
         return await verify_key(authorization)
     except ValueError as exc:
+        # Generic 401 — never echo the raw verify_key() message back to the
+        # caller. Different messages for "unknown key" vs "revoked key" vs
+        # "malformed header" were a credential-enumeration vector. The
+        # detailed reason is logged server-side for support diagnosis.
+        log.info("api_auth_rejected reason=%s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
+            detail="Invalid API credentials.",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
@@ -320,6 +326,21 @@ async def trigger_agent(
     poll_url = f"/v1/agent-runs/{run_id}"
 
     webhook_url_str = str(body.webhook_url) if body.webhook_url else None
+
+    # Reject SSRF at the API boundary too, not just on delivery. A caller
+    # who passes http://169.254.169.254 should get a 400 immediately
+    # rather than seeing the agent run succeed and the callback silently
+    # blocked 30 seconds later. The Inngest worker re-validates on delivery
+    # for defence-in-depth (DNS can rebind between request and worker).
+    if webhook_url_str:
+        try:
+            validate_outbound_url(webhook_url_str)
+        except UnsafeURLError as exc:
+            log.info("api_trigger_ssrf_rejected key=%s reason=%s", ctx.id, exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="webhook_url destination is not allowed.",
+            ) from exc
 
     # 3. Approval gate — if approver_email is set, route via the existing
     #    approvals workflow with channel='agent'. Existing magic-link / Slack

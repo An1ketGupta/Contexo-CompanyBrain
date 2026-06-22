@@ -44,6 +44,7 @@ from app.services.agent_callbacks import (
     fire_agent_lifecycle_events,
 )
 from app.services.agents.onboarding_agent import OnboardingAgent
+from app.services.network_security import UnsafeURLError, validate_outbound_url
 
 log = logging.getLogger(__name__)
 
@@ -344,6 +345,25 @@ async def agent_api_callback(ctx: inngest.Context) -> dict[str, Any]:
         sig = hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
         headers[_HEADER_SIGNATURE] = f"sha256={sig}"
         headers[_HEADER_KEY_ID] = api_key_id
+
+    # SSRF guard. Agent callbacks are a particularly attractive target
+    # because the API consumer hands us the destination URL on every
+    # trigger request — including, potentially, http://169.254.169.254
+    # to read EC2 IMDS. Reject permanently (no retry) and log the reason
+    # server-side; the agent_runs status reflects "callback_blocked".
+    try:
+        validate_outbound_url(webhook_url)
+    except UnsafeURLError as exc:
+        log.warning(
+            "agent_callback_ssrf_blocked run=%s reason=%s",
+            run_id,
+            exc,
+        )
+        return {
+            "status": "blocked",
+            "reason": "destination_not_allowed",
+            "attempt": attempt,
+        }
 
     try:
         async with httpx.AsyncClient(

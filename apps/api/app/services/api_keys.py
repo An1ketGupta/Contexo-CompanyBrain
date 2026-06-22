@@ -141,10 +141,10 @@ async def verify_key(authorization: str | None) -> ApiKeyContext:
     are still in use without polling logs.
     """
     if not authorization or not authorization.lower().startswith("bearer "):
-        raise ValueError("Missing Bearer token.")
+        raise ValueError("missing_bearer")
     raw = authorization.split(" ", 1)[1].strip()
     if not raw.startswith(KEY_PREFIX):
-        raise ValueError("Invalid key format.")
+        raise ValueError("malformed_key")
 
     key_hash = hash_key(raw)
     svc = get_service_client()
@@ -156,10 +156,16 @@ async def verify_key(authorization: str | None) -> ApiKeyContext:
         .execute()
     )
     row = result.data if result else None
+    # Single failure path covers both "key not found" and "key revoked" so
+    # an attacker can't distinguish whether a hash is in the keyspace.
+    # Both branches do the same minimal work (one DB lookup already happened
+    # above) so there's no measurable timing differential. The discriminator
+    # string ("unknown_key" / "revoked_key") is logged server-side via the
+    # router's log.info call before being collapsed to a uniform 401.
     if not row:
-        raise ValueError("Unknown key.")
+        raise ValueError("unknown_key")
     if row.get("revoked_at"):
-        raise ValueError("Key has been revoked.")
+        raise ValueError("revoked_key")
 
     # Bump last_used_at off the hot path so a slow DB doesn't block auth.
     asyncio.create_task(_touch_last_used(row["id"]))
