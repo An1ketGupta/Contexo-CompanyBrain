@@ -77,6 +77,14 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
 
     log.info("[inngest] process-document doc=%s org=%s path=%s version=%s", doc_id, org_id, file_path, version_id)
 
+    # V5 #106: bind org → embedder context so new uploads use the org's
+    # fine-tuned model if one is deployed. No-op when the org doesn't have
+    # one. Stays bound for the lifetime of this Inngest function — chunks
+    # get embedded with the correct model.
+    from app.services.ingestion.embedder import bind_org_for_embedding
+
+    bind_org_for_embedding(org_id)
+
     await step.run("mark-processing", lambda: mark_status(doc_id, "processing"))
 
     result = await step.run(

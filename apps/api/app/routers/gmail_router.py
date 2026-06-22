@@ -20,6 +20,7 @@ that gates Drive doesn't apply here: any user can connect their own mailbox.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import logging
@@ -54,6 +55,118 @@ _PROVIDER = "gmail"
 # correct-enough guard for the API surface.
 import re as _re
 _EMAIL_REGEX = _re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+# Catches the `[Your Name]` / `[Name]` / `[Sender]` placeholders the LLM
+# leaves behind when it doesn't know who is signing. We substitute these at
+# send-time with the authenticated user's display_name so the recipient
+# never sees a raw template hole.
+_NAME_PLACEHOLDER_RE = _re.compile(
+    r"\[\s*(?:your\s+(?:full\s+)?name|your\s+signature|sender(?:\s+name)?|my\s+name|name|signature)\s*\]",
+    _re.IGNORECASE,
+)
+
+
+def _substitute_signature(text: str, signature: str) -> str:
+    if not signature or not text:
+        return text
+    return _NAME_PLACEHOLDER_RE.sub(signature, text)
+
+
+# Hard ceiling on the attachment we generate from retrieved chunks. Gmail's
+# total-message cap is 25 MB; we stay well under that since base64 inflates
+# by ~33% and the body + HTML also count toward the limit.
+_MAX_SOURCES_ATTACHMENT_BYTES = 2_000_000  # 2 MB of raw text → ~2.7 MB on the wire
+
+
+async def _build_sources_attachment(
+    *,
+    svc: Any,
+    org_id: str,
+    sources: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Render the chunks cited in the assistant turn into a plain-text
+    attachment so the recipient receives the full source material that
+    grounded the email.
+
+    `sources` is the JSONB array stored on `messages.sources` — already
+    deduped and ordered by relevance. We re-fetch each chunk's full content
+    from `chunks` because the excerpt on `sources` is truncated to 280 chars.
+
+    Returns None when there's nothing usable (no sources, all empty chunks).
+    """
+    chunk_ids = [s.get("chunk_id") for s in sources if s.get("chunk_id")]
+    if not chunk_ids:
+        return None
+
+    # Single batched read. RLS not strictly necessary here (service-role) but
+    # we still scope to org_id as defense-in-depth — a stale chunk_id from a
+    # different org would otherwise leak through if `messages.sources` ever
+    # got corrupted.
+    try:
+        result = await asyncio.to_thread(
+            lambda: svc.table("chunks")
+            .select("id, content, page_number, section_heading")
+            .eq("org_id", org_id)
+            .in_("id", chunk_ids)
+            .execute()
+        )
+    except Exception as exc:
+        log.warning("sources attachment chunk fetch failed: %s", exc)
+        return None
+
+    content_by_id: dict[str, dict[str, Any]] = {
+        row["id"]: row for row in (result.data or [])
+    }
+
+    lines: list[str] = []
+    lines.append("SOURCE MATERIAL")
+    lines.append(
+        "Retrieved from the company knowledge base by NirnayaIQ and used to "
+        "ground the email you just received."
+    )
+    lines.append(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    lines.append("")
+    lines.append("=" * 72)
+    lines.append("")
+
+    n = 0
+    for src in sources:
+        chunk = content_by_id.get(src.get("chunk_id") or "")
+        text = (chunk or {}).get("content") or src.get("excerpt") or ""
+        text = text.strip()
+        if not text:
+            continue
+        n += 1
+        doc_name = src.get("document_name") or "(unnamed document)"
+        page = (chunk or {}).get("page_number") or src.get("page_number")
+        section = (chunk or {}).get("section_heading") or src.get("section_heading")
+
+        header_bits = [f"{n}. {doc_name}"]
+        if page is not None:
+            header_bits.append(f"page {page}")
+        if section:
+            header_bits.append(f"section: {section}")
+        lines.append(" — ".join(header_bits))
+        lines.append("-" * 72)
+        lines.append(text)
+        lines.append("")
+        lines.append("")
+
+    if n == 0:
+        return None
+
+    body_text = "\n".join(lines).rstrip() + "\n"
+    encoded = body_text.encode("utf-8")
+    if len(encoded) > _MAX_SOURCES_ATTACHMENT_BYTES:
+        # Defensive truncation — chat caps context at 20 chunks of ~1KB, so
+        # we'd only hit this if someone bumps the chunk size dramatically.
+        encoded = encoded[:_MAX_SOURCES_ATTACHMENT_BYTES] + b"\n\n[truncated]\n"
+
+    return {
+        "filename": "Sources_used.txt",
+        "mime_type": "text/plain",
+        "content": encoded,
+    }
 
 
 def _validate_email(value: str) -> str:
@@ -202,6 +315,10 @@ class SendEmailRequest(BaseModel):
     body: str = Field(..., min_length=1, max_length=200_000)
     cc: str | None = Field(default=None, max_length=320)
     reply_to: str | None = Field(default=None, max_length=320)
+    # When true (default), attach a plain-text file containing the full
+    # chunk content the LLM retrieved for this turn. Gives the recipient
+    # the same source material that grounded the email body.
+    include_sources: bool = True
 
     @field_validator("to")
     @classmethod
@@ -229,15 +346,26 @@ async def gmail_send(
     org_id, user_id = _require_user(current_user)
 
     # Cheap up-front check so the user gets an actionable 403 immediately
-    # rather than discovering via a silent failure after queueing.
+    # rather than discovering via a silent failure after queueing. We also
+    # pull email_address here so we can derive a fallback signature label
+    # without a second roundtrip.
     svc = get_service_client()
-    row = await asyncio.to_thread(
-        lambda: svc.table("gmail_integrations")
-        .select("id, scopes")
-        .eq("org_id", org_id)
-        .eq("user_id", user_id)
-        .maybe_single()
-        .execute()
+    row, user_row = await asyncio.gather(
+        asyncio.to_thread(
+            lambda: svc.table("gmail_integrations")
+            .select("id, scopes, email_address")
+            .eq("org_id", org_id)
+            .eq("user_id", user_id)
+            .maybe_single()
+            .execute()
+        ),
+        asyncio.to_thread(
+            lambda: svc.table("users")
+            .select("display_name")
+            .eq("id", user_id)
+            .maybe_single()
+            .execute()
+        ),
     )
     if not row or not row.data:
         raise HTTPException(status_code=400, detail="gmail_not_connected")
@@ -246,11 +374,22 @@ async def gmail_send(
         # Frontend pattern-matches on this code to render the re-auth banner.
         raise HTTPException(status_code=403, detail="gmail_send_scope_missing")
 
+    # Resolve the sender's name for placeholder substitution. Prefer the
+    # display_name set in their profile; fall back to the local-part of their
+    # Gmail address so we never leave a raw `[Your Name]` in the wire copy.
+    display_name = ((user_row.data or {}).get("display_name") or "").strip() if user_row else ""
+    sender_email = (row.data.get("email_address") or "").strip()
+    sender_label = display_name or (sender_email.split("@", 1)[0] if sender_email else "")
+    final_subject = _substitute_signature(body.subject, sender_label)
+    final_body = _substitute_signature(body.body, sender_label)
+
     # Verify the message belongs to this org before we touch it. RLS would
-    # also block a write, but we want a clean 404 — not a confusing 500.
+    # also block a write, but we want a clean 404 — not a confusing 500. We
+    # pull `sources` in the same query so the attachment builder doesn't
+    # need a second roundtrip.
     msg = await asyncio.to_thread(
         lambda: svc.table("messages")
-        .select("id, org_id, delivery_status")
+        .select("id, org_id, delivery_status, sources")
         .eq("id", body.message_id)
         .maybe_single()
         .execute()
@@ -260,6 +399,26 @@ async def gmail_send(
     existing_delivery = msg.data.get("delivery_status") or {}
     if existing_delivery.get("status") == "sent":
         raise HTTPException(status_code=409, detail="message_already_sent")
+
+    # Build the sources attachment (best-effort, optional). On any failure
+    # we still send the email — the attachment is a nice-to-have, not a
+    # blocker for the user's primary action.
+    attachment_payload: dict[str, Any] | None = None
+    if body.include_sources:
+        msg_sources = msg.data.get("sources") or []
+        if msg_sources:
+            attachment = await _build_sources_attachment(
+                svc=svc, org_id=org_id, sources=msg_sources
+            )
+            if attachment:
+                # Inngest events are JSON, so we base64 the bytes before they
+                # ride the event payload. The worker un-encodes before passing
+                # to send_email().
+                attachment_payload = {
+                    "filename": attachment["filename"],
+                    "mime_type": attachment["mime_type"],
+                    "content_b64": base64.b64encode(attachment["content"]).decode("ascii"),
+                }
 
     job_id = str(uuid.uuid4())
     queued_at = datetime.now(timezone.utc).isoformat()
@@ -292,10 +451,11 @@ async def gmail_send(
                 "org_id": org_id,
                 "user_id": user_id,
                 "to": body.to,
-                "subject": body.subject,
-                "body": body.body,
+                "subject": final_subject,
+                "body": final_body,
                 "cc": body.cc,
                 "reply_to": body.reply_to,
+                "attachments": [attachment_payload] if attachment_payload else [],
             },
             id=f"gmail-send-{job_id}",
         )

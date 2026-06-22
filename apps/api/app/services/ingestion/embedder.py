@@ -20,6 +20,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
+from contextvars import ContextVar
 from typing import Any, Literal, Protocol
 
 import httpx
@@ -293,6 +295,58 @@ def _l2_normalize(vec: list[float]) -> list[float]:
     return [x / norm for x in vec]
 
 
+class ModalFineTunedEmbedder:
+    """Calls a Modal-hosted fine-tuned sentence-transformers model.
+
+    Used per-org when `organizations.metadata.embedding_model` starts with
+    `modal:`. The endpoint URL + bearer token are global settings; the model
+    id is encoded in the path (`<base>/embed/<model_id>`) so multiple orgs
+    share one Modal app with isolated trained weights.
+
+    Output dim is fixed at 768 to stay binary-compatible with the existing
+    pgvector(768) column. Vectors are L2-normalized server-side; we re-
+    normalize defensively in case a future Modal app skips it.
+    """
+
+    output_dim = 768
+
+    def __init__(self, *, endpoint: str, token: str, model_id: str) -> None:
+        self._endpoint = endpoint.rstrip("/")
+        self._token = token
+        self._model_id = model_id
+
+    async def embed_texts(self, texts: list[str], task_type: TaskType) -> list[list[float]]:
+        if not texts:
+            return []
+        url = f"{self._endpoint}/embed/{self._model_id}"
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+            resp = await client.post(
+                url, headers=headers, json={"texts": texts, "task_type": task_type}
+            )
+        if resp.status_code >= 400:
+            raise EmbeddingError(
+                f"Modal embedder failed: {resp.status_code} {resp.text[:200]}"
+            )
+        data = resp.json()
+        vectors = data.get("embeddings") or []
+        if len(vectors) != len(texts):
+            raise EmbeddingError(
+                f"Modal embedder count mismatch: sent {len(texts)}, got {len(vectors)}"
+            )
+        out: list[list[float]] = []
+        for v in vectors:
+            if not isinstance(v, list) or len(v) != self.output_dim:
+                raise EmbeddingError(
+                    f"Modal embedder bad shape: got dim {len(v) if isinstance(v, list) else type(v).__name__}"
+                )
+            out.append(_l2_normalize([float(x) for x in v]))
+        return out
+
+
 def _build_primary(provider: str, settings) -> Embedder:
     if provider == "google":
         return GoogleEmbedder(api_key=settings.gemini_api_key)
@@ -307,6 +361,12 @@ def _build_primary(provider: str, settings) -> Embedder:
 def get_embedder() -> Embedder:
     """Return the embedder, optionally wrapped with a quota-aware fallback.
 
+    V5 #106: when a current-org context is bound via `bind_org_for_embedding`
+    and that org has deployed a fine-tuned model, returns a
+    `ModalFineTunedEmbedder` pointing at that model instead of the default.
+    Falls through to the standard logic when no org is bound (background
+    jobs, etc.) or the org hasn't fine-tuned.
+
     Fallback fires when:
       * primary is `google`, and
       * HUGGINGFACE_API_KEY is configured.
@@ -314,17 +374,117 @@ def get_embedder() -> Embedder:
     Setting EMBEDDING_PROVIDER=huggingface bypasses fallback entirely (no point
     falling back to the same provider).
     """
+    org_embedder = _get_org_specific_embedder()
+    if org_embedder is not None:
+        return org_embedder
+
     settings = get_settings()
     provider = settings.embedding_provider.lower()
     primary = _build_primary(provider, settings)
 
     if provider == "google" and settings.huggingface_api_key:
         fallback = HuggingFaceEmbedder(api_key=settings.huggingface_api_key)
-        log.info("Embedder: GoogleEmbedder with HuggingFaceEmbedder fallback")
+        log.debug("Embedder: GoogleEmbedder with HuggingFaceEmbedder fallback")
         return FallbackEmbedder(primary=primary, fallback=fallback)
 
-    log.info("Embedder: %s (no fallback configured)", type(primary).__name__)
     return primary
+
+
+# ── Per-org fine-tuned embedder selection ──────────────────────────────────
+
+
+_org_embedding_context: ContextVar[str | None] = ContextVar(
+    "embedding_org_context", default=None
+)
+
+# Tiny TTL cache so we don't hit the DB for every search in a busy chat.
+# Same 60s window the org_config cache uses — keeps the two coherent.
+_org_model_cache: dict[str, tuple[float, str | None]] = {}
+_ORG_MODEL_TTL_SECONDS = 60.0
+
+
+def bind_org_for_embedding(org_id: str | None) -> Any:
+    """Set the org id for the current async task. Returns the previous token so
+    callers can restore in a finally block. No-op for falsy values."""
+    if not org_id:
+        return None
+    return _org_embedding_context.set(org_id)
+
+
+def reset_org_embedding(token: Any) -> None:
+    if token is None:
+        return
+    try:
+        _org_embedding_context.reset(token)
+    except (LookupError, ValueError):
+        pass
+
+
+def _lookup_org_model(org_id: str) -> str | None:
+    """Read organizations.metadata.embedding_model with a 60s TTL cache.
+    Returns None when the org has no fine-tuned model deployed."""
+    cached = _org_model_cache.get(org_id)
+    now = time.monotonic()
+    if cached is not None and (now - cached[0]) < _ORG_MODEL_TTL_SECONDS:
+        return cached[1]
+
+    from app.database import get_service_client
+
+    try:
+        res = (
+            get_service_client()
+            .table("organizations")
+            .select("metadata")
+            .eq("id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        metadata = (getattr(res, "data", None) or {}).get("metadata") or {}
+        model = metadata.get("embedding_model") if isinstance(metadata, dict) else None
+        model_value = str(model) if model else None
+    except Exception as exc:
+        log.debug("org_embedding_lookup_failed: %s", exc)
+        model_value = None
+
+    _org_model_cache[org_id] = (now, model_value)
+    return model_value
+
+
+def _get_org_specific_embedder() -> Embedder | None:
+    """Build a Modal-backed embedder for the bound org if it has a deployed
+    fine-tuned model. Returns None otherwise."""
+    org_id = _org_embedding_context.get()
+    if not org_id:
+        return None
+    model = _lookup_org_model(org_id)
+    if not model or not model.startswith("modal:"):
+        return None
+    settings = get_settings()
+    if not settings.modal_finetune_endpoint:
+        # Config drift — model was deployed but the inference endpoint is
+        # missing from the env. Fall back to the default embedder so
+        # retrieval still works (vectors will be in the wrong space but a
+        # degraded answer beats a 500).
+        log.warning(
+            "org_finetuned_model_skipped_no_endpoint",
+            org_id=org_id,
+            model=model,
+        )
+        return None
+    return ModalFineTunedEmbedder(
+        endpoint=settings.modal_finetune_endpoint,
+        token=settings.modal_finetune_token,
+        model_id=model.removeprefix("modal:"),
+    )
+
+
+def invalidate_org_embedding_cache(org_id: str | None = None) -> None:
+    """Drop the cached org → model mapping. Called after a successful
+    deploy so the next search picks up the FT model immediately."""
+    if org_id is None:
+        _org_model_cache.clear()
+    else:
+        _org_model_cache.pop(org_id, None)
 
 
 def _augment_for_embedding(chunk: Chunk) -> str:

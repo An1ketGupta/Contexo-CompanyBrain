@@ -122,6 +122,28 @@ export default function ChatConversationPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, conversation, id, isStreaming]);
 
+  // Deep-link support: `/chat/{id}#m-{message_id}` (used by the admin
+  // /admin/feedback page and the threshold-alert email). We wait for the
+  // messages list to render — otherwise the target element doesn't exist
+  // yet and the browser's native :target scroll runs against nothing. The
+  // MessageList's stick-to-bottom effect will still fire on initial mount;
+  // our scroll runs afterwards so the highlighted message wins.
+  useEffect(() => {
+    if (loading || messages.length === 0) return;
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash;
+    if (!hash.startsWith("#m-")) return;
+    const el = document.getElementById(hash.slice(1));
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    // Brief ring flash so the admin can see which row the email pointed at.
+    el.classList.add("ring-2", "ring-amber-400/70", "rounded-md");
+    const timer = window.setTimeout(() => {
+      el.classList.remove("ring-2", "ring-amber-400/70", "rounded-md");
+    }, 2400);
+    return () => window.clearTimeout(timer);
+  }, [loading, messages.length]);
+
   useKeyboardShortcuts({
     isStreaming,
     onStopGeneration: stop,

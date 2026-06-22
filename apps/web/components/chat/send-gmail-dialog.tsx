@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertCircle, Loader2, Send } from "lucide-react";
+import { AlertCircle, Eye, Loader2, Paperclip, Pencil, Send } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -14,6 +14,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Markdown } from "./markdown";
 
 interface SendGmailDialogProps {
   messageId: string;
@@ -58,6 +60,8 @@ export function SendGmailDialog({
   const [body, setBody] = useState(initial.body);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [includeSources, setIncludeSources] = useState(true);
+  const [bodyMode, setBodyMode] = useState<"edit" | "preview">("preview");
 
   const canSend = to.trim().length > 0 && EMAIL_REGEX.test(to.trim()) && subject.trim().length > 0;
 
@@ -75,6 +79,7 @@ export function SendGmailDialog({
           subject: subject.trim(),
           body,
           cc: cc.trim() || null,
+          include_sources: includeSources,
         }),
       });
       if (!res.ok) {
@@ -145,15 +150,71 @@ export function SendGmailDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="gmail-body">Body</Label>
-            <Textarea
-              id="gmail-body"
-              rows={10}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              className="font-mono text-xs"
-            />
+            <div className="flex items-center justify-between">
+              <Label htmlFor="gmail-body">Body</Label>
+              <div className="flex items-center rounded-md border border-border overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setBodyMode("preview")}
+                  className={`flex items-center gap-1 px-2 py-0.5 text-xs transition-colors ${
+                    bodyMode === "preview"
+                      ? "bg-muted text-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Eye className="h-3 w-3" />
+                  Preview
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBodyMode("edit")}
+                  className={`flex items-center gap-1 px-2 py-0.5 text-xs transition-colors ${
+                    bodyMode === "edit"
+                      ? "bg-muted text-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Pencil className="h-3 w-3" />
+                  Edit
+                </button>
+              </div>
+            </div>
+            {bodyMode === "preview" ? (
+              <div className="min-h-[160px] max-h-[280px] overflow-y-auto rounded-md border border-border bg-background px-3 py-2">
+                <Markdown>{body}</Markdown>
+              </div>
+            ) : (
+              <Textarea
+                id="gmail-body"
+                rows={10}
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                className="font-mono text-xs"
+              />
+            )}
           </div>
+
+          <label
+            htmlFor="gmail-include-sources"
+            className="flex items-start gap-2 rounded-md border border-border/60 bg-muted/30 p-2 text-xs cursor-pointer hover:bg-muted/50 transition-colors"
+          >
+            <Checkbox
+              id="gmail-include-sources"
+              checked={includeSources}
+              onCheckedChange={(v) => setIncludeSources(v === true)}
+              className="mt-0.5"
+            />
+            <span className="flex flex-col gap-0.5">
+              <span className="flex items-center gap-1.5 font-medium text-foreground">
+                <Paperclip className="h-3 w-3" />
+                Attach source material
+              </span>
+              <span className="text-muted-foreground">
+                Sends a <code className="font-mono text-[10px]">Sources_used.txt</code> file
+                with the full retrieved context (the chunks NirnayaIQ used to draft this email).
+              </span>
+            </span>
+          </label>
 
           {errorMessage && (
             <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">

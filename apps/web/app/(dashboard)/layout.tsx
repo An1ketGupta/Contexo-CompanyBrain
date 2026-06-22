@@ -10,6 +10,7 @@ import { AcknowledgementBanner } from "@/components/compliance/acknowledgement-b
 import { UploadProvider } from "@/components/documents/upload-context";
 import { UploadDialogHost } from "@/components/documents/upload-dialog";
 import { UploadWidget } from "@/components/documents/upload-widget";
+import { CrispProvider } from "@/components/support/crisp-provider";
 
 export default function DashboardLayout({
   children,
@@ -38,6 +39,7 @@ export default function DashboardLayout({
           <EnrichmentModal />
           <UploadDialogHost />
           <UploadWidget />
+          <CrispProvider />
         </UploadProvider>
       </CommandPaletteProvider>
     </ShortcutsPanelProvider>

@@ -197,6 +197,28 @@ class Settings(BaseSettings):
         "http://localhost:8000/integrations/dropbox/callback"
     )
 
+    # ── V5 Day 3 — Founder-only internal dashboards ──────────────────────────
+    # Comma-separated Supabase auth user UUIDs that may hit /internal/* routes
+    # (LLM cost dashboard, etc.). Empty in dev = nobody passes the gate.
+    founder_user_ids: str = ""
+
+    @property
+    def founder_user_id_set(self) -> set[str]:
+        return {u.strip() for u in self.founder_user_ids.split(",") if u.strip()}
+
+    # ── V5 Day 4 — Embedding fine-tuning backend (Modal.com serverless GPU) ──
+    # Modal hosts the sentence-transformers training + eval + serving stack.
+    # Empty values disable the admin fine-tune button + skip the Inngest cron.
+    # We POST to MODAL_FINETUNE_ENDPOINT with a JSONL of training pairs and a
+    # bearer token; the endpoint returns a job_id we poll on
+    # MODAL_FINETUNE_STATUS_ENDPOINT/{job_id}.
+    modal_finetune_endpoint: str = ""
+    modal_finetune_status_endpoint: str = ""
+    modal_finetune_token: str = ""
+    # Minimum training pairs before the UI even shows the fine-tune CTA.
+    embedding_finetune_min_pairs: int = 50
+    embedding_finetune_recommended_pairs: int = 200
+
 
 @lru_cache
 def get_settings() -> Settings:

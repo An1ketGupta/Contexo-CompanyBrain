@@ -72,6 +72,16 @@ import {
   feedbackThresholdAlertSubject,
   type FeedbackThresholdAlertEmailProps,
 } from "@/emails/feedback-threshold-alert";
+import {
+  ScheduledUsageSummaryEmail,
+  scheduledUsageSummarySubject,
+  type ScheduledUsageSummaryEmailProps,
+} from "@/emails/scheduled-usage-summary";
+import {
+  ScheduledKnowledgeHealthEmail,
+  scheduledKnowledgeHealthSubject,
+  type ScheduledKnowledgeHealthEmailProps,
+} from "@/emails/scheduled-knowledge-health";
 
 /**
  * Server-to-server email rendering. The FastAPI Inngest worker calls this
@@ -146,6 +156,14 @@ const TEMPLATES = {
     Component: FeedbackThresholdAlertEmail,
     subject: feedbackThresholdAlertSubject,
   } satisfies Template<FeedbackThresholdAlertEmailProps>,
+  scheduled_usage_summary: {
+    Component: ScheduledUsageSummaryEmail,
+    subject: scheduledUsageSummarySubject,
+  } satisfies Template<ScheduledUsageSummaryEmailProps>,
+  scheduled_knowledge_health: {
+    Component: ScheduledKnowledgeHealthEmail,
+    subject: scheduledKnowledgeHealthSubject,
+  } satisfies Template<ScheduledKnowledgeHealthEmailProps>,
 };
 
 type TemplateName = keyof typeof TEMPLATES;

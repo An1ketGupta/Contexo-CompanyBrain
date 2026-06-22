@@ -127,6 +127,7 @@ export interface UseChatOptions {
     feedback?: MessageFeedback | null;
     confidence?: MessageConfidence | null;
     intent?: QueryIntent | null;
+    competitor_matches?: CompetitorMatch[] | null;
     created_at: string;
     parent_user_message_id?: string | null;
     branch_index?: number;

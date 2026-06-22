@@ -106,9 +106,12 @@ export function MessageItem({
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   const [showRefinement, setShowRefinement] = useState(false);
   const [refinement, setRefinement] = useState("");
+  // `id="m-{server_id}"` powers deep links from the admin /admin/feedback
+  // page and the threshold-alert email straight to a specific message.
+  const anchorId = message.server_id ? `m-${message.server_id}` : undefined;
   if (message.role === "user") {
     return (
-      <div className="flex justify-end px-1">
+      <div id={anchorId} className="flex justify-end px-1 scroll-mt-24">
         <div className="max-w-[80%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-6 text-primary-foreground shadow-sm">
           <div className="whitespace-pre-wrap break-words">{message.content}</div>
         </div>
@@ -124,7 +127,7 @@ export function MessageItem({
   const expandedSearches = isStreaming && !hasContent;
 
   return (
-    <div className="group flex gap-3 px-1">
+    <div id={anchorId} className="group flex gap-3 px-1 scroll-mt-24">
       <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
         <Brain className="h-3.5 w-3.5" />
       </div>

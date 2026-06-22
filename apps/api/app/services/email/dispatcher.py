@@ -29,6 +29,8 @@ EventType = Literal[
     "approval_reminder",
     "onboarding_welcome",
     "acknowledgement_reminder",
+    "scheduled_usage_summary",
+    "scheduled_knowledge_health",
 ]
 
 

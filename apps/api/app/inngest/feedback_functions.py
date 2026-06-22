@@ -313,7 +313,7 @@ async def _alert_admins(
     cutoff = (datetime.now(timezone.utc) - timedelta(days=_ROLLUP_DAYS)).isoformat()
     examples_res = await asyncio.to_thread(
         lambda: svc.table("messages")
-        .select("id, content, created_at, feedback_analysis")
+        .select("id, conversation_id, content, created_at, feedback_analysis")
         .eq("org_id", org_id)
         .eq("feedback", "negative")
         .filter("feedback_analysis->>failure_reason", "eq", failure_reason)
@@ -325,6 +325,7 @@ async def _alert_admins(
     examples = [
         {
             "id": e["id"],
+            "conversation_id": e.get("conversation_id"),
             "snippet": (e.get("content") or "").strip().replace("\n", " ")[:160],
             "created_at": e["created_at"],
         }

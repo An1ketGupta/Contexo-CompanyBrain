@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -22,6 +23,83 @@ from app.services.redis_cache import cache_get_json, cache_set_json
 log = logging.getLogger(__name__)
 
 _SLACK_API = "https://slack.com/api"
+
+
+# ── Markdown → mrkdwn converter ─────────────────────────────────────────────
+
+def md_to_mrkdwn(text: str) -> str:
+    """Convert LLM-generated markdown to Slack mrkdwn syntax.
+
+    Slack uses a distinct dialect:
+      Bold         **text**   →  *text*
+      Italic       *text*     →  _text_
+      Bullets      * / -      →  •
+      Headings     # / ##     →  *text*   (bold; Slack has no heading sizes)
+      Links        [t](url)   →  <url|t>
+      Strikethrough ~~text~~  →  ~text~
+      Code blocks and inline code are left untouched.
+
+    Processing order matters: bold and headings are stashed as placeholders
+    before the italic pass so the resulting `*text*` tokens aren't re-matched.
+    """
+    # 1. Protect fenced code blocks.
+    _code_blocks: list[str] = []
+
+    def _stash_block(m: re.Match[str]) -> str:
+        _code_blocks.append(m.group(0))
+        return f"\x00CB{len(_code_blocks) - 1}\x00"
+
+    text = re.sub(r"```[\s\S]*?```", _stash_block, text)
+
+    # 2. Protect inline code spans.
+    _inline_codes: list[str] = []
+
+    def _stash_inline(m: re.Match[str]) -> str:
+        _inline_codes.append(m.group(0))
+        return f"\x00IC{len(_inline_codes) - 1}\x00"
+
+    text = re.sub(r"`[^`\n]+`", _stash_inline, text)
+
+    # 3. Stash bold (**text**) as a placeholder so the italic pass below can't
+    #    re-match the single-asterisk result.
+    _bold_texts: list[str] = []
+
+    def _stash_bold(m: re.Match[str]) -> str:
+        _bold_texts.append(m.group(1))
+        return f"\x00B{len(_bold_texts) - 1}\x00"
+
+    text = re.sub(r"\*\*(.+?)\*\*", _stash_bold, text, flags=re.DOTALL)
+
+    # 4. Strikethrough: ~~text~~ → ~text~
+    text = re.sub(r"~~(.+?)~~", r"~\1~", text, flags=re.DOTALL)
+
+    # 5. Links: [label](url) → <url|label>
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"<\2|\1>", text)
+
+    # 6. Headings: lines starting with # → stash as bold too (same restore path)
+    def _stash_heading(m: re.Match[str]) -> str:
+        _bold_texts.append(m.group(1).strip())
+        return f"\x00B{len(_bold_texts) - 1}\x00"
+
+    text = re.sub(r"^#{1,6}\s+(.+)$", _stash_heading, text, flags=re.MULTILINE)
+
+    # 7. Bullet list items: "* text" or "- text" at line start → "• text"
+    text = re.sub(r"^(\s*)[\*\-]\s+", r"\1• ", text, flags=re.MULTILINE)
+
+    # 8. Italic: remaining *text* (not a bullet or bold leftover) → _text_
+    text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"_\1_", text)
+
+    # 9. Restore bold / headings as Slack *bold*.
+    for i, inner in enumerate(_bold_texts):
+        text = text.replace(f"\x00B{i}\x00", f"*{inner}*")
+
+    # 10. Restore code.
+    for i, block in enumerate(_code_blocks):
+        text = text.replace(f"\x00CB{i}\x00", block)
+    for i, code in enumerate(_inline_codes):
+        text = text.replace(f"\x00IC{i}\x00", code)
+
+    return text
 # Channel lists are cached for 1h — long enough that a chat session sees
 # zero round-trips per click, short enough that a new channel surfaces
 # before users notice. Bumped manually by an org admin would be overkill;
@@ -140,7 +218,7 @@ async def post_message(
 
     payload: dict[str, Any] = {
         "channel": channel_id,
-        "text": text,
+        "text": md_to_mrkdwn(text),
         "mrkdwn": True,
         # Disable link unfurls by default; outbound AI text rarely benefits
         # from a third-party preview and unfurl previews are noisy.

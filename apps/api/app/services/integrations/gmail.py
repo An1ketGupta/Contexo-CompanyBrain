@@ -20,12 +20,15 @@ import asyncio
 import base64
 import logging
 from datetime import datetime, timedelta, timezone
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+import markdown as md
 
 from app.config import get_settings
 from app.database import get_service_client
@@ -253,12 +256,69 @@ def _build_mime(
     body: str,
     cc: str | None = None,
     reply_to: str | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Compose a multipart/alternative MIME message (plain + simple HTML).
+    """Compose a MIME message (plain + simple HTML, plus any attachments).
+
+    When `attachments` are supplied, wraps the text parts in a
+    `multipart/alternative` sub-part nested inside a `multipart/mixed` root —
+    the standard layout most clients expect for emails with both rich body
+    and file attachments.
+
+    Each attachment dict needs:
+        filename: str       — display name in the recipient's mail client
+        content:  bytes     — raw bytes (not base64); we encode here
+        mime_type: str      — e.g. "text/plain" (defaults to application/octet-stream)
 
     Returns a base64url-encoded string ready for users.messages.send's `raw`.
     """
-    message = MIMEMultipart("alternative")
+    # LLM-authored chat bodies arrive as markdown (bold, bullets, headings,
+    # links). Render to HTML so Gmail's HTML view shows the formatted output
+    # instead of raw `**` / `*` syntax. `nl2br` preserves the prior
+    # single-newline-as-break behavior; `sane_lists` keeps `* item` from
+    # merging into the previous paragraph.
+    html_body = md.markdown(
+        body,
+        extensions=["nl2br", "sane_lists", "fenced_code", "tables"],
+        output_format="html",
+    )
+    plain_part = MIMEText(body, "plain", "utf-8")
+    html_part = MIMEText(
+        f"<html><body style=\"font-family:-apple-system,sans-serif;font-size:14px;line-height:1.5;\">{html_body}</body></html>",
+        "html",
+        "utf-8",
+    )
+
+    if attachments:
+        root = MIMEMultipart("mixed")
+        alt = MIMEMultipart("alternative")
+        alt.attach(plain_part)
+        alt.attach(html_part)
+        root.attach(alt)
+
+        for att in attachments:
+            content = att.get("content")
+            if not content:
+                continue
+            mime_type = att.get("mime_type") or "application/octet-stream"
+            main_type, _, sub_type = mime_type.partition("/")
+            sub_type = sub_type or "octet-stream"
+            part = MIMEBase(main_type or "application", sub_type)
+            part.set_payload(content)
+            encoders.encode_base64(part)
+            filename = att.get("filename") or "attachment.bin"
+            part.add_header(
+                "Content-Disposition",
+                f'attachment; filename="{filename}"',
+            )
+            root.attach(part)
+
+        message: MIMEMultipart = root
+    else:
+        message = MIMEMultipart("alternative")
+        message.attach(plain_part)
+        message.attach(html_part)
+
     message["From"] = sender
     message["To"] = to
     message["Subject"] = subject
@@ -266,19 +326,6 @@ def _build_mime(
         message["Cc"] = cc
     if reply_to:
         message["Reply-To"] = reply_to
-
-    plain = MIMEText(body, "plain", "utf-8")
-    message.attach(plain)
-
-    # Minimal HTML rendering: paragraph per blank line, <br> inside.
-    paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
-    html_body = "".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in paragraphs) or "<p></p>"
-    html = MIMEText(
-        f"<html><body style=\"font-family:-apple-system,sans-serif;font-size:14px;line-height:1.5;\">{html_body}</body></html>",
-        "html",
-        "utf-8",
-    )
-    message.attach(html)
 
     return base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
 
@@ -292,13 +339,22 @@ async def send_email(
     body: str,
     cc: str | None = None,
     reply_to: str | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """POST to https://gmail.googleapis.com/gmail/v1/users/me/messages/send.
 
     Returns {message_id, thread_id}. Raises RuntimeError on a non-2xx
     response so the Inngest retry policy can do its work.
     """
-    raw = _build_mime(sender=sender, to=to, subject=subject, body=body, cc=cc, reply_to=reply_to)
+    raw = _build_mime(
+        sender=sender,
+        to=to,
+        subject=subject,
+        body=body,
+        cc=cc,
+        reply_to=reply_to,
+        attachments=attachments,
+    )
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
         resp = await client.post(

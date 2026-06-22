@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { AlertTriangle, Clock } from "lucide-react";
+import { AlertTriangle, Clock, Copy } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +25,15 @@ interface TimeSavingsResponse {
   }[];
 }
 
+interface TopCopiedMessage {
+  message_id: string;
+  conversation_id: string | null;
+  conversation_title: string;
+  copy_count: number;
+  preview: string;
+  intent: string | null;
+}
+
 interface AnalyticsResponse {
   period: "7d" | "30d" | "90d";
   stats: {
@@ -34,6 +43,7 @@ interface AnalyticsResponse {
     feedback_score: number | null;
     total_docs: number;
     docs_accessed: number;
+    copy_rate: number | null;
   };
   daily_queries: { day: string; count: number }[];
   user_breakdown: {
@@ -44,6 +54,7 @@ interface AnalyticsResponse {
     last_active: string;
   }[];
   top_documents: { name: string; citations: number }[];
+  top_copied: TopCopiedMessage[];
   intent_breakdown: { intent: string; count: number }[];
 }
 
@@ -138,7 +149,7 @@ function AnalyticsBody({
   period: string;
   timeSavings: TimeSavingsResponse | undefined;
 }) {
-  const { stats, daily_queries, user_breakdown, top_documents, intent_breakdown } =
+  const { stats, daily_queries, user_breakdown, top_documents, top_copied, intent_breakdown } =
     data;
 
   const adoption =
@@ -148,7 +159,7 @@ function AnalyticsBody({
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatCard
           label="Total queries"
           value={stats.total_queries.toLocaleString()}
@@ -174,6 +185,16 @@ function AnalyticsBody({
               ? "no feedback yet"
               : "positive feedback rate"
           }
+        />
+        <StatCard
+          label="Copy rate"
+          value={stats.copy_rate === null ? "—" : `${stats.copy_rate}%`}
+          hint={
+            stats.copy_rate === null
+              ? "no outputs copied yet"
+              : "of outputs copied by users"
+          }
+          progress={stats.copy_rate !== null ? stats.copy_rate / 100 : null}
         />
         <StatCard
           label="Docs accessed"
@@ -234,6 +255,41 @@ function AnalyticsBody({
           )}
         </section>
       </div>
+
+      {top_copied.length > 0 && (
+        <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
+          <div className="mb-4 flex items-center gap-1.5">
+            <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+            <h2 className="text-sm font-medium">Most copied outputs</h2>
+          </div>
+          <ul className="space-y-2">
+            {top_copied.map((msg, i) => (
+              <li
+                key={msg.message_id}
+                className="flex items-start gap-3 rounded-md py-1.5"
+              >
+                <span className="w-5 shrink-0 pt-0.5 text-xs font-mono text-muted-foreground">
+                  {i + 1}.
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs text-muted-foreground">
+                    {msg.conversation_title}
+                    {msg.intent && (
+                      <span className="ml-1.5 rounded bg-muted px-1 py-0.5 text-[10px]">
+                        {msg.intent}
+                      </span>
+                    )}
+                  </p>
+                  <p className="mt-0.5 text-sm text-foreground">{msg.preview}</p>
+                </div>
+                <Badge variant="outline" className="shrink-0 tabular-nums">
+                  {msg.copy_count}×
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
         <h2 className="mb-3 text-sm font-medium">User breakdown</h2>
@@ -357,8 +413,8 @@ function TimeSavedSection({
 function AnalyticsSkeleton() {
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
           <div
             key={i}
             className="space-y-2 rounded-lg border border-border bg-card p-4"

@@ -200,6 +200,8 @@ async def chat(
     confidence: ConfidenceEvent | None = None
     final_intent: str = ""
     competitor_matches: tuple[CompetitorMatch, ...] = ()
+    final_usage = None
+    final_retrieved_chunk_ids: tuple[str, ...] = ()
     error_msg: str | None = None
 
     async for event in execute_task(
@@ -221,6 +223,8 @@ async def chat(
             trace_id = event.trace_id
             final_intent = event.intent
             competitor_matches = event.competitor_matches
+            final_usage = event.usage
+            final_retrieved_chunk_ids = event.retrieved_chunk_ids
         elif isinstance(event, ConfidenceEvent):
             confidence = event
         elif isinstance(event, ErrorEvent):
@@ -296,7 +300,11 @@ async def chat(
         source_count=len(final_sources or []),
         tool_calls=tool_calls_made,
         latency_ms=int((time.monotonic() - _turn_started_at) * 1000),
-        model_used=_get_active_llm_model_name(),
+        model_used=(final_usage.last_model if final_usage and final_usage.last_model else _get_active_llm_model_name()),
+        input_tokens=final_usage.input_tokens if final_usage else 0,
+        output_tokens=final_usage.output_tokens if final_usage else 0,
+        cost_micros=final_usage.cost_micros if final_usage else 0,
+        retrieved_chunk_ids=list(final_retrieved_chunk_ids),
     )
 
     return ChatResponse(
@@ -424,6 +432,8 @@ async def chat_stream(
         confidence_evt: ConfidenceEvent | None = None
         final_intent: str = ""
         competitor_matches: tuple[CompetitorMatch, ...] = ()
+        final_usage = None
+        final_retrieved_chunk_ids: tuple[str, ...] = ()
         had_error = False
         error_payload: dict | None = None
 
@@ -456,6 +466,8 @@ async def chat_stream(
                     trace_id = ev.trace_id
                     final_intent = ev.intent
                     competitor_matches = ev.competitor_matches
+                    final_usage = ev.usage
+                    final_retrieved_chunk_ids = ev.retrieved_chunk_ids
                 elif isinstance(ev, ConfidenceEvent):
                     confidence_evt = ev
                 elif isinstance(ev, ErrorEvent):
@@ -546,7 +558,11 @@ async def chat_stream(
                     source_count=len(final_sources or []),
                     tool_calls=tool_calls_made,
                     latency_ms=int((time.monotonic() - _turn_started_at) * 1000),
-                    model_used=_get_active_llm_model_name(),
+                    model_used=(final_usage.last_model if final_usage and final_usage.last_model else _get_active_llm_model_name()),
+                    input_tokens=final_usage.input_tokens if final_usage else 0,
+                    output_tokens=final_usage.output_tokens if final_usage else 0,
+                    cost_micros=final_usage.cost_micros if final_usage else 0,
+                    retrieved_chunk_ids=list(final_retrieved_chunk_ids),
                 )
                 yield _sse(
                     {
@@ -1192,6 +1208,27 @@ async def update_message_feedback(
             metadata={"feedback": body.feedback},
         )
 
+    # V5 #106 Phase 1: positive feedback = high-quality training signal.
+    # Fire-and-forget so a slow training-pair insert never blocks the user's
+    # thumbs-up. Service uses upsert + idempotent on (org, chunk, query, signal).
+    if body.feedback == "positive" and current_user.get("org_id"):
+        try:
+            from app.services.embedding_training import (
+                collect_training_pairs_for_message,
+            )
+
+            asyncio.create_task(
+                collect_training_pairs_for_message(
+                    message_id=message_id,
+                    org_id=current_user["org_id"],
+                    signal_type="positive_feedback",
+                )
+            )
+        except Exception as exc:
+            log.warning(
+                "training_pair_schedule_failed", message_id=message_id, error=str(exc)
+            )
+
     # Agent Day 15: fire the output-improvement loop on negative feedback.
     # Idempotent on (message_id) — re-tapping thumbs-down won't re-analyse.
     if body.feedback == "negative" and current_user.get("org_id"):
@@ -1295,6 +1332,24 @@ async def record_message_copy(
                 )
         except Exception as exc:
             log.debug("langfuse_copy_score_failed", error=str(exc))
+
+    # V5 #106 Phase 1: copying is the strongest implicit positive signal.
+    # Collect on EVERY copy event — the unique index dedupes per
+    # (org, chunk, query, signal) so a multi-copy doesn't spam the table.
+    try:
+        from app.services.embedding_training import (
+            collect_training_pairs_for_message,
+        )
+
+        asyncio.create_task(
+            collect_training_pairs_for_message(
+                message_id=message_id,
+                org_id=org_id,
+                signal_type="copy",
+            )
+        )
+    except Exception as exc:
+        log.warning("training_pair_copy_schedule_failed", error=str(exc))
 
     return {"copy_count": next_count, "org_id": org_id}
 
@@ -1431,6 +1486,8 @@ async def regenerate_message(
         confidence_evt: ConfidenceEvent | None = None
         final_intent: str = ""
         competitor_matches: tuple[CompetitorMatch, ...] = ()
+        final_usage = None
+        final_retrieved_chunk_ids: tuple[str, ...] = ()
         had_error = False
         error_payload: dict | None = None
 
@@ -1462,6 +1519,8 @@ async def regenerate_message(
                     trace_id = ev.trace_id
                     final_intent = ev.intent
                     competitor_matches = ev.competitor_matches
+                    final_usage = ev.usage
+                    final_retrieved_chunk_ids = ev.retrieved_chunk_ids
                 elif isinstance(ev, ConfidenceEvent):
                     confidence_evt = ev
                 elif isinstance(ev, ErrorEvent):
@@ -2048,12 +2107,21 @@ def _log_query_history(
     tool_calls: int,
     latency_ms: int | None,
     model_used: str | None,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cost_micros: int = 0,
+    retrieved_chunk_ids: list[str] | None = None,
 ) -> None:
     """V3 #91 — fire-and-forget write into `query_logs` for the /history page.
 
     Never raises; the inner writer swallows exceptions. We use the synchronous
     `log_query_async` (which schedules the IO on an asyncio task) so the
     request handler returns immediately without awaiting the DB insert.
+
+    V5 #75 / #106 additions: also stamps token usage, cost (micros), and the
+    full retrieval set so the founder cost dashboard and the embedding
+    fine-tune training-pair collector have everything they need from a
+    single source-of-truth row per turn.
     """
     try:
         from app.services.query_logs import log_query_async
@@ -2070,6 +2138,10 @@ def _log_query_history(
             tool_calls=tool_calls,
             latency_ms=latency_ms,
             model_used=model_used,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_micros=cost_micros,
+            retrieved_chunk_ids=retrieved_chunk_ids or [],
         )
     except Exception as exc:
         log.warning("query_log_schedule_failed", error=str(exc))

@@ -1,8 +1,11 @@
-import { Button, Section, Text } from "@react-email/components";
+import { Button, Link, Section, Text } from "@react-email/components";
 import { EmailShell, button, muted, p } from "./_layout";
 
 export interface FeedbackThresholdAlertExample {
   id: string;
+  // Optional so older queued events (pre-deep-link rollout) still render.
+  // We just degrade to a non-clickable snippet when absent.
+  conversation_id?: string | null;
   snippet: string;
   created_at: string;
 }
@@ -28,7 +31,15 @@ export function FeedbackThresholdAlertEmail({
   examples = [],
   app_url,
 }: FeedbackThresholdAlertEmailProps) {
-  const dashboardUrl = `${app_url.replace(/\/+$/, "")}/admin/analytics?period=7d`;
+  const base = app_url.replace(/\/+$/, "");
+  // Deep link to the filtered feedback dashboard. `since` keeps the user in
+  // the same rolling window the email reflects so the row counts agree.
+  const feedbackUrl = `${base}/admin/feedback?reason=${encodeURIComponent(
+    failure_reason,
+  )}&days=${rollup_days}`;
+  // Primary CTA when there's a suggested fix: drop the admin straight into
+  // the "Create doc" dialog seeded with that fix.
+  const createDocUrl = `${feedbackUrl}&create=1`;
   const explainer = REASON_EXPLAINERS[failure_reason] ?? "";
 
   return (
@@ -49,6 +60,11 @@ export function FeedbackThresholdAlertEmail({
         <Section style={previewBox}>
           <Text style={previewLabel}>Suggested fix</Text>
           <Text style={previewText}>{suggested_doc}</Text>
+          <Section style={{ marginTop: 12 }}>
+            <Button href={createDocUrl} style={button}>
+              Create this document
+            </Button>
+          </Section>
         </Section>
       ) : null}
 
@@ -57,20 +73,33 @@ export function FeedbackThresholdAlertEmail({
           <Text style={{ ...p, marginTop: 24, fontWeight: 600 }}>
             Example responses
           </Text>
-          {examples.map((ex) => (
-            <Section key={ex.id} style={exampleBox}>
-              <Text style={exampleSnippet}>“{ex.snippet}”</Text>
-              <Text style={exampleMeta}>
-                {new Date(ex.created_at).toLocaleString()}
-              </Text>
-            </Section>
-          ))}
+          {examples.map((ex) => {
+            const chatUrl = ex.conversation_id
+              ? `${base}/chat/${ex.conversation_id}#m-${ex.id}`
+              : null;
+            return (
+              <Section key={ex.id} style={exampleBox}>
+                <Text style={exampleSnippet}>“{ex.snippet}”</Text>
+                <Text style={exampleMeta}>
+                  {new Date(ex.created_at).toLocaleString()}
+                  {chatUrl ? (
+                    <>
+                      {" · "}
+                      <Link href={chatUrl} style={exampleLink}>
+                        Open in chat
+                      </Link>
+                    </>
+                  ) : null}
+                </Text>
+              </Section>
+            );
+          })}
         </>
       ) : null}
 
       <Section style={{ margin: "24px 0" }}>
-        <Button href={dashboardUrl} style={button}>
-          Open analytics dashboard
+        <Button href={feedbackUrl} style={secondaryButton}>
+          Review all {count} flagged responses
         </Button>
       </Section>
 
@@ -144,4 +173,23 @@ const exampleMeta: React.CSSProperties = {
   color: "#a1a1aa",
   fontSize: "11px",
   margin: "4px 0 0 0",
+};
+
+const exampleLink: React.CSSProperties = {
+  color: "#3f3f46",
+  textDecoration: "underline",
+};
+
+// Outlined variant used for the secondary CTA when there's already a
+// primary "Create this document" button above it.
+const secondaryButton: React.CSSProperties = {
+  backgroundColor: "#ffffff",
+  border: "1px solid #d4d4d8",
+  borderRadius: "6px",
+  color: "#27272a",
+  display: "inline-block",
+  fontSize: "13px",
+  fontWeight: 500,
+  padding: "10px 16px",
+  textDecoration: "none",
 };

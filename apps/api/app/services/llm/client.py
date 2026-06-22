@@ -12,6 +12,7 @@ from google.genai import types as gt
 
 from app.config import get_settings
 from app.services.langfuse import observe, update_current_generation
+from app.services.llm_cost import record_usage as record_turn_usage
 
 from .types import LLMResponse, Message, StreamChunk, ToolCall
 
@@ -176,17 +177,30 @@ class GeminiClient:
         queue: asyncio.Queue[StreamChunk | None] = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
+        model_name = self.model
+
         def _producer() -> None:
             try:
                 stream = self._client.models.generate_content_stream(
-                    model=self.model,
+                    model=model_name,
                     contents=contents,
                     config=config,
                 )
+                last_chunk: Any = None
                 for chunk in stream:
+                    last_chunk = chunk
                     parsed = _parse_stream_chunk(chunk)
                     for ev in parsed:
                         loop.call_soon_threadsafe(queue.put_nowait, ev)
+                # Stream's usage_metadata rides on the FINAL chunk in genai.
+                # Capture it so cost tracking + Langfuse get totals for the
+                # streamed turn (otherwise the streaming generation rounds
+                # are invisible to the dashboard).
+                if last_chunk is not None:
+                    try:
+                        _record_generation_metadata(model_name, last_chunk)
+                    except Exception as meta_exc:
+                        log.debug("stream_usage_record_failed: %s", meta_exc)
             except Exception as exc:
                 loop.call_soon_threadsafe(
                     queue.put_nowait, StreamChunk(kind="error", error=str(exc))
@@ -288,12 +302,17 @@ def _to_genai_contents(messages: list[Message]) -> list[gt.Content]:
 # ── Response parsing ─────────────────────────────────────────────────────────
 
 def _record_generation_metadata(model: str, response: Any) -> None:
-    """Stamp model + token usage onto the active Langfuse generation span.
+    """Stamp model + token usage onto the active Langfuse generation span AND
+    accumulate it into the per-turn TurnUsage ContextVar so the cost dashboard
+    + query_logs writer get accurate per-turn totals.
 
     Gemini reports usage in `response.usage_metadata` (prompt_token_count,
-    candidates_token_count, total_token_count). No-op when tracing is off.
+    candidates_token_count, total_token_count). No-op for Langfuse when
+    tracing is off; the TurnUsage write is a no-op when no turn is bound.
     """
     usage: dict[str, int] | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
     meta = getattr(response, "usage_metadata", None)
     if meta is not None:
         prompt = getattr(meta, "prompt_token_count", None)
@@ -302,12 +321,18 @@ def _record_generation_metadata(model: str, response: Any) -> None:
         if any(v is not None for v in (prompt, completion, total)):
             usage = {}
             if prompt is not None:
-                usage["input"] = int(prompt)
+                prompt_tokens = int(prompt)
+                usage["input"] = prompt_tokens
             if completion is not None:
-                usage["output"] = int(completion)
+                completion_tokens = int(completion)
+                usage["output"] = completion_tokens
             if total is not None:
                 usage["total"] = int(total)
     update_current_generation(model=model, usage=usage)
+    # Per-turn cost accumulator — Langfuse is observational, this is the
+    # source of truth for the in-app cost dashboard so it MUST run even when
+    # tracing is disabled.
+    record_turn_usage(model, prompt_tokens, completion_tokens)
 
 
 def _parse_response(response: Any) -> LLMResponse:

@@ -23,6 +23,8 @@ from .integration_functions import FUNCTIONS as _INTEGRATION_FUNCTIONS
 from .support_functions import FUNCTIONS as _SUPPORT_FUNCTIONS
 from .meeting_functions import FUNCTIONS as _MEETING_FUNCTIONS
 from .query_log_retention import FUNCTIONS as _QUERY_LOG_RETENTION_FUNCTIONS
+from .report_functions import FUNCTIONS as _REPORT_FUNCTIONS
+from .embedding_finetune_functions import FUNCTIONS as _EMBEDDING_FT_FUNCTIONS
 
 FUNCTIONS = [
     *_DOC_FUNCTIONS,
@@ -45,6 +47,8 @@ FUNCTIONS = [
     *_VERSION_DIFF_FUNCTIONS,
     *_ARCHIVE_FUNCTIONS,
     *_QUERY_LOG_RETENTION_FUNCTIONS,
+    *_REPORT_FUNCTIONS,
+    *_EMBEDDING_FT_FUNCTIONS,
 ]
 
 __all__ = ["FUNCTIONS", "get_inngest_client", "process_document"]

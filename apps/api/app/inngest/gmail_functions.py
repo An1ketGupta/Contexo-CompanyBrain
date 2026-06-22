@@ -15,6 +15,7 @@ the frontend uses to render the re-auth banner inline on that message.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -112,6 +113,26 @@ async def gmail_send_email(ctx: inngest.Context) -> dict[str, Any]:
         )
         return {"status": "failed", "reason": "gmail_send_scope_missing"}
 
+    # Decode any attachments the router built (e.g. the Sources_used.txt
+    # rendered from the citation context). They ride the event as base64
+    # so the Inngest JSON payload stays well-formed.
+    raw_attachments = data.get("attachments") or []
+    decoded_attachments: list[dict[str, Any]] = []
+    for att in raw_attachments:
+        b64 = att.get("content_b64")
+        if not b64:
+            continue
+        try:
+            decoded = base64.b64decode(b64)
+        except Exception as exc:
+            log.warning("attachment decode failed (%s): %s", att.get("filename"), exc)
+            continue
+        decoded_attachments.append({
+            "filename": att.get("filename") or "attachment.bin",
+            "mime_type": att.get("mime_type") or "application/octet-stream",
+            "content": decoded,
+        })
+
     # Step 2: send (with permission-error short-circuit for unrecoverable
     # auth failures so we don't waste retry budget on revoked tokens).
     try:
@@ -125,6 +146,7 @@ async def gmail_send_email(ctx: inngest.Context) -> dict[str, Any]:
                 body=data["body"],
                 cc=data.get("cc"),
                 reply_to=data.get("reply_to"),
+                attachments=decoded_attachments or None,
             ),
         )
     except PermissionError as exc:

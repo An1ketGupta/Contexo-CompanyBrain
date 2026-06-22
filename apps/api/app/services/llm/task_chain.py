@@ -40,6 +40,7 @@ from app.services.langfuse import (
     start_trace_span,
     update_current_trace,
 )
+from app.services.llm_cost import TurnUsage, end_turn, start_turn
 from app.services.org_config import (
     ConfidenceThresholds,
     get_confidence_thresholds,
@@ -128,6 +129,15 @@ class FinalEvent:
     # at persistence time) so the chat router writes the same matches the UI
     # already rendered, with no race against a mid-flight watchlist edit.
     competitor_matches: tuple[CompetitorMatch, ...] = ()
+    # Per-turn LLM token + cost totals. Populated from the TurnUsage
+    # ContextVar drained at the end of execute_task. The chat router stamps
+    # these onto the query_logs row for the LLM cost dashboard. None when
+    # no LLM calls happened (defensive — shouldn't occur in production).
+    usage: TurnUsage | None = None
+    # Chunk-ids of every retrieval result surfaced this turn (cited + uncited).
+    # Powers Day-4 training-pair hard-negative collection. Length matches
+    # `len(all_hits)` after dedupe, capped by chat_max_context_chunks.
+    retrieved_chunk_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -282,6 +292,11 @@ async def execute_task(
     messages: list[Message] = list(history or [])
     messages.append(Message(role="user", content=user_message))
 
+    # Bind a fresh per-turn token/cost accumulator. Every LLM call inside this
+    # task will add to it via `record_usage` in the client. We drain it on
+    # FinalEvent so the chat router can persist it onto query_logs.
+    start_turn()
+
     # Day 4 #51 — intent classification. Zero-cost keyword pass; the result
     # drives a per-intent system-prompt overlay and flows to the UI so it
     # can render a mode badge. Emitted *before* any retrieval so the UI can
@@ -357,6 +372,25 @@ async def execute_task(
     org_instructions = (
         f"{org_instructions}\n\n{intent_overlay}" if org_instructions else intent_overlay
     )
+
+    # Sign-as hint, gated on TASK_GENERATION. Other intents (Q&A, analysis,
+    # search) don't need a signature, so we save the tokens + the extra DB
+    # roundtrip on those turns. The hint is opinionated about placeholders
+    # because the model defaults to `[Your Name]` when it doesn't know who's
+    # writing — we'd rather have it sign with whatever we know than leave a
+    # template hole the user has to hand-edit.
+    if intent_result.intent == QueryIntent.TASK_GENERATION and user_id:
+        display_name = await _resolve_display_name(db_client, user_id)
+        if display_name:
+            sign_as_note = (
+                f"SIGN AS: {display_name}. When the deliverable is an email, "
+                f"message, or any signed correspondence, sign with this exact "
+                f"name. Never use placeholders like [Your Name], [Name], or "
+                f"[Signature]."
+            )
+            org_instructions = (
+                f"{org_instructions}\n\n{sign_as_note}" if org_instructions else sign_as_note
+            )
 
     started = time.perf_counter()
     final_text = ""
@@ -569,6 +603,10 @@ async def execute_task(
                 log.warning("competitor_detection_failed: %s", exc)
 
         trace_id = current_trace_id()
+        # Drain the per-turn accumulator. `end_turn()` detaches the ContextVar
+        # so any stray LLM calls after FinalEvent (none expected) don't bleed
+        # into the next turn's totals.
+        turn_usage = end_turn()
         yield FinalEvent(
             text=final_text,
             sources=sources,
@@ -576,6 +614,8 @@ async def execute_task(
             trace_id=trace_id,
             intent=intent_result.intent.value,
             competitor_matches=competitor_matches,
+            usage=turn_usage,
+            retrieved_chunk_ids=tuple(s["chunk_id"] for s in sources if s.get("chunk_id")),
         )
 
 
@@ -621,6 +661,25 @@ async def _enqueue_knowledge_gap(
         )
 
 
+async def _resolve_display_name(client: Client, user_id: str) -> str | None:
+    """Fetch the user's display_name. Returns None when missing/blank so the
+    caller can skip injecting an empty signature hint."""
+    try:
+        result = await asyncio.to_thread(
+            lambda: client.table("users")
+            .select("display_name")
+            .eq("id", user_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception:
+        return None
+    name = (getattr(result, "data", None) or {}).get("display_name") if result else None
+    if not name or not str(name).strip():
+        return None
+    return str(name).strip()
+
+
 async def _scope_system_note(client: Client, document_id: str) -> str | None:
     """One-line scope reminder injected into the system prompt."""
     try:
@@ -657,14 +716,27 @@ async def _run_search(
     # wrapper handles fail-open semantics if Upstash is unreachable. Document-
     # scoped (single doc) searches still bypass the cache inside the wrapper
     # because per-conversation hit rates are too low to justify the bookkeeping.
-    return await hybrid_search_cached(
-        query,
-        org_id,
-        client,
-        k=k,
-        document_id=document_id,
-        document_ids=document_ids,
+    #
+    # V5 #106: bind the org context so the embedder factory can swap in a
+    # fine-tuned model if this org has one deployed. Token-based unbind in
+    # finally so concurrent searches in another task don't see stale state.
+    from app.services.ingestion.embedder import (
+        bind_org_for_embedding,
+        reset_org_embedding,
     )
+
+    token = bind_org_for_embedding(org_id)
+    try:
+        return await hybrid_search_cached(
+            query,
+            org_id,
+            client,
+            k=k,
+            document_id=document_id,
+            document_ids=document_ids,
+        )
+    finally:
+        reset_org_embedding(token)
 
 
 async def _resolve_tag_scope(

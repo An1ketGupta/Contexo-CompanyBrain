@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   BarChart3,
+  Brain,
   CalendarDays,
   CheckCircle2,
   FileQuestion,
@@ -22,6 +23,7 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
+  ThumbsDown,
   Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -75,6 +77,12 @@ const NAV_ITEMS: NavItem[] = [
     adminOnly: true,
   },
   {
+    href: "/admin/feedback",
+    label: "Flagged feedback",
+    icon: ThumbsDown,
+    adminOnly: true,
+  },
+  {
     href: "/admin/confidence",
     label: "Confidence",
     icon: Gauge,
@@ -102,6 +110,18 @@ const NAV_ITEMS: NavItem[] = [
     href: "/admin/competitor-mentions",
     label: "Competitors",
     icon: ShieldAlert,
+    adminOnly: true,
+  },
+  {
+    href: "/admin/rate-limits",
+    label: "Rate limits",
+    icon: Gauge,
+    adminOnly: true,
+  },
+  {
+    href: "/admin/embeddings",
+    label: "Embeddings",
+    icon: Brain,
     adminOnly: true,
   },
   { href: "/settings", label: "Settings", icon: Settings },

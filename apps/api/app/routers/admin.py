@@ -1093,3 +1093,488 @@ async def dismiss_competitor_mentions(
     res = await asyncio.to_thread(_update)
     affected = len(res.data or [])
     return {"dismissed": affected}
+
+
+# ── Rate limits (V5 #78) ────────────────────────────────────────────────────
+
+
+@router.get("/rate-limits")
+async def get_admin_rate_limits(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Org-level quota + per-user breakdown for the admin dashboard.
+
+    Reads the org's live monthly quota from the SAME Upstash key the limiter
+    increments (`get_usage_snapshot`), so the meter never disagrees with the
+    gate that actually 402s. Per-user counts come from `query_logs` over the
+    last 30 days — the limiter doesn't tally per-user (it gates per-minute
+    sliding window, not per-month) so this is the authoritative source for
+    "which teammate consumed the quota".
+    """
+    from app.services.rate_limit import get_usage_snapshot
+
+    org_id = await _require_admin(current_user)
+    now = datetime.now(timezone.utc)
+    thirty_ago = now - timedelta(days=30)
+    one_day_ago = now - timedelta(days=1)
+    svc = get_service_client()
+
+    snap = await get_usage_snapshot(org_id)
+
+    def _per_user() -> list[dict[str, Any]]:
+        rows = (
+            svc.table("query_logs")
+            .select("user_id, created_at")
+            .eq("org_id", org_id)
+            .gte("created_at", thirty_ago.isoformat())
+            .limit(20_000)
+            .execute()
+            .data
+            or []
+        )
+        # Tally per-user in Python — small set sizes, simpler than PG GROUP BY
+        # through PostgREST.
+        agg: dict[str, dict[str, int]] = {}
+        one_day_iso = one_day_ago.isoformat()
+        for r in rows:
+            uid = r.get("user_id") or ""
+            if not uid:
+                continue
+            bucket = agg.setdefault(uid, {"queries_30d": 0, "queries_today": 0})
+            bucket["queries_30d"] += 1
+            if (r.get("created_at") or "") >= one_day_iso:
+                bucket["queries_today"] += 1
+        if not agg:
+            return []
+
+        # Resolve display names from `users`. The auth.users emails are also
+        # joined in best-effort — failures are tolerated so a deleted user
+        # never crashes the dashboard.
+        users_res = (
+            svc.table("users")
+            .select("id, display_name")
+            .in_("id", list(agg.keys()))
+            .execute()
+            .data
+            or []
+        )
+        name_by_id = {u["id"]: (u.get("display_name") or "") for u in users_res}
+
+        out: list[dict[str, Any]] = []
+        for uid, counts in agg.items():
+            email = None
+            try:
+                au = svc.auth.admin.get_user_by_id(uid)
+                email = getattr(getattr(au, "user", None), "email", None)
+            except Exception:
+                email = None
+            out.append(
+                {
+                    "user_id": uid,
+                    "name": name_by_id.get(uid) or "Member",
+                    "email": email,
+                    "queries_30d": counts["queries_30d"],
+                    "queries_today": counts["queries_today"],
+                }
+            )
+        out.sort(key=lambda r: r["queries_30d"], reverse=True)
+        return out
+
+    per_user = await asyncio.to_thread(_per_user)
+
+    # Linear projection: extrapolate this month's run-rate to month-end.
+    # day_of_month==0 is impossible (UTC always has day≥1) but we guard anyway.
+    day_of_month = now.day
+    days_in_month = 30  # close enough for projection — not displayed
+    projected = (
+        int(snap.used / day_of_month * days_in_month) if day_of_month > 0 else snap.used
+    )
+    will_exceed = bool(snap.limit) and projected > (snap.limit or 0)
+
+    reset_at = now + timedelta(seconds=snap.seconds_until_reset)
+    pct_used: float | None = None
+    if snap.limit:
+        pct_used = round(snap.used / snap.limit * 100, 1)
+
+    return {
+        "org_quota": {
+            "plan": snap.plan,
+            "used": snap.used,
+            "limit": snap.limit,  # null = unlimited
+            "unlimited": snap.limit is None,
+            "pct_used": pct_used,
+            "reset_at": reset_at.isoformat(),
+            "seconds_until_reset": snap.seconds_until_reset,
+            "projected_month_end": projected,
+            "will_exceed": will_exceed,
+            "source": snap.source,
+        },
+        "per_user": per_user,
+    }
+
+
+# ── Embedding fine-tune (V5 #106) ───────────────────────────────────────────
+
+
+@router.get("/embeddings/status")
+async def get_embedding_status(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """State of the org's fine-tuning: training pair count, current model,
+    last eval scores, any active job."""
+    from app.config import get_settings
+    from app.services.embedding_finetune import org_has_active_job
+
+    org_id = await _require_admin(current_user)
+    svc = get_service_client()
+    settings = get_settings()
+
+    def _query() -> dict[str, Any]:
+        org = (
+            svc.table("organizations")
+            .select("id, name, plan, metadata")
+            .eq("id", org_id)
+            .maybe_single()
+            .execute()
+            .data
+            or {}
+        )
+        pair_count = (
+            svc.table("embedding_training_pairs")
+            .select("id", count="exact", head=True)
+            .eq("org_id", org_id)
+            .execute()
+            .count
+            or 0
+        )
+        last_job = (
+            svc.table("embedding_fine_tune_jobs")
+            .select(
+                "id, status, base_model, fine_tuned_model_id, training_pairs_count, "
+                "eval_score_before, eval_score_after, error_message, started_at, "
+                "completed_at, created_at"
+            )
+            .eq("org_id", org_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        return {
+            "org": org,
+            "pair_count": pair_count,
+            "last_job": last_job[0] if last_job else None,
+        }
+
+    raw = await asyncio.to_thread(_query)
+    org_meta = (raw["org"].get("metadata") or {}) if isinstance(raw["org"].get("metadata"), dict) else {}
+    active = await asyncio.to_thread(lambda: org_has_active_job(org_id))
+
+    eval_improvement: float | None = None
+    last_job = raw["last_job"]
+    if last_job and last_job.get("eval_score_after") is not None and last_job.get("eval_score_before") is not None:
+        eval_improvement = round(
+            float(last_job["eval_score_after"]) - float(last_job["eval_score_before"]),
+            4,
+        )
+
+    return {
+        "plan": raw["org"].get("plan") or "free",
+        "is_eligible": (raw["org"].get("plan") or "") in {"business", "enterprise"},
+        "backend_configured": bool(settings.modal_finetune_endpoint),
+        "training_pairs": raw["pair_count"],
+        "min_pairs": settings.embedding_finetune_min_pairs,
+        "recommended_pairs": settings.embedding_finetune_recommended_pairs,
+        "current_model": org_meta.get("embedding_model"),
+        "fine_tuned_at": org_meta.get("embedding_fine_tuned_at"),
+        "eval_improvement": eval_improvement,
+        "last_job": last_job,
+        "active_job": active,
+    }
+
+
+@router.post("/embeddings/fine-tune", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_embedding_fine_tune(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Start a fine-tune job. Enterprise / business plan only. Refuses if
+    another job for this org is already in flight."""
+    import inngest as _inngest_pkg
+
+    from app.config import get_settings
+    from app.inngest.client import get_inngest_client
+    from app.services.embedding_finetune import org_has_active_job
+
+    org_id = await _require_admin(current_user)
+    settings = get_settings()
+    svc = get_service_client()
+
+    org = await asyncio.to_thread(
+        lambda: svc.table("organizations")
+        .select("id, plan")
+        .eq("id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    plan = ((org.data or {}) if org else {}).get("plan") or "free"
+    if plan not in {"business", "enterprise"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Fine-tuning requires the Business or Enterprise plan.",
+        )
+
+    if not settings.modal_finetune_endpoint:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Fine-tuning backend not configured. Set MODAL_FINETUNE_ENDPOINT.",
+        )
+
+    active = await asyncio.to_thread(lambda: org_has_active_job(org_id))
+    if active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A fine-tune job is already in progress (status={active.get('status')}).",
+        )
+
+    pair_count = await asyncio.to_thread(
+        lambda: svc.table("embedding_training_pairs")
+        .select("id", count="exact", head=True)
+        .eq("org_id", org_id)
+        .execute()
+        .count
+    ) or 0
+    if pair_count < settings.embedding_finetune_min_pairs:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Need at least {settings.embedding_finetune_min_pairs} training pairs "
+                f"to fine-tune (have {pair_count})."
+            ),
+        )
+
+    def _create_job() -> dict[str, Any]:
+        res = (
+            svc.table("embedding_fine_tune_jobs")
+            .insert(
+                {
+                    "org_id": org_id,
+                    "status": "pending",
+                    "triggered_by": current_user.get("user_id"),
+                    "training_pairs_count": pair_count,
+                }
+            )
+            .execute()
+            .data
+            or []
+        )
+        return res[0] if res else {}
+
+    job_row = await asyncio.to_thread(_create_job)
+    if not job_row:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not create fine-tune job.",
+        )
+
+    client = get_inngest_client()
+    await client.send(
+        _inngest_pkg.Event(
+            name="embeddings/fine-tune",
+            data={
+                "org_id": org_id,
+                "job_id": job_row["id"],
+                "base_model": job_row.get("base_model"),
+            },
+        )
+    )
+    return {"job_id": job_row["id"], "status": "started"}
+
+
+# ── Day 15: actionable feedback-alert surface ───────────────────────────────
+#
+# The threshold-alert email points admins here. Rows are negative-feedback
+# assistant messages with feedback_analysis already classified, joined with
+# the parent user query so the admin sees what was asked, what answered,
+# and why it was flagged — all in one row, deep-linkable to the chat.
+
+_FEEDBACK_REASONS = {
+    "wrong_tone",
+    "missing_context",
+    "outdated_policy",
+    "hallucination",
+    "wrong_format",
+    "unknown",
+}
+
+
+@router.get("/feedback-flagged")
+async def list_feedback_flagged(
+    days: int = Query(default=7, ge=1, le=90),
+    reason: str | None = Query(default=None, max_length=40),
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Recent negative-feedback messages with LLM-classified failure reason.
+
+    Excludes messages still awaiting analysis (`feedback_analysis IS NULL`) —
+    the threshold-alert flow only ever cares about classified rows, and the
+    partial index in migration 035 makes the filtered query cheap.
+    """
+    org_id = await _require_admin(current_user)
+    if reason and reason not in _FEEDBACK_REASONS:
+        raise HTTPException(status_code=400, detail="unknown_reason")
+
+    svc = get_service_client()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    def _query() -> Any:
+        q = (
+            svc.table("messages")
+            .select(
+                "id, conversation_id, content, sources, "
+                "feedback_analysis, created_at"
+            )
+            .eq("org_id", org_id)
+            .eq("feedback", "negative")
+            .filter("feedback_analysis", "not.is", "null")
+            .gte("created_at", cutoff)
+        )
+        if reason:
+            q = q.filter(
+                "feedback_analysis->>failure_reason", "eq", reason,
+            )
+        return q.order("created_at", desc=True).limit(limit).execute()
+
+    res = await asyncio.to_thread(_query)
+    rows = res.data or []
+
+    # Per-row parent-query lookup. The N+1 is acceptable here — `limit` is
+    # bounded to 200 and these are short bounded reads on an indexed
+    # (conversation_id, role, created_at) path.
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        analysis = r.get("feedback_analysis") or {}
+        parent_res = await asyncio.to_thread(
+            lambda r=r: svc.table("messages")
+            .select("content")
+            .eq("conversation_id", r["conversation_id"])
+            .eq("role", "user")
+            .lt("created_at", r["created_at"])
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        query_text = ((parent_res.data or [{}])[0] or {}).get("content") or ""
+        items.append({
+            "message_id": r["id"],
+            "conversation_id": r["conversation_id"],
+            "snippet": _trim(r.get("content") or "", 320),
+            "query": _trim(query_text, 240),
+            "sources": (r.get("sources") or [])[:5],
+            "failure_reason": analysis.get("failure_reason") or "unknown",
+            "suggested_doc": analysis.get("suggested_doc"),
+            "alerted_at": analysis.get("alerted_at"),
+            "created_at": r["created_at"],
+        })
+
+    # Roll up by reason for the filter chips so the UI can show counts
+    # without a second round trip.
+    reasons_summary: dict[str, int] = {}
+    for i in items:
+        rsn = i["failure_reason"]
+        reasons_summary[rsn] = reasons_summary.get(rsn, 0) + 1
+
+    return {
+        "days": days,
+        "reason": reason,
+        "items": items,
+        "reasons": reasons_summary,
+    }
+
+
+def _trim(s: str, n: int) -> str:
+    s = (s or "").strip().replace("\r", " ").replace("\n", " ")
+    return s[: n - 1] + "…" if len(s) > n else s
+
+
+class FeedbackDocFromSuggestion(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    content: str = Field(..., min_length=1, max_length=200_000)
+    # Lineage: the messages whose feedback motivated this doc. Stored on
+    # documents.metadata so we can later show "this doc resolved N flagged
+    # messages" or unwind a wrong fix.
+    source_message_ids: list[str] = Field(default_factory=list, max_length=20)
+    failure_reason: str | None = Field(default=None, max_length=40)
+
+    @field_validator("failure_reason")
+    @classmethod
+    def _validate_reason(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if v not in _FEEDBACK_REASONS:
+            raise ValueError("unknown failure_reason")
+        return v
+
+
+@router.post("/feedback-flagged/from-suggestion", status_code=status.HTTP_201_CREATED)
+async def create_doc_from_suggestion(
+    body: FeedbackDocFromSuggestion,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Create a real document from an admin-edited suggested-fix text.
+
+    Mirrors the document-draft approve flow: insert a `documents` row in
+    `processing`, queue `doc/process-text` against the same chunk+embed
+    pipeline that Notion/Drive ingest uses. The doc becomes searchable
+    once Inngest flips status to `ready`.
+    """
+    org_id = await _require_admin(current_user)
+    user_id = current_user["user_id"]
+    svc = get_service_client()
+
+    title = body.title.strip() or "Feedback-driven guidance"
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="empty_content")
+
+    # `source='upload'` keeps us inside the documents_source_check CHECK
+    # constraint (migration 036). Provenance lives in metadata.
+    doc_row = await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .insert({
+            "org_id": org_id,
+            "name": title[:255],
+            "file_type": "md",
+            "status": "processing",
+            "uploaded_by": user_id,
+            "source": "upload",
+            "metadata": {
+                "origin": "feedback_alert",
+                "failure_reason": body.failure_reason,
+                "source_message_ids": body.source_message_ids[:20],
+            },
+        })
+        .execute()
+    )
+    if not doc_row.data:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="document_insert_failed",
+        )
+    new_doc_id = doc_row.data[0]["id"]
+
+    import inngest as _inngest_pkg
+
+    from app.inngest.client import get_inngest_client
+
+    client = get_inngest_client()
+    await client.send(
+        _inngest_pkg.Event(
+            name="doc/process-text",
+            data={"doc_id": new_doc_id, "org_id": org_id, "text": content},
+            id=f"feedback-doc-{new_doc_id}",
+        )
+    )
+
+    return {"document_id": new_doc_id, "status": "processing"}

@@ -44,6 +44,10 @@ def log_query_async(
     tool_calls: int = 0,
     latency_ms: int | None = None,
     model_used: str | None = None,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cost_micros: int = 0,
+    retrieved_chunk_ids: list[str] | None = None,
 ) -> asyncio.Task[None]:
     """Schedule a non-blocking insert into `query_logs`.
 
@@ -63,6 +67,10 @@ def log_query_async(
         tool_calls=tool_calls,
         latency_ms=latency_ms,
         model_used=model_used,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_micros=cost_micros,
+        retrieved_chunk_ids=retrieved_chunk_ids or [],
     )
     return asyncio.create_task(coro)
 
@@ -80,6 +88,10 @@ async def _log_query_inner(
     tool_calls: int,
     latency_ms: int | None,
     model_used: str | None,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cost_micros: int = 0,
+    retrieved_chunk_ids: list[str] | None = None,
 ) -> None:
     # Skip silently if required IDs are missing — logging an anonymous query
     # log row would just be junk data.
@@ -96,6 +108,14 @@ async def _log_query_inner(
     # labels we haven't added to the index yet.
     intent_value = intent if intent in _VALID_INTENTS else None
 
+    # Cap retrieved_chunk_ids at a sane size. The orchestrator already dedupes
+    # and caps by chat_max_context_chunks (=20 by default), so this is just a
+    # defense-in-depth ceiling against a misbehaving caller passing thousands.
+    chunk_ids: list[str] = []
+    for cid in (retrieved_chunk_ids or [])[:100]:
+        if isinstance(cid, str) and cid:
+            chunk_ids.append(cid)
+
     row = {
         "user_id": user_id,
         "org_id": org_id,
@@ -108,6 +128,10 @@ async def _log_query_inner(
         "tool_calls": max(0, int(tool_calls or 0)),
         "latency_ms": max(0, int(latency_ms)) if latency_ms is not None else None,
         "model_used": (model_used or "")[:50] or None,
+        "input_tokens": max(0, int(input_tokens or 0)),
+        "output_tokens": max(0, int(output_tokens or 0)),
+        "cost_micros": max(0, int(cost_micros or 0)),
+        "retrieved_chunk_ids": chunk_ids,
     }
 
     try:

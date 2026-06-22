@@ -270,11 +270,11 @@ async def email_send(ctx: inngest.Context) -> dict[str, Any]:
 
 @_inngest_client.create_function(
     fn_id="email-weekly-digest",
-    trigger=inngest.TriggerCron(cron="0 9 * * MON"),
+    trigger=inngest.TriggerCron(cron="0 9 * * FRI"),
     concurrency=[inngest.Concurrency(limit=1)],
 )
 async def weekly_digest(ctx: inngest.Context) -> dict[str, Any]:
-    """Mondays at 09:00 UTC. Fans out one digest per active org.
+    """Fridays at 09:00 UTC. Fans out one digest per active org.
 
     Each fan-out is its own `email/send` event so retries are scoped to one
     org rather than re-driving the whole batch. The dedupe_key (YYYY-WW)

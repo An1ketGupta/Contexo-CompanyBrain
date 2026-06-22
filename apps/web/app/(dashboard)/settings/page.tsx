@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
+  CalendarClock,
   ChevronRight,
   FolderOpen,
   KeyRound,
@@ -126,6 +127,12 @@ export default function SettingsPage() {
               icon={<KeyRound className="h-4 w-4" />}
               title="API keys"
               description="Programmatic access to the Developer API"
+            />
+            <SettingsLink
+              href="/settings/reports"
+              icon={<CalendarClock className="h-4 w-4" />}
+              title="Scheduled reports"
+              description="Recurring usage + knowledge-health emails to your inbox"
             />
           </div>
         </Card>
@@ -1288,7 +1295,7 @@ function CompetitorListEditor({
             onClick={save}
             disabled={!dirty || saving}
             size="sm"
-            variant={dirty ? "default" : "ghost"}
+            variant={dirty ? "primary" : "ghost"}
           >
             {saving && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
             Save
