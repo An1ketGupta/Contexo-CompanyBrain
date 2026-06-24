@@ -5,9 +5,11 @@ import useSWR from "swr";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
+  Building2,
   CalendarClock,
   ChevronRight,
   CreditCard,
+  Download,
   FolderOpen,
   KeyRound,
   Loader2,
@@ -15,9 +17,11 @@ import {
   MoreHorizontal,
   Plug,
   ShieldAlert,
+  ShieldCheck,
   ThumbsDown,
   ThumbsUp,
   Trash2,
+  UserCheck,
   UserMinus,
   UserPlus,
   Webhook,
@@ -43,6 +47,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -161,10 +166,14 @@ export default function SettingsPage() {
         onSaved={refresh}
       />
 
+      <ChangePasswordCard />
+
       <ActivityPrivacyCard
         activityPrivate={user?.activity_private ?? false}
         onSaved={refresh}
       />
+
+      <DataExportCard isAdmin={user?.role === "admin"} />
 
       <DangerZoneCard organizationName={organization?.name ?? ""} />
     </div>
@@ -404,6 +413,78 @@ function ProfileCard({
   );
 }
 
+// ── Change password ─────────────────────────────────────────────────────────
+
+function ChangePasswordCard() {
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (next.length < 8) {
+      toast.error("Password must be at least 8 characters.");
+      return;
+    }
+    if (next !== confirm) {
+      toast.error("Passwords don't match.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.updateUser({ password: next });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      toast.success("Password changed.");
+      setNext("");
+      setConfirm("");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card title="Change password" description="Update your account password.">
+      <form onSubmit={save} className="space-y-4">
+        <div className="grid gap-1.5">
+          <Label htmlFor="pw-new">New password</Label>
+          <Input
+            id="pw-new"
+            type="password"
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+            required
+            minLength={8}
+            autoComplete="new-password"
+            disabled={saving}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="pw-confirm">Confirm new password</Label>
+          <Input
+            id="pw-confirm"
+            type="password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            required
+            autoComplete="new-password"
+            disabled={saving}
+          />
+        </div>
+        <div className="flex justify-end">
+          <Button type="submit" disabled={saving || !next || !confirm}>
+            {saving && <Loader2 className="animate-spin" />}
+            Change password
+          </Button>
+        </div>
+      </form>
+    </Card>
+  );
+}
+
 // ── Activity privacy (V4 #57) ───────────────────────────────────────────────
 
 function ActivityPrivacyCard({
@@ -522,6 +603,7 @@ function TeamCard({
   const [sending, setSending] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
   const [removeBusy, setRemoveBusy] = useState(false);
+  const [roleBusy, setRoleBusy] = useState<string | null>(null);
 
   const sendInvite = async () => {
     const trimmed = email.trim().toLowerCase();
@@ -589,6 +671,39 @@ function TeamCard({
     }
   };
 
+  const changeRole = async (
+    member: Member,
+    newRole: "admin" | "member",
+  ) => {
+    setRoleBusy(member.id);
+    try {
+      const res = await fetch(
+        `/api/organizations/members/${member.id}/role`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role: newRole }),
+        },
+      );
+      const data = (await res.json().catch(() => ({}))) as {
+        message?: string;
+        detail?: string;
+      };
+      if (!res.ok) {
+        toast.error(data.message ?? data.detail ?? "Failed to update role.");
+        return;
+      }
+      toast.success(
+        `${member.display_name ?? member.email ?? "Member"} is now ${newRole === "admin" ? "an admin" : "a member"}.`,
+      );
+      members.mutate();
+    } catch {
+      toast.error("Network error. Try again.");
+    } finally {
+      setRoleBusy(null);
+    }
+  };
+
   const revokeInvite = async (id: string, inviteEmail: string) => {
     const res = await fetch(`/api/organizations/invitations/${id}`, {
       method: "DELETE",
@@ -649,12 +764,33 @@ function TeamCard({
                           <button
                             type="button"
                             aria-label={`Manage ${m.display_name ?? m.email ?? "member"}`}
-                            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            disabled={roleBusy === m.id}
+                            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                           >
-                            <MoreHorizontal className="h-3.5 w-3.5" />
+                            {roleBusy === m.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <MoreHorizontal className="h-3.5 w-3.5" />
+                            )}
                           </button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-44">
+                        <DropdownMenuContent align="end" className="w-48">
+                          {m.role === "member" ? (
+                            <DropdownMenuItem
+                              onSelect={() => changeRole(m, "admin")}
+                            >
+                              <ShieldCheck className="h-3.5 w-3.5" />
+                              Make admin
+                            </DropdownMenuItem>
+                          ) : (
+                            <DropdownMenuItem
+                              onSelect={() => changeRole(m, "member")}
+                            >
+                              <UserCheck className="h-3.5 w-3.5" />
+                              Make member
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuSeparator />
                           <DropdownMenuItem
                             destructive
                             onSelect={() => setRemoving(m)}
@@ -863,6 +999,15 @@ function formatDate(iso: string): string {
 
 const jsonFetcher = async <T,>(url: string): Promise<T> => {
   const res = await fetch(url);
+  if (res.status === 401) {
+    if (typeof window !== "undefined") {
+      const next = encodeURIComponent(
+        window.location.pathname + window.location.search,
+      );
+      window.location.href = `/login?redirectedFrom=${next}`;
+    }
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) throw new Error(`Failed (${res.status})`);
   return res.json();
 };
@@ -1589,6 +1734,154 @@ function ArchiveCard({ canEdit }: { canEdit: boolean }) {
                 <option value="365">365 days</option>
               </select>
             </div>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+
+// ── GDPR data export ────────────────────────────────────────────────────────
+//
+// Two buttons coexist here: a personal "Download my data" available to every
+// user, and an admin-only "Export workspace data" sitting below it. We keep
+// them in one card rather than two so the user understands the relationship
+// — admins can grab either, members only their own.
+
+function DataExportCard({ isAdmin }: { isAdmin: boolean }) {
+  const [busy, setBusy] = useState<"user" | "org" | null>(null);
+
+  const triggerDownload = async (
+    kind: "user" | "org",
+    endpoint: string,
+    failureMessage: string,
+  ) => {
+    if (busy) return;
+    setBusy(kind);
+    try {
+      const res = await fetch(endpoint, { method: "GET" });
+      if (res.status === 429) {
+        const data = (await res.json().catch(() => ({}))) as {
+          message?: string;
+          detail?: string;
+        };
+        toast.error(
+          data.message ?? data.detail ?? "Export limit reached. Try again later.",
+        );
+        return;
+      }
+      if (!res.ok) {
+        throw await parseApiError(res);
+      }
+      // Mint a download from the blob so we can carry the auth-aware fetch
+      // pipeline rather than relying on cookie-credentialed <a download>
+      // (the upstream API uses Bearer tokens, not cookies).
+      const blob = await res.blob();
+      const disposition = res.headers.get("content-disposition") ?? "";
+      const match = /filename="?([^";]+)"?/.exec(disposition);
+      const filename = match?.[1] ?? `nirnayaiq-${kind}-export.zip`;
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Defer revocation so Safari doesn't cancel the in-flight save dialog.
+      window.setTimeout(() => URL.revokeObjectURL(url), 5_000);
+      toast.success(
+        kind === "user"
+          ? "Your data export is downloading."
+          : "Workspace export is downloading.",
+      );
+    } catch (err) {
+      if ((err as { message?: string })?.message) {
+        reportApiError(err as Awaited<ReturnType<typeof parseApiError>>);
+      } else {
+        toast.error(failureMessage);
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Card
+      title="Your data"
+      description="Download an archive of the personal data we hold about you, under GDPR Article 15 and analogous rights elsewhere."
+    >
+      <div className="rounded-md border border-border bg-muted/30 p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-foreground">
+              Download my data
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              ZIP archive with your profile, conversations, messages, query
+              history, document metadata, and integration connections (without
+              tokens). Limited to 3 exports per day.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            onClick={() =>
+              triggerDownload(
+                "user",
+                "/api/users/me/export",
+                "Couldn't build your data export. Try again in a moment.",
+              )
+            }
+            disabled={busy !== null}
+            className="self-start shrink-0 sm:self-auto"
+          >
+            {busy === "user" ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5" />
+            )}
+            Download (.zip)
+          </Button>
+        </div>
+      </div>
+
+      {isAdmin && (
+        <div className="rounded-md border border-border bg-muted/30 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+                <p className="text-sm font-medium text-foreground">
+                  Export workspace data
+                </p>
+              </div>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Admin-only. Includes all workspace members, conversations,
+                documents, and integration metadata — no OAuth tokens, no
+                Stripe IDs, no document file contents. Limited to 1 export
+                per day per workspace.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() =>
+                triggerDownload(
+                  "org",
+                  "/api/organizations/me/export",
+                  "Couldn't build the workspace export. Try again in a moment.",
+                )
+              }
+              disabled={busy !== null}
+              className="self-start shrink-0 sm:self-auto"
+            >
+              {busy === "org" ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              Download workspace (.zip)
+            </Button>
           </div>
         </div>
       )}

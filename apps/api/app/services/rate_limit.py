@@ -200,6 +200,86 @@ async def _monthly_check_and_increment(
     )
 
 
+# ── Daily counter (per-API-key abuse cap) ────────────────────────────────────
+
+
+def _day_key(now: datetime | None = None) -> str:
+    n = now or datetime.now(UTC)
+    return f"{n.year}{n.month:02d}{n.day:02d}"
+
+
+def _seconds_until_next_day(now: datetime | None = None) -> int:
+    n = now or datetime.now(UTC)
+    next_day = datetime(n.year, n.month, n.day, tzinfo=UTC).replace(hour=0, minute=0, second=0)
+    # `next_day` above is start-of-today; we want start-of-tomorrow.
+    from datetime import timedelta
+
+    next_day = next_day + timedelta(days=1)
+    return max(int((next_day - n).total_seconds()), 1)
+
+
+@dataclass(frozen=True)
+class DailyCounterResult:
+    allowed: bool
+    used: int
+    limit: int
+    seconds_until_reset: int
+
+
+async def daily_counter_check_and_increment(
+    *, namespace: str, identifier: str, limit: int
+) -> DailyCounterResult:
+    """INCR a day-scoped key per (namespace, identifier). Fail-open on
+    Upstash outage so a transient infra hiccup doesn't 503 the API.
+
+    The key TTL is the seconds remaining until UTC midnight; we set it on
+    every INCR with NX so we never reset the window mid-day even if the
+    key gets touched repeatedly. limit<=0 disables the gate (returns
+    allowed=True without a round-trip)."""
+    if limit <= 0:
+        return DailyCounterResult(
+            allowed=True, used=0, limit=limit, seconds_until_reset=0
+        )
+
+    client = await _upstash()
+    if client is None:
+        return DailyCounterResult(
+            allowed=True, used=0, limit=limit, seconds_until_reset=0
+        )
+
+    key = f"rl:daily:{namespace}:{identifier}:{_day_key()}"
+    ttl = _seconds_until_next_day()
+
+    try:
+        resp = await client.post(
+            "/pipeline",
+            json=[
+                ["INCR", key],
+                ["EXPIRE", key, str(ttl), "NX"],
+            ],
+        )
+        resp.raise_for_status()
+        results = resp.json()
+        used = int(results[0].get("result", 0))
+    except Exception as exc:
+        log.warning("ratelimit_upstash_unavailable", error=str(exc), tier="daily")
+        return DailyCounterResult(
+            allowed=True, used=0, limit=limit, seconds_until_reset=0
+        )
+
+    if used > limit:
+        try:
+            await client.post("/", json=["DECR", key])
+        except Exception:
+            pass
+        return DailyCounterResult(
+            allowed=False, used=limit, limit=limit, seconds_until_reset=ttl
+        )
+    return DailyCounterResult(
+        allowed=True, used=used, limit=limit, seconds_until_reset=ttl
+    )
+
+
 # ── Read-only usage probe (powers the sidebar meter) ─────────────────────────
 
 

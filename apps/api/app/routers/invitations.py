@@ -538,6 +538,79 @@ async def remove_member(
         log.warning("remove_member_metadata_clear_failed", member_id=member_id, error=str(exc))
 
 
+# ── Promote / demote member role ─────────────────────────────────────────────
+
+class UpdateMemberRoleBody(BaseModel):
+    role: Literal["admin", "member"]
+
+
+@router.patch(
+    "/organizations/members/{member_id}/role",
+    status_code=status.HTTP_200_OK,
+)
+async def update_member_role(
+    member_id: str,
+    body: UpdateMemberRoleBody,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Promote to admin or demote to member.
+
+    Guards:
+        - Caller must be admin.
+        - Target must be in the same org.
+        - Can't change your own role.
+        - Can't demote the last admin.
+    """
+    caller_id, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+
+    if not await _is_admin(client, caller_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workspace admins can change member roles.",
+        )
+    if member_id == caller_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You can't change your own role.",
+        )
+
+    svc = get_service_client()
+    target = await asyncio.to_thread(
+        lambda: svc.table("users")
+        .select("id, role, org_id")
+        .eq("id", member_id)
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not target or not target.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+
+    if body.role == "member" and target.data.get("role") == "admin":
+        admin_count = await asyncio.to_thread(
+            lambda: svc.table("users")
+            .select("id", count="exact", head=True)
+            .eq("org_id", org_id)
+            .eq("role", "admin")
+            .execute()
+        )
+        if (admin_count.count or 0) <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Can't demote the last admin. Promote another member first.",
+            )
+
+    await asyncio.to_thread(
+        lambda: svc.table("users")
+        .update({"role": body.role})
+        .eq("id", member_id)
+        .eq("org_id", org_id)
+        .execute()
+    )
+    return {"member_id": member_id, "role": body.role}
+
+
 # ── Public: lookup + accept by token ─────────────────────────────────────────
 
 @router.get("/auth/invitations/{token}")

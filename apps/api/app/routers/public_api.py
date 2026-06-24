@@ -46,6 +46,7 @@ from app.services.agent_registry import (
     normalize_idempotency_key,
     precreate_agent_run,
     resolve_approver_user_id,
+    resolve_document_id_by_name,
     run_id_from_idempotency_key,
     validate_agent_input,
 )
@@ -59,6 +60,7 @@ from app.services.network_security import UnsafeURLError, validate_outbound_url
 from app.services.rate_limit import (
     _monthly_check_and_increment,
     _sliding_window_check,
+    daily_counter_check_and_increment,
     get_org_plan,
     monthly_budget_for,
 )
@@ -109,6 +111,22 @@ async def _enforce_api_quota(ctx: ApiKeyContext) -> None:
             ),
             retry_after=per_key.reset_seconds,
         )
+    # Per-key daily cap. Layered on top of per-minute so a polite-cadence
+    # leaked key (one req/sec → never trips minute gate) still gets stopped
+    # before it can burn the org's monthly budget.
+    daily_limit = settings.rate_limit_api_per_key_per_day
+    if daily_limit > 0:
+        daily = await daily_counter_check_and_increment(
+            namespace="api:key", identifier=ctx.id, limit=daily_limit,
+        )
+        if not daily.allowed:
+            raise RateLimited(
+                message=(
+                    f"API key daily budget ({daily_limit}/day) exceeded. "
+                    f"Resets in {max(daily.seconds_until_reset // 3600, 1)} hour(s)."
+                ),
+                retry_after=daily.seconds_until_reset,
+            )
     # Same monthly bucket as dashboard chat — keeps plan enforcement honest.
     plan = await get_org_plan(ctx.org_id)
     budget = monthly_budget_for(plan)
@@ -300,6 +318,27 @@ async def trigger_agent(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
+
+    # policy_propagation accepts document_name as a customer-friendly
+    # alternative to document_id. Resolve to the UUID at the API boundary so
+    # the downstream agent always sees a canonical id. Ambiguous / missing
+    # names get a 400 here rather than failing deep inside the worker.
+    if agent_type == "policy_propagation" and not clean_input.get("document_id"):
+        name = clean_input.pop("document_name", None)
+        if name:
+            resolved = await resolve_document_id_by_name(
+                org_id=ctx.org_id, document_name=name,
+            )
+            if not resolved:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"No document named '{name}' (or more than one) "
+                        "exists in your workspace. Pass `document_id` "
+                        "explicitly for ambiguous names."
+                    ),
+                )
+            clean_input["document_id"] = resolved
 
     # 2. Resolve idempotent run_id. If the caller supplied an Idempotency-Key
     #    we derive a deterministic UUID from (api_key, agent_type, key) so
@@ -533,6 +572,96 @@ async def trigger_agent(
     )
 
 
+# ── /v1/agent-runs (list) ───────────────────────────────────────────────────
+
+
+class AgentRunListItem(BaseModel):
+    id: str
+    agent_type: str
+    status: str
+    triggered_by: str | None
+    created_at: str
+    completed_at: str | None
+    error: str | None
+    duration_seconds: int | None
+    approval_id: str | None
+
+
+class AgentRunListResponse(BaseModel):
+    runs: list[AgentRunListItem]
+    next_cursor: str | None
+    has_more: bool
+
+
+_LIST_DEFAULT_LIMIT = 50
+_LIST_MAX_LIMIT = 200
+
+
+@router.get("/agent-runs", response_model=AgentRunListResponse)
+async def list_agent_runs(
+    ctx: ApiKeyContext = Depends(get_api_context),
+    agent_type: str | None = Query(default=None, max_length=64),
+    status_filter: str | None = Query(default=None, alias="status", max_length=32),
+    limit: int = Query(default=_LIST_DEFAULT_LIMIT, ge=1, le=_LIST_MAX_LIMIT),
+    cursor: str | None = Query(default=None, max_length=64),
+) -> AgentRunListResponse:
+    """List agent runs for the calling org, newest first.
+
+    Cursor pagination keyed by created_at — pass `next_cursor` from a prior
+    response back as `cursor` to fetch the next page. Cheaper than OFFSET on
+    a growing table and stable under concurrent inserts.
+    """
+    await _enforce_api_quota(ctx)
+    svc = get_service_client()
+
+    def _query() -> Any:
+        q = (
+            svc.table("agent_runs")
+            .select(
+                "id, agent_type, status, triggered_by, created_at, "
+                "completed_at, error, started_at, approval_id"
+            )
+            .eq("org_id", ctx.org_id)
+            .order("created_at", desc=True)
+            .limit(limit + 1)
+        )
+        if agent_type:
+            q = q.eq("agent_type", agent_type)
+        if status_filter:
+            q = q.eq("status", status_filter)
+        if cursor:
+            q = q.lt("created_at", cursor)
+        return q.execute()
+
+    res = await asyncio.to_thread(_query)
+    rows = res.data or []
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = page[-1]["created_at"] if (has_more and page) else None
+
+    items: list[AgentRunListItem] = []
+    for r in page:
+        duration_seconds = _duration_seconds(
+            r.get("started_at") or r.get("created_at"), r.get("completed_at"),
+        )
+        items.append(
+            AgentRunListItem(
+                id=r["id"],
+                agent_type=r["agent_type"],
+                status=r["status"],
+                triggered_by=r.get("triggered_by"),
+                created_at=r["created_at"],
+                completed_at=r.get("completed_at"),
+                error=r.get("error"),
+                duration_seconds=duration_seconds,
+                approval_id=r.get("approval_id"),
+            )
+        )
+    return AgentRunListResponse(
+        runs=items, next_cursor=next_cursor, has_more=has_more,
+    )
+
+
 # ── /v1/agent-runs/{run_id} ─────────────────────────────────────────────────
 
 
@@ -546,6 +675,9 @@ class AgentRunPublicView(BaseModel):
     created_at: str
     completed_at: str | None
     approval_id: str | None
+    duration_seconds: int | None = None
+    llm_tokens_used: int | None = None
+    llm_cost_usd_cents: int | None = None
 
 
 @router.get("/agent-runs/{run_id}", response_model=AgentRunPublicView)
@@ -558,6 +690,10 @@ async def get_agent_run(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="agent_run_not_found",
         )
+    duration_seconds = _duration_seconds(
+        row.get("started_at") or row["created_at"], row.get("completed_at"),
+    )
+    llm_cost_cents = _extract_llm_cost_cents(row.get("steps") or [])
     return AgentRunPublicView(
         id=row["id"],
         agent_type=row["agent_type"],
@@ -568,6 +704,132 @@ async def get_agent_run(
         created_at=row["created_at"],
         completed_at=row.get("completed_at"),
         approval_id=row.get("approval_id"),
+        duration_seconds=duration_seconds,
+        llm_tokens_used=row.get("llm_tokens_used"),
+        llm_cost_usd_cents=llm_cost_cents,
+    )
+
+
+# ── /v1/agent-runs/{run_id}/redeliver ───────────────────────────────────────
+
+
+class RedeliverRequest(BaseModel):
+    webhook_url: HttpUrl | None = Field(
+        default=None,
+        description=(
+            "Override the destination URL. Omit to redeliver to the URL "
+            "originally passed on the trigger request."
+        ),
+    )
+
+
+class RedeliverResponse(BaseModel):
+    status: str  # 'queued' | 'noop'
+    webhook_url: str | None
+    agent_run_id: str
+
+
+@router.post(
+    "/agent-runs/{run_id}/redeliver",
+    response_model=RedeliverResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def redeliver_agent_run(
+    run_id: str,
+    body: RedeliverRequest,
+    ctx: ApiKeyContext = Depends(get_api_context),
+) -> RedeliverResponse:
+    """Re-fire the agent.completed/agent.failed callback for a terminal run.
+
+    Common path: receiver was down when Inngest exhausted its retry budget,
+    customer's now ready, doesn't want to wait for the next trigger to
+    flow through. Only allowed once the agent_runs row is in a terminal
+    state — re-firing a still-running agent would race the natural callback.
+    """
+    await _enforce_api_quota(ctx)
+
+    row = await _get_agent_run_row(run_id=run_id, org_id=ctx.org_id)
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="agent_run_not_found",
+        )
+    if row["status"] not in ("completed", "failed"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Run isn't in a terminal state yet "
+                f"(status={row['status']}). Wait for it to finish before "
+                "redelivering."
+            ),
+        )
+
+    # Recover the original API context (api_key_id, webhook_url) embedded in
+    # input by precreate_agent_run. The override on the request body takes
+    # precedence so callers can redirect to a different URL after fixing
+    # their receiver.
+    from app.services.agent_callbacks import load_api_context_from_run
+
+    original = await load_api_context_from_run(run_id) or {}
+    destination = str(body.webhook_url) if body.webhook_url else original.get("webhook_url")
+    if not destination:
+        return RedeliverResponse(
+            status="noop",
+            webhook_url=None,
+            agent_run_id=run_id,
+        )
+
+    try:
+        validate_outbound_url(destination)
+    except UnsafeURLError as exc:
+        log.info("api_redeliver_ssrf_rejected run=%s reason=%s", run_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="webhook_url destination is not allowed.",
+        ) from exc
+
+    payload = {
+        "agent_run_id": run_id,
+        "agent_type": row["agent_type"],
+        "status": row["status"],
+        "output": row.get("output") or {},
+        "error": row.get("error"),
+        "completed_at": row.get("completed_at"),
+    }
+
+    try:
+        import inngest as _inngest_evt
+
+        from app.inngest.client import get_inngest_client
+
+        client = get_inngest_client()
+        # Append a nonce — the original callback used `agent-callback-{run_id}-{status}`,
+        # which Inngest would dedupe against. The redeliver path explicitly
+        # wants a fresh attempt so we mint a unique event id.
+        nonce = _uuid.uuid4().hex[:12]
+        await client.send(
+            _inngest_evt.Event(
+                name="agent/api-callback",
+                data={
+                    "run_id": run_id,
+                    "org_id": ctx.org_id,
+                    "api_key_id": original.get("api_key_id") or ctx.id,
+                    "webhook_url": destination,
+                    "payload": payload,
+                },
+                id=f"agent-callback-{run_id}-redeliver-{nonce}",
+            )
+        )
+    except Exception as exc:
+        log.exception("api_redeliver_enqueue_failed run=%s", run_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Couldn't queue redelivery. Try again.",
+        ) from exc
+
+    return RedeliverResponse(
+        status="queued",
+        webhook_url=destination,
+        agent_run_id=run_id,
     )
 
 
@@ -580,7 +842,7 @@ async def _get_agent_run_row(*, run_id: str, org_id: str) -> dict[str, Any] | No
         lambda: svc.table("agent_runs")
         .select(
             "id, agent_type, status, output, error, steps, created_at, "
-            "completed_at, approval_id"
+            "started_at, completed_at, approval_id, llm_tokens_used, input"
         )
         .eq("id", run_id)
         .eq("org_id", org_id)
@@ -588,6 +850,42 @@ async def _get_agent_run_row(*, run_id: str, org_id: str) -> dict[str, Any] | No
         .execute()
     )
     return res.data if (res and res.data) else None
+
+
+def _duration_seconds(start_iso: str | None, end_iso: str | None) -> int | None:
+    """Compute integer-seconds between two ISO timestamps. Returns None on
+    malformed inputs rather than raising — durations are best-effort
+    metadata, not a correctness path."""
+    if not start_iso or not end_iso:
+        return None
+    from datetime import datetime as _dt
+
+    try:
+        a = _dt.fromisoformat(start_iso.replace("Z", "+00:00"))
+        b = _dt.fromisoformat(end_iso.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    return max(int((b - a).total_seconds()), 0)
+
+
+def _extract_llm_cost_cents(steps: list[dict[str, Any]]) -> int | None:
+    """Sum the per-step `cost_usd_cents` markers some agents emit on their
+    LLM steps. Returns None when no step carried a cost — billing rollups
+    differentiate "agent doesn't track cost" from "agent ran for free."
+    """
+    total: int = 0
+    saw_any = False
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        result = step.get("result")
+        if not isinstance(result, dict):
+            continue
+        cost = result.get("cost_usd_cents")
+        if isinstance(cost, (int, float)):
+            total += int(cost)
+            saw_any = True
+    return total if saw_any else None
 
 
 def _agent_run_to_trigger_response(

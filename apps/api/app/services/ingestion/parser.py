@@ -261,7 +261,26 @@ def _parse_meeting_transcript(text: str, *, file_type: str) -> Iterator[RawSegme
     the speaker label intact. Empty transcripts raise EmptyDocumentError
     via the outer parse_document validation, same as scanned PDFs.
     """
-    from app.services.parsers.meeting_transcript import parse_transcript
+    from app.services.parsers.meeting_transcript import (
+        detect_transcript_format,
+        parse_transcript,
+    )
+
+    # Day 13 production-hardening: when a user uploads a .json marked as
+    # teams_transcript, distinguish "real Teams export with no recognised
+    # speakers" (rare, EmptyDocumentError downstream is fine) from "this
+    # isn't a Teams transcript at all" (common — they uploaded the wrong
+    # JSON). The second case gets a friendlier ParseError that tells them
+    # what shape we expect.
+    if file_type == "teams_transcript":
+        detected = detect_transcript_format(file_type=None, content=text)
+        if detected != "teams_json":
+            raise ParseError(
+                "This JSON doesn't look like a Microsoft Teams transcript. "
+                "Teams exports have a top-level `recognizedPhrases` or "
+                "`entries` array. Export your transcript from Teams (Meeting "
+                "details → Recordings & transcripts → Download)."
+            )
 
     parsed = parse_transcript(file_type=file_type, content=text)
     if parsed.is_empty():

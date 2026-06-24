@@ -14,9 +14,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.auth import verify_jwt
@@ -818,6 +820,175 @@ async def revoke_api_key(
     ok = await revoke_key(org_id=org_id, key_id=key_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Key not found or already revoked.")
+
+
+# ── GDPR data export (Day 11 / production roadmap) ──────────────────────────
+
+
+def _export_filename(prefix: str, identifier: str) -> str:
+    # Compact ISO date so the filename sorts cleanly when a user has
+    # multiple exports in their downloads folder.
+    stamp = re.sub(r"[^0-9]", "", datetime.now(UTC).isoformat(timespec="seconds"))
+    # Trim the identifier to avoid producing 200-char filenames on Windows.
+    short_id = identifier.replace("-", "")[:8]
+    return f"nirnayaiq-{prefix}-{short_id}-{stamp}.zip"
+
+
+def _too_many_exports(used: int, limit: int, seconds_until_reset: int) -> HTTPException:
+    hours = max(seconds_until_reset // 3600, 1)
+    return HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=(
+            f"Data export limit reached ({used}/{limit} in the last 24 hours). "
+            f"Try again in about {hours} hour(s)."
+        ),
+        headers={"Retry-After": str(max(seconds_until_reset, 60))},
+    )
+
+
+@router.get("/users/me/export")
+async def export_my_data(
+    current_user: dict = Depends(verify_jwt),
+) -> Response:
+    """Download a ZIP archive of the calling user's personal data.
+
+    Returns ``application/zip`` with ``Content-Disposition: attachment``.
+    Rate-limited to 3 exports per 24h per user. Strictly scoped to the
+    requesting user — there is no path or query parameter that would
+    allow targeting a different user, and the route uses the user-scoped
+    Supabase client so RLS is the security boundary even if app filters
+    were bypassed.
+
+    See ``app/services/data_export.py`` for the full inclusion / exclusion list.
+    """
+    from app.services.data_export import (
+        build_user_export,
+        check_export_quota,
+    )
+
+    user_id, org_id, token = _require_user(current_user)
+
+    quota = await check_export_quota(namespace="user", identifier=user_id, limit=3)
+    if not quota.allowed:
+        raise _too_many_exports(quota.used, quota.limit, quota.seconds_until_reset)
+
+    # Look up the caller's email via the service client (auth.users isn't
+    # readable via the user JWT). We include it in profile.json so the
+    # archive is self-describing without joining against external data.
+    email: str | None = None
+    try:
+        svc = get_service_client()
+        au = await asyncio.to_thread(lambda: svc.auth.admin.get_user_by_id(user_id))
+        email = getattr(getattr(au, "user", None), "email", None)
+    except Exception as exc:
+        log.warning("export_email_lookup_failed user=%s err=%s", user_id, exc)
+
+    log.info(
+        "gdpr_export_user_started user=%s org=%s quota_used=%s/%s",
+        user_id, org_id, quota.used, quota.limit,
+    )
+
+    try:
+        payload = await build_user_export(
+            user_id=user_id, org_id=org_id, token=token, email=email
+        )
+    except Exception as exc:
+        log.error("gdpr_export_user_failed user=%s err=%s", user_id, exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Couldn't build your data export. Please try again in a moment.",
+        ) from exc
+
+    log.info(
+        "gdpr_export_user_completed user=%s bytes=%s",
+        user_id, len(payload),
+    )
+
+    filename = _export_filename("export", user_id)
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store, private",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.get("/organizations/me/export")
+async def export_my_organization(
+    current_user: dict = Depends(verify_jwt),
+) -> Response:
+    """Admin-only ZIP archive of the entire workspace.
+
+    Rate-limited to 1 per 24h per workspace (heavier scope than personal
+    export). Uses the service-role client because the calling admin
+    legitimately needs to read rows authored by other members — which
+    RLS correctly blocks under the user-scoped client.
+
+    Includes user/document/conversation/message/integration metadata.
+    Excludes Stripe customer/subscription IDs, OAuth tokens, API key
+    material, embedding vectors, and document binary content. See
+    ``app/services/data_export.py`` for the full exclusion list.
+    """
+    from app.services.data_export import (
+        build_org_export,
+        check_export_quota,
+    )
+
+    user_id, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+
+    me = await asyncio.to_thread(
+        lambda: client.table("users")
+        .select("role")
+        .eq("id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not me.data or me.data.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workspace admins can export workspace data.",
+        )
+
+    quota = await check_export_quota(namespace="org", identifier=org_id, limit=1)
+    if not quota.allowed:
+        raise _too_many_exports(quota.used, quota.limit, quota.seconds_until_reset)
+
+    log.info(
+        "gdpr_export_org_started org=%s requested_by=%s quota_used=%s/%s",
+        org_id, user_id, quota.used, quota.limit,
+    )
+
+    try:
+        payload = await build_org_export(org_id=org_id, requested_by=user_id)
+    except Exception as exc:
+        log.error(
+            "gdpr_export_org_failed org=%s requested_by=%s err=%s",
+            org_id, user_id, exc, exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Couldn't build the workspace export. Please try again in a moment.",
+        ) from exc
+
+    log.info(
+        "gdpr_export_org_completed org=%s requested_by=%s bytes=%s",
+        org_id, user_id, len(payload),
+    )
+
+    filename = _export_filename("workspace-export", org_id)
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store, private",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 async def _wipe_org_storage(svc, org_id: str) -> None:

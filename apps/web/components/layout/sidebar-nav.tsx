@@ -41,6 +41,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/history", label: "History", icon: History },
   { href: "/chat/meeting-prep", label: "Meeting prep", icon: CalendarDays },
+  { href: "/meetings", label: "Meetings", icon: CalendarDays },
   { href: "/settings/templates", label: "Templates", icon: LayoutTemplate },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/activity", label: "Team activity", icon: Users },

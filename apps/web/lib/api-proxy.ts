@@ -156,6 +156,68 @@ export async function proxyPublicJson(
 }
 
 /**
+ * Forward a GET request to FastAPI and stream the response body straight
+ * back to the browser, preserving Content-Type, Content-Disposition, and
+ * Content-Length. Used for file downloads (data export ZIPs) where the
+ * upstream is not JSON. On non-2xx responses the upstream JSON error
+ * envelope is forwarded verbatim so the existing `parseApiError` paths
+ * still produce a clean message.
+ */
+export async function proxyDownload(
+  request: NextRequest | Request,
+  path: string,
+): Promise<NextResponse | Response> {
+  const requestId = coerceRequestId(request.headers.get(REQUEST_ID_HEADER));
+  const token = await getAccessToken();
+  if (!token) return unauthorized(requestId);
+
+  const upstream = await fetch(`${API_URL}${path}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      [REQUEST_ID_HEADER]: requestId,
+    },
+    cache: "no-store",
+  });
+
+  const outboundRequestId =
+    upstream.headers.get(REQUEST_ID_HEADER) ?? requestId;
+
+  // On error the upstream body is JSON with our standard envelope —
+  // pass it through so the browser sees the same shape as other endpoints.
+  if (!upstream.ok) {
+    const contentType = upstream.headers.get("content-type") ?? "";
+    if (contentType.startsWith("application/json")) {
+      const data = await upstream.json().catch(() => ({}));
+      const headers = new Headers();
+      headers.set(REQUEST_ID_HEADER, outboundRequestId);
+      const retryAfter = upstream.headers.get("retry-after");
+      if (retryAfter) headers.set("retry-after", retryAfter);
+      return NextResponse.json(data, { status: upstream.status, headers });
+    }
+    return new NextResponse(upstream.body, {
+      status: upstream.status,
+      headers: { [REQUEST_ID_HEADER]: outboundRequestId },
+    });
+  }
+
+  const headers = new Headers();
+  for (const key of [
+    "content-type",
+    "content-disposition",
+    "content-length",
+    "cache-control",
+    "x-content-type-options",
+  ]) {
+    const value = upstream.headers.get(key);
+    if (value) headers.set(key, value);
+  }
+  headers.set(REQUEST_ID_HEADER, outboundRequestId);
+
+  return new Response(upstream.body, { status: upstream.status, headers });
+}
+
+/**
  * As `proxyPostJson`, but no bearer forwarded. For token-credentialed
  * unauthenticated POSTs like invite acceptance.
  */

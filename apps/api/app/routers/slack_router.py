@@ -46,6 +46,7 @@ from pydantic import BaseModel, Field
 
 from app.auth import verify_jwt
 from app.config import get_settings
+from app.core.rate_limiter import oauth_callback_limiter
 from app.database import get_service_client, get_user_client
 from app.errors import NoOrganization
 from app.inngest.client import get_inngest_client
@@ -118,7 +119,10 @@ def _parse_state(token: str) -> tuple[str, str]:
 # ── OAuth install ───────────────────────────────────────────────────────────
 
 @router.get("/integrations/slack/connect")
-async def slack_connect(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
+async def slack_connect(
+    current_user: dict = Depends(verify_jwt),
+    _rl: None = Depends(oauth_callback_limiter),
+) -> dict[str, Any]:
     org_id, user_id, token = _require_org(current_user)
     await _require_admin(user_id, token)
     settings = get_settings()
@@ -963,6 +967,66 @@ async def _open_email_send_modal(
 
     meta = (draft.get("meta") or {})
     body_preview = (draft.get("body") or "")[:200]
+    sources = draft.get("sources") or []
+
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*Draft preview*\n```{body_preview}…```",
+            },
+        },
+    ]
+
+    # Surface the documents the draft was grounded in. Builds trust ("this
+    # draft cited the actual SOC2 doc, not hallucinated") and gives the
+    # sender a fast way to spot when the LLM pulled from the wrong source
+    # before they hit Send. We cap at 5 to keep the modal small.
+    if sources:
+        seen: set[str] = set()
+        names: list[str] = []
+        for s in sources:
+            name = (s.get("document_name") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            names.append(f"📄 {name}")
+            if len(names) >= 5:
+                break
+        if names:
+            blocks.append({
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": f"*Sources:* {' · '.join(names)}"}
+                ],
+            })
+
+    blocks.extend([
+        {
+            "type": "input",
+            "block_id": "to_email_block",
+            "label": {"type": "plain_text", "text": "To"},
+            "element": {
+                "type": "plain_text_input",
+                "action_id": "to_email",
+                "placeholder": {
+                    "type": "plain_text",
+                    "text": meta.get("recipient_hint") or "name@example.com",
+                },
+            },
+        },
+        {
+            "type": "input",
+            "block_id": "subject_block",
+            "label": {"type": "plain_text", "text": "Subject"},
+            "element": {
+                "type": "plain_text_input",
+                "action_id": "subject",
+                "initial_value": (meta.get("topic") or "")[:120],
+            },
+        },
+    ])
 
     view = {
         "type": "modal",
@@ -970,38 +1034,7 @@ async def _open_email_send_modal(
         "title": {"type": "plain_text", "text": "Send draft via Gmail"},
         "submit": {"type": "plain_text", "text": "Send"},
         "close": {"type": "plain_text", "text": "Cancel"},
-        "blocks": [
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"*Draft preview*\n```{body_preview}…```",
-                },
-            },
-            {
-                "type": "input",
-                "block_id": "to_email_block",
-                "label": {"type": "plain_text", "text": "To"},
-                "element": {
-                    "type": "plain_text_input",
-                    "action_id": "to_email",
-                    "placeholder": {
-                        "type": "plain_text",
-                        "text": meta.get("recipient_hint") or "name@example.com",
-                    },
-                },
-            },
-            {
-                "type": "input",
-                "block_id": "subject_block",
-                "label": {"type": "plain_text", "text": "Subject"},
-                "element": {
-                    "type": "plain_text_input",
-                    "action_id": "subject",
-                    "initial_value": (meta.get("topic") or "")[:120],
-                },
-            },
-        ],
+        "blocks": blocks,
     }
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:

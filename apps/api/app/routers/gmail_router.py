@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.auth import verify_jwt
 from app.config import get_settings
+from app.core.rate_limiter import oauth_callback_limiter
 from app.database import get_service_client
 from app.errors import NoOrganization
 from app.inngest.client import get_inngest_client
@@ -229,7 +230,10 @@ def _settings_redirect(*, connected: str | None = None, error: str | None = None
 # ── OAuth: connect + callback ───────────────────────────────────────────────
 
 @router.get("/integrations/gmail/connect")
-async def gmail_connect(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
+async def gmail_connect(
+    current_user: dict = Depends(verify_jwt),
+    _rl: None = Depends(oauth_callback_limiter),
+) -> dict[str, Any]:
     org_id, user_id = _require_user(current_user)
     settings = get_settings()
     if not settings.google_client_id:

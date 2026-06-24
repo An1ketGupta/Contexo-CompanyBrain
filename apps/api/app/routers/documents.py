@@ -81,6 +81,11 @@ _MIME_TO_TYPE: dict[str, str] = {
     # Day 13 — meeting transcripts. Zoom serves VTT as text/vtt, some MTAs as
     # application/octet-stream so we still fall back to the extension below.
     "text/vtt": "vtt",
+    # Day 13 — Microsoft Teams transcript exports. Teams writes JSON; we
+    # provisionally accept any application/json as a transcript and the
+    # Inngest worker sniffs the bytes — non-Teams shapes are rejected with
+    # an actionable error message rather than silently ingested as text.
+    "application/json": "teams_transcript",
 }
 _EXT_TO_TYPE: dict[str, str] = {
     "pdf": "pdf",
@@ -96,6 +101,10 @@ _EXT_TO_TYPE: dict[str, str] = {
     # Day 13: meeting-transcript extensions. The classifier upstream uses
     # these to route into the MeetingNotesAgent pipeline.
     "vtt": "vtt",
+    # Day 13: Teams transcripts are JSON. We tag as 'teams_transcript' here
+    # and the ingest worker re-verifies the JSON shape against the parser's
+    # accepted top-level keys before queueing the MeetingNotesAgent.
+    "json": "teams_transcript",
 }
 
 
@@ -111,7 +120,10 @@ def _resolve_file_type(filename: str, content_type: str) -> str:
         return _MIME_TO_TYPE[content_type]
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Unsupported file type. Allowed: PDF, DOCX, XLSX, PPTX, TXT, MD, HTML, CSV.",
+        detail=(
+            "Unsupported file type. Allowed: PDF, DOCX, XLSX, PPTX, TXT, MD, "
+            "HTML, CSV, VTT (Zoom transcript), JSON (Teams transcript)."
+        ),
     )
 
 
@@ -213,10 +225,10 @@ async def init_upload(
             lambda: svc.storage.from_(STORAGE_BUCKET).create_signed_upload_url(storage_path)
         )
     except Exception as exc:
-        print(f"[documents] create_signed_upload_url failed ({type(exc).__name__}): {exc}")
+        log.error("[documents] create_signed_upload_url failed: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create upload URL: {exc}",
+            detail="Failed to create upload URL. Please try again or contact support.",
         ) from exc
 
     # storage3 returns {"signed_url": "...", "token": "...", "path": "..."}.
@@ -319,10 +331,10 @@ async def refresh_upload(
             lambda: svc.storage.from_(STORAGE_BUCKET).create_signed_upload_url(storage_path)
         )
     except Exception as exc:
-        log.error("[documents] create_signed_upload_url (refresh) failed: %s", exc)
+        log.error("[documents] create_signed_upload_url (refresh) failed: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create upload URL: {exc}",
+            detail="Failed to create upload URL. Please try again or contact support.",
         ) from exc
 
     if isinstance(result, dict):

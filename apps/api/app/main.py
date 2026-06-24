@@ -55,6 +55,9 @@ from app.routers import (
     meeting_prep as meeting_prep_router,
 )
 from app.routers import (
+    meetings as meetings_router,
+)
+from app.routers import (
     notifications as notifications_router,
 )
 from app.routers import (
@@ -182,6 +185,7 @@ app.include_router(admin_router.router)
 app.include_router(team_router.router)
 app.include_router(document_versions_router.router)
 app.include_router(meeting_prep_router.router)
+app.include_router(meetings_router.router)
 app.include_router(collections_router.router)
 app.include_router(time_savings_router.router)
 app.include_router(approvals_router.router)

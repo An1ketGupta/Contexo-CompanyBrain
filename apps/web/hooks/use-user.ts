@@ -25,6 +25,15 @@ interface MeResponse {
 
 const fetcher = async (url: string): Promise<MeResponse> => {
   const res = await fetch(url);
+  if (res.status === 401) {
+    if (typeof window !== "undefined") {
+      const next = encodeURIComponent(
+        window.location.pathname + window.location.search,
+      );
+      window.location.href = `/login?redirectedFrom=${next}`;
+    }
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) throw new Error(`Failed to load profile (${res.status})`);
   return res.json();
 };

@@ -191,3 +191,139 @@ Items in the Day-5 regression checklist were run end-to-end on staging:
   manual verification step. Re-run on dependency upgrades.
 - Future security fixes append to this file with a new dated section.
   Cross-reference the relevant migration or PR.
+
+---
+
+## 2026-06-22 — Days 11–12: GDPR Export + Privacy/Terms Scaffolding + Billing Hardening
+
+### 16. GDPR data export — personal + admin org-wide
+
+- **What:** Two new endpoints that bundle a user's (or workspace's) data
+  into a downloadable ZIP archive, satisfying GDPR Article 15 (Right of
+  Access) and Article 20 (Right to Data Portability).
+- **Why:** Pre-requisite for commercial launch in any GDPR / CCPA / DPDP
+  jurisdiction. Also halves the surface area of ad-hoc data-export
+  support tickets.
+- **Files:**
+  - Backend: `apps/api/app/services/data_export.py`,
+    `apps/api/app/routers/settings.py` (`/users/me/export`,
+    `/organizations/me/export`).
+  - Web proxy: `apps/web/app/api/users/me/export/route.ts`,
+    `apps/web/app/api/organizations/me/export/route.ts`,
+    binary-streaming helper `proxyDownload` in `lib/api-proxy.ts`.
+  - UI: `DataExportCard` in `app/(dashboard)/settings/page.tsx`.
+- **Security invariants:**
+  - Personal export uses the **user-scoped Supabase client** so RLS is
+    the security boundary; the explicit `.eq("user_id", ...)` filters
+    are defence-in-depth, not the only line.
+  - Org export uses the service-role client (admin needs cross-user
+    data RLS correctly blocks) with an admin-role pre-check on the
+    route layer.
+  - **Never selected**: OAuth `access_token`, `refresh_token`,
+    `webhook_secret`, API key material, embedding vectors, Stripe
+    `stripe_customer_id` / `stripe_subscription_id`, document binary
+    content. Regression-tested in
+    `apps/api/tests/test_data_export.py::test_user_export_never_selects_oauth_token_columns`
+    and `test_org_export_omits_stripe_ids_from_billing_section`.
+- **Rate limit:** 3 per 24h per user, 1 per 24h per workspace.
+  Upstash daily-bucket key (`export:{namespace}:{id}:{YYYY-MM-DD}`).
+  Fails open if Upstash unreachable.
+- **Verified:**
+  - `tests/test_data_export.py` (4 tests, all pass): valid ZIP for a
+    populated user; valid ZIP for an empty user (Day 12 edge case);
+    OAuth-token columns absent from integrations SELECT; Stripe IDs
+    absent from billing.json.
+  - Manual probe: brand-new user with zero conversations downloads a
+    valid archive (no 500).
+- **Known residual:** Full document file contents not included (sync
+  endpoint can't safely zip arbitrary blobs). Async / email-link
+  variant is in the post-launch backlog.
+
+### 17. Privacy Policy and Terms of Service pages (structural)
+
+- **What:** New `apps/web/app/(public)/privacy/page.tsx` and
+  `(public)/terms/page.tsx` with a shared header/footer layout
+  (`(public)/layout.tsx`). Pages render without authentication.
+- **Why:** Footer links to `/privacy` and `/terms` now have working
+  destinations rather than 404s. Required for App Store submission of
+  the Chrome extension, for any analytics tracker that requires a
+  reachable policy URL, and as a baseline for further compliance work.
+- **Content status:** Both pages carry a visible **placeholder banner**.
+  Narrative reflects the product's actual data flows but has NOT been
+  reviewed by counsel. Replace before commercial launch.
+- **Verified:** Both routes reachable without an auth cookie. Layout
+  renders correctly on dark + light themes.
+
+### 18. Cookie consent banner
+
+- **What:** New `apps/web/components/cookie-consent.tsx` mounted in
+  the root layout. Two real choices ("Accept all" vs "Essential
+  only"), persisted in `localStorage` under `cb.consent.v1`.
+- **Why:** Single-button "Accept" banners don't constitute lawful
+  consent under GDPR. Captures the consent state now so when we add
+  PostHog/Mixpanel later we can gate it without re-prompting every
+  user.
+- **Helper:** `hasAnalyticsConsent()` for any future analytics module
+  to read. Defaults to `false` (never run analytics until the user
+  has opted in).
+- **Verified:** Hydration-safe (renders on client mount only); does
+  not flash on SSR; both buttons persist a decision and dismiss
+  the banner across reloads.
+
+### 19. Footer links across auth pages + sidebar
+
+- **What:** New `(auth)/layout.tsx` adds a Privacy/Terms/Support
+  footer beneath every auth-flow form. Dashboard sidebar gets a
+  small Privacy / Terms link row at the bottom.
+- **Why:** Users on the auth pages (the entry point for anyone
+  receiving a marketing or invite link) were unable to reach the
+  policies. Same gap inside the dashboard.
+
+### 20. Billing — webhook race-condition fix on checkout return
+
+- **What:** Replaced the single 2.5s `setTimeout` refetch on
+  `?checkout=success` with an adaptive 6-attempt poll (1.5s between
+  attempts, ≈9s total budget). Poll terminates early when
+  `organizations.plan` flips from the pre-checkout snapshot OR
+  `plan_status` activates. A visible "Confirming your subscription…"
+  banner shows during the poll so the user doesn't see a stale "Free
+  trial" badge after paying.
+- **Why:** Stripe redirects the user to `success_url` the instant
+  Checkout completes; the webhook that updates `organizations.plan`
+  lands a beat later. The old single-shot refetch lost the race for
+  ≈10% of completions in test mode (latency depends on Stripe's
+  webhook queue depth).
+- **File:** `apps/web/app/(dashboard)/settings/billing/page.tsx`.
+- **Verified:** Repeated test-mode checkouts using
+  `4242 4242 4242 4242` — every completion now resolves to the new
+  plan within the poll budget without a manual refresh.
+
+---
+
+## Verification snapshot — Day 12
+
+- [x] Personal data export downloads a valid ZIP with all expected
+      slices (4 unit tests + manual end-to-end).
+- [x] Empty-state user (no conversations, no documents) still produces
+      a valid archive.
+- [x] OAuth tokens / API key material / Stripe IDs / document content
+      never appear in any export. Asserted at the SELECT projection
+      layer, not just by inspection.
+- [x] Org export is admin-only — route layer rejects non-admins with
+      403 before any data is gathered.
+- [x] `/privacy` and `/terms` reachable without auth, footer links
+      across auth pages and sidebar resolve correctly.
+- [x] Cookie consent banner persists "Accept" / "Essential only"
+      decisions and doesn't re-prompt on reload.
+- [x] Stripe Checkout success no longer shows stale plan post-redirect;
+      poll resolves within ≈9s in test mode.
+
+## Open items going into Day 13
+
+- Final lawyer-reviewed copy for `/privacy` and `/terms` (placeholder
+  banner currently shown). Tracked in post-launch backlog.
+- Async full-document GDPR export (file contents, not just metadata).
+  Tracked in post-launch backlog.
+- Pre-existing failure in `tests/admin/test_feedback_stats.py` (mock
+  client missing `.rpc()` method) is unrelated to Days 11–12 work;
+  filed for Day 13 admin-router cleanup.

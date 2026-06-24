@@ -190,13 +190,15 @@ AGENT_REGISTRY: dict[str, AgentSpec] = {
         description=(
             "Re-run the policy propagation pipeline for a document: diff vs. "
             "previous version, post to the Slack policy channel, and create "
-            "acknowledgement rows for every active org member."
+            "acknowledgement rows for every active org member. Pass either "
+            "`document_id` (UUID) or `document_name` — the API will look up "
+            "the id by exact-match name within the calling org."
         ),
-        required=("document_id",),
-        optional=("version_id",),
+        required=(),
+        optional=("document_id", "document_name", "version_id"),
         estimated_seconds=30,
         dispatch=_dispatch_policy_propagation,
-        example_input={"document_id": "f4b1c2d3-…"},
+        example_input={"document_name": "Refund Policy"},
     ),
     "support_response": AgentSpec(
         agent_type="support_response",
@@ -269,6 +271,16 @@ def validate_agent_input(agent_type: str, payload: dict[str, Any]) -> dict[str, 
             f"{', '.join(missing)}"
         )
 
+    # policy_propagation accepts EITHER document_id OR document_name. Enforce
+    # at-least-one at validation time so the API returns 400 immediately
+    # instead of hitting the document_id lookup with an empty value.
+    if agent_type == "policy_propagation":
+        if not payload.get("document_id") and not payload.get("document_name"):
+            raise AgentInputError(
+                "policy_propagation requires either `document_id` (UUID) "
+                "or `document_name` (exact match within your org)."
+            )
+
     allowed = set(spec.required) | set(spec.optional)
     cleaned: dict[str, Any] = {}
     for key in allowed:
@@ -300,6 +312,38 @@ def validate_agent_input(agent_type: str, payload: dict[str, Any]) -> dict[str, 
                 raise AgentInputError("input.send_to_email is not a valid email")
 
     return cleaned
+
+
+# ── Document name → id resolution (policy_propagation convenience) ────────
+
+
+async def resolve_document_id_by_name(
+    *, org_id: str, document_name: str
+) -> str | None:
+    """Look up a document id by exact-match name within an org.
+
+    Used by the public API to translate the customer-friendly
+    `document_name` field on policy_propagation triggers into the
+    canonical UUID. Returns None when no match exists; the caller turns
+    that into a 400. Ambiguous names (multiple docs share the name) also
+    return None — callers should fall back to the UUID path.
+    """
+    name = (document_name or "").strip()
+    if not name:
+        return None
+    svc = get_service_client()
+    rows = await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .select("id")
+        .eq("org_id", org_id)
+        .eq("name", name)
+        .limit(2)
+        .execute()
+    )
+    data = rows.data or []
+    if len(data) != 1:
+        return None
+    return data[0]["id"]
 
 
 # ── Approver resolution ─────────────────────────────────────────────────────
@@ -475,6 +519,7 @@ __all__ = [
     "AGENT_REGISTRY",
     "validate_agent_input",
     "resolve_approver_user_id",
+    "resolve_document_id_by_name",
     "dispatch_api_agent",
     "precreate_agent_run",
     "agent_registry_public_view",

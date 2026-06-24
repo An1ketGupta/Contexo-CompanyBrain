@@ -64,8 +64,8 @@ PLANS: tuple[PlanSpec, ...] = (
         plan="starter",
         product_name="NirnayaIQ — Starter",
         product_description="For small teams getting started with company-context AI.",
-        monthly_cents=4900,    # $49.00/mo
-        annual_cents=47000,    # $470.00/yr (~20% off $588)
+        monthly_cents=6900,    # $69.00/mo
+        annual_cents=66500,    # $665.00/yr (~20% off $828.00)
         quota_documents=100,
         quota_queries_monthly=500,
         quota_seats=10,
@@ -74,8 +74,8 @@ PLANS: tuple[PlanSpec, ...] = (
         plan="team",
         product_name="NirnayaIQ — Team",
         product_description="For growing teams that need shared knowledge + collaboration.",
-        monthly_cents=12900,   # $129.00/mo
-        annual_cents=124000,   # $1,240.00/yr (~20% off $1,548)
+        monthly_cents=14900,   # $149.00/mo
+        annual_cents=144000,   # $1,440.00/yr (~20% off $1,548)
         quota_documents=1000,
         quota_queries_monthly=3000,
         quota_seats=30,
@@ -84,8 +84,8 @@ PLANS: tuple[PlanSpec, ...] = (
         plan="business",
         product_name="NirnayaIQ — Business",
         product_description="Unlimited usage, all integrations, priority support.",
-        monthly_cents=29900,   # $299.00/mo
-        annual_cents=287000,   # $2,870.00/yr (~20% off $3,588)
+        monthly_cents=34900,   # $349.00/mo
+        annual_cents=335000,   # $3,350.00/yr (~20% off $4,296)
         quota_documents=None,
         quota_queries_monthly=None,
         quota_seats=None,
@@ -108,7 +108,8 @@ def _find_product_by_plan(plan: str) -> dict[str, Any] | None:
         print(f"  (Product.search failed: {exc}, falling back to list)")
 
     for product in stripe.Product.list(limit=100).auto_paging_iter():
-        if product.metadata.get("plan") == plan:
+        meta = product.to_dict().get("metadata") or {}
+        if meta.get("plan") == plan:
             return product
     return None
 

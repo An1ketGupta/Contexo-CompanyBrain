@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field
 
 from app.auth import verify_jwt
 from app.config import get_settings
+from app.core.rate_limiter import oauth_callback_limiter
 from app.database import get_user_client
 from app.errors import NoOrganization
 from app.services.integrations import drive, email_forward, notion, slack_inbound
@@ -262,7 +263,10 @@ def _v2_summary(row: dict[str, Any] | None, *, available: bool) -> dict[str, Any
 # ── Google Drive ────────────────────────────────────────────────────────────
 
 @router.get("/integrations/drive/connect")
-async def drive_connect(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
+async def drive_connect(
+    current_user: dict = Depends(verify_jwt),
+    _rl: None = Depends(oauth_callback_limiter),
+) -> dict[str, Any]:
     org_id, user_id, token = _require_org(current_user)
     await _require_admin(user_id, token)
     settings = get_settings()
@@ -378,7 +382,10 @@ async def drive_disconnect(current_user: dict = Depends(verify_jwt)) -> None:
 # ── Notion ──────────────────────────────────────────────────────────────────
 
 @router.get("/integrations/notion/connect")
-async def notion_connect(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
+async def notion_connect(
+    current_user: dict = Depends(verify_jwt),
+    _rl: None = Depends(oauth_callback_limiter),
+) -> dict[str, Any]:
     org_id, user_id, token = _require_org(current_user)
     await _require_admin(user_id, token)
     settings = get_settings()

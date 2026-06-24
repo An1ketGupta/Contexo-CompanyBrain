@@ -5,6 +5,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { AlertTriangle, ArrowLeft, Check, Copy, KeyRound, Loader2, Plus, Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -109,6 +110,8 @@ export default function ApiKeysPage() {
       <CurlExample />
 
       <AgentTriggerDocs />
+
+      <SdkSnippets />
 
       <CreateDialog
         open={createOpen}
@@ -241,6 +244,229 @@ function AgentTriggerDocs() {
           <code>HMAC(INTERNAL_EMAIL_SECRET, api_key_id)</code> — the{" "}
           <code>X-NirnayaIQ-Api-Key-Id</code> header echoes the key id so your
           receiver can derive the same value server-side.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function SdkSnippets() {
+  const origin = useOrigin();
+  const [tab, setTab] = useState<"python" | "node">("python");
+
+  const pythonTrigger = `import os
+import time
+import requests
+
+BASE = "${origin}"
+KEY = os.environ["COMPANY_BRAIN_API_KEY"]  # cb_live_...
+
+# 1) Fire the agent.
+res = requests.post(
+    f"{BASE}/v1/agents/onboarding/run",
+    headers={
+        "Authorization": f"Bearer {KEY}",
+        "Idempotency-Key": "bamboo-evt-12345",  # safe retries
+    },
+    json={
+        "input": {
+            "name": "Sarah Chen",
+            "email": "sarah@acme.com",
+            "role": "Senior Product Designer",
+            "start_date": "2026-07-01",
+        },
+        "output_channels": ["email", "slack"],
+        "webhook_url": "https://your-app.com/hooks/cb-agent",
+    },
+    timeout=10,
+)
+res.raise_for_status()
+run = res.json()
+print(run["agent_run_id"], run["status"])
+
+# 2) Poll until terminal. The webhook gives you the same result push-style,
+#    but polling is fine for one-off scripts where you don't have an
+#    inbound endpoint to receive callbacks.
+while True:
+    detail = requests.get(
+        f"{BASE}{run['poll_url']}",
+        headers={"Authorization": f"Bearer {KEY}"},
+        timeout=10,
+    ).json()
+    if detail["status"] in ("completed", "failed"):
+        print(detail)
+        break
+    time.sleep(2)`;
+
+  const pythonVerify = `import hmac
+import hashlib
+import os
+
+# Receives the POST from /v1/agents/.../run callbacks.
+INTERNAL_SECRET = os.environ["INTERNAL_EMAIL_SECRET"]  # set during integration
+
+def verify_callback(body_bytes: bytes, headers: dict) -> bool:
+    """Returns True when the request was sent by Company Brain.
+
+    The signature is HMAC-SHA256 over the raw body, with the secret derived
+    from your API key id (echoed in X-NirnayaIQ-Api-Key-Id) + your
+    INTERNAL_EMAIL_SECRET shared during integration.
+    """
+    sig_header = headers.get("X-NirnayaIQ-Signature") or ""
+    key_id = headers.get("X-NirnayaIQ-Api-Key-Id") or ""
+    if not sig_header.startswith("sha256=") or not key_id:
+        return False
+    received = sig_header.removeprefix("sha256=")
+    secret = hmac.new(
+        INTERNAL_SECRET.encode("utf-8"),
+        key_id.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    expected = hmac.new(
+        secret.encode("utf-8"), body_bytes, hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(received, expected)`;
+
+  const nodeTrigger = `import fetch from "node-fetch";
+
+const BASE = "${origin}";
+const KEY = process.env.COMPANY_BRAIN_API_KEY!; // cb_live_...
+
+// 1) Fire the agent.
+const triggerRes = await fetch(\`\${BASE}/v1/agents/onboarding/run\`, {
+  method: "POST",
+  headers: {
+    Authorization: \`Bearer \${KEY}\`,
+    "Idempotency-Key": "bamboo-evt-12345",
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    input: {
+      name: "Sarah Chen",
+      email: "sarah@acme.com",
+      role: "Senior Product Designer",
+      start_date: "2026-07-01",
+    },
+    output_channels: ["email", "slack"],
+    webhook_url: "https://your-app.com/hooks/cb-agent",
+  }),
+});
+if (!triggerRes.ok) throw new Error(\`Trigger failed: \${triggerRes.status}\`);
+const run = await triggerRes.json();
+
+// 2) Poll.
+while (true) {
+  const r = await fetch(\`\${BASE}\${run.poll_url}\`, {
+    headers: { Authorization: \`Bearer \${KEY}\` },
+  });
+  const detail = await r.json();
+  if (detail.status === "completed" || detail.status === "failed") {
+    console.log(detail);
+    break;
+  }
+  await new Promise((res) => setTimeout(res, 2000));
+}`;
+
+  const nodeVerify = `import crypto from "node:crypto";
+
+const INTERNAL_SECRET = process.env.INTERNAL_EMAIL_SECRET!;
+
+/**
+ * Verifies an inbound callback from Company Brain.
+ *
+ * The signature is HMAC-SHA256 over the raw request body, with the secret
+ * derived from your API key id (echoed in X-NirnayaIQ-Api-Key-Id) +
+ * INTERNAL_EMAIL_SECRET shared with us during integration setup.
+ *
+ * IMPORTANT: pass the raw body bytes (not the parsed JSON) — Express's
+ * express.raw({ type: "application/json" }) or fastify's pre-parser hook
+ * give you the right buffer.
+ */
+export function verifyCallback(
+  bodyBytes: Buffer,
+  headers: Record<string, string | undefined>,
+): boolean {
+  const sigHeader = headers["x-nirnayaiq-signature"] ?? "";
+  const keyId = headers["x-nirnayaiq-api-key-id"] ?? "";
+  if (!sigHeader.startsWith("sha256=") || !keyId) return false;
+
+  const received = sigHeader.slice("sha256=".length);
+  const secret = crypto
+    .createHmac("sha256", INTERNAL_SECRET)
+    .update(keyId)
+    .digest("hex");
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(bodyBytes)
+    .digest("hex");
+
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(received, "hex"),
+      Buffer.from(expected, "hex"),
+    );
+  } catch {
+    return false;
+  }
+}`;
+
+  const trigger = tab === "python" ? pythonTrigger : nodeTrigger;
+  const verify = tab === "python" ? pythonVerify : nodeVerify;
+
+  return (
+    <section className="space-y-3 rounded-lg border border-border bg-background p-4">
+      <header>
+        <p className="text-sm font-medium">SDK snippets</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Drop-in code for the two operations every integrator needs:
+          trigger + poll, and webhook signature verification.
+        </p>
+      </header>
+      <div className="flex gap-1 border-b border-border">
+        <button
+          type="button"
+          onClick={() => setTab("python")}
+          className={cn(
+            "px-3 py-1.5 text-xs font-medium",
+            tab === "python"
+              ? "border-b-2 border-foreground text-foreground"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          Python
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("node")}
+          className={cn(
+            "px-3 py-1.5 text-xs font-medium",
+            tab === "node"
+              ? "border-b-2 border-foreground text-foreground"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          Node.js / TypeScript
+        </button>
+      </div>
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground">
+          Trigger + poll
+        </p>
+        <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">
+          {trigger}
+        </pre>
+      </div>
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground">
+          Verify the webhook signature
+        </p>
+        <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">
+          {verify}
+        </pre>
+        <p className="text-xs text-muted-foreground">
+          Always verify on every callback. An unsigned POST to your
+          webhook URL is either a misconfiguration or someone probing —
+          rejecting it costs nothing.
         </p>
       </div>
     </section>

@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 
 from app.auth import verify_jwt
+from app.core.rate_limiter import admin_analytics_limiter
 from app.database import get_service_client, get_user_client
 from app.errors import NoOrganization
 
@@ -64,6 +65,7 @@ async def _require_admin(current_user: dict) -> str:
 async def get_admin_analytics(
     period: str = Query(default="30d", pattern="^(7d|30d|90d)$"),
     current_user: dict = Depends(verify_jwt),
+    _rl: None = Depends(admin_analytics_limiter),
 ) -> dict[str, Any]:
     org_id = await _require_admin(current_user)
     days = _PERIOD_DAYS[period]
@@ -87,17 +89,13 @@ async def get_admin_analytics(
     )
     total_queries = total_queries_res.count or 0
 
-    # Active users (last 7 days). We pull conversation user_ids in the window
-    # — Supabase doesn't expose count(distinct), so dedupe client-side.
-    active_convs_res = await asyncio.to_thread(
-        lambda: svc.table("conversations")
-        .select("user_id, updated_at")
-        .eq("org_id", org_id)
-        .gte("updated_at", week_cutoff.isoformat())
-        .limit(10000)
-        .execute()
+    # Active users (last 7 days) — SQL DISTINCT via RPC avoids a 10k row pull.
+    active_users_res = await asyncio.to_thread(
+        lambda: svc.rpc("get_admin_active_user_count", {
+            "p_org_id": org_id, "p_start": week_cutoff.isoformat()
+        }).execute()
     )
-    active_users = len({row["user_id"] for row in (active_convs_res.data or []) if row.get("user_id")})
+    active_users = (active_users_res.data or [{}])[0].get("count") or 0
 
     total_users_res = await asyncio.to_thread(
         lambda: svc.table("users")
@@ -108,26 +106,15 @@ async def get_admin_analytics(
     )
     total_users = total_users_res.count or 0
 
-    # Feedback ratio over the period — pulled from analytics_events for
-    # granularity (the messages.feedback column is current-state-only, no
-    # timestamp on the flip).
+    # Feedback ratio — SQL aggregation avoids a 10k analytics_events pull.
     feedback_res = await asyncio.to_thread(
-        lambda: svc.table("analytics_events")
-        .select("metadata")
-        .eq("org_id", org_id)
-        .eq("event_type", "feedback_given")
-        .gte("created_at", cutoff.isoformat())
-        .limit(10000)
-        .execute()
+        lambda: svc.rpc("get_admin_feedback_counts", {
+            "p_org_id": org_id, "p_start": cutoff.isoformat()
+        }).execute()
     )
-    positive = sum(
-        1 for row in (feedback_res.data or [])
-        if (row.get("metadata") or {}).get("feedback") == "positive"
-    )
-    negative = sum(
-        1 for row in (feedback_res.data or [])
-        if (row.get("metadata") or {}).get("feedback") == "negative"
-    )
+    fb_rows = {row["feedback"]: row["cnt"] for row in (feedback_res.data or [])}
+    positive = fb_rows.get("positive", 0)
+    negative = fb_rows.get("negative", 0)
     total_feedback = positive + negative
     feedback_score = (
         round(positive / total_feedback * 100) if total_feedback else None
@@ -145,34 +132,21 @@ async def get_admin_analytics(
     total_docs = ready_docs_res.count or 0
 
     cited_docs_res = await asyncio.to_thread(
-        lambda: svc.table("chunk_citations")
-        .select("document_id")
-        .eq("org_id", org_id)
-        .gte("cited_at", cutoff.isoformat())
-        .limit(10000)
-        .execute()
+        lambda: svc.rpc("get_admin_cited_doc_count", {
+            "p_org_id": org_id, "p_start": cutoff.isoformat()
+        }).execute()
     )
-    docs_accessed = len({row["document_id"] for row in (cited_docs_res.data or []) if row.get("document_id")})
+    docs_accessed = (cited_docs_res.data or [{}])[0].get("count") or 0
 
-    # ── Time series: queries per day ──────────────────────────────────────
-    # Bucket messages.created_at into days client-side. SQL date_trunc would
-    # be cleaner but we'd need a custom RPC; for ≤90 days the in-memory
-    # bucket is fast enough.
-    daily_msgs_res = await asyncio.to_thread(
-        lambda: svc.table("messages")
-        .select("created_at")
-        .eq("org_id", org_id)
-        .eq("role", "user")
-        .gte("created_at", cutoff.isoformat())
-        .order("created_at")
-        .limit(50000)
-        .execute()
+    # ── Time series: queries per day via SQL date_trunc RPC ───────────────
+    daily_counts_res = await asyncio.to_thread(
+        lambda: svc.rpc("get_admin_daily_query_counts", {
+            "p_org_id": org_id,
+            "p_start": cutoff.isoformat(),
+            "p_end": now.isoformat(),
+        }).execute()
     )
-    bucket: dict[str, int] = {}
-    for row in (daily_msgs_res.data or []):
-        day = (row.get("created_at") or "")[:10]
-        if day:
-            bucket[day] = bucket.get(day, 0) + 1
+    bucket = {row["day"]: row["count"] for row in (daily_counts_res.data or [])}
 
     # Fill in zero-count days so the area chart has no gaps.
     daily_queries: list[dict[str, Any]] = []
@@ -180,52 +154,16 @@ async def get_admin_analytics(
         d = (cutoff + timedelta(days=i)).date().isoformat()
         daily_queries.append({"day": d, "count": bucket.get(d, 0)})
 
-    # ── Per-user breakdown ────────────────────────────────────────────────
-    # Pull user-role messages in window with conversation→user join, bucket
-    # client-side. Cap at most-active 50 users; an org with more is rare on
-    # any plan we ship.
-    user_msgs_res = await asyncio.to_thread(
-        lambda: svc.table("messages")
-        .select("created_at, conversation_id")
-        .eq("org_id", org_id)
-        .eq("role", "user")
-        .gte("created_at", cutoff.isoformat())
-        .limit(50000)
-        .execute()
+    # ── Per-user breakdown — top 50 by volume, aggregated SQL-side ───────
+    user_stats_res = await asyncio.to_thread(
+        lambda: svc.rpc("get_admin_per_user_stats", {
+            "p_org_id": org_id, "p_start": cutoff.isoformat()
+        }).execute()
     )
-    conv_ids = list({row["conversation_id"] for row in (user_msgs_res.data or []) if row.get("conversation_id")})
-    conv_to_user: dict[str, str] = {}
-    if conv_ids:
-        # Supabase has a 1000-id `in_` cap; chunk just in case.
-        for start in range(0, len(conv_ids), 800):
-            chunk_ids = conv_ids[start:start + 800]
-            conv_res = await asyncio.to_thread(
-                lambda c=chunk_ids: svc.table("conversations")
-                .select("id, user_id")
-                .in_("id", c)
-                .execute()
-            )
-            for row in (conv_res.data or []):
-                if row.get("user_id"):
-                    conv_to_user[row["id"]] = row["user_id"]
-
-    per_user: dict[str, dict[str, Any]] = {}
-    for row in (user_msgs_res.data or []):
-        uid = conv_to_user.get(row.get("conversation_id"))
-        if not uid:
-            continue
-        u = per_user.setdefault(uid, {"queries": 0, "last_active": row["created_at"]})
-        u["queries"] += 1
-        if row["created_at"] > u["last_active"]:
-            u["last_active"] = row["created_at"]
-
+    ranked = user_stats_res.data or []
     user_breakdown: list[dict[str, Any]] = []
-    if per_user:
-        # Trim to the top 50 by query volume before doing the per-user auth
-        # lookups — emails come from auth.users (one call per id) so we don't
-        # want to pay that cost for users we're about to drop anyway.
-        ranked = sorted(per_user.items(), key=lambda kv: kv[1]["queries"], reverse=True)[:50]
-        top_ids = [uid for uid, _ in ranked]
+    if ranked:
+        top_ids = [row["user_id"] for row in ranked]
 
         user_rows = await asyncio.to_thread(
             lambda: svc.table("users")
@@ -246,95 +184,64 @@ async def get_admin_analytics(
         emails = await asyncio.gather(*(_email_for(uid) for uid in top_ids))
         emails_by_id = dict(zip(top_ids, emails))
 
-        for uid, agg in ranked:
+        for row in ranked:
+            uid = row["user_id"]
             u = users_by_id.get(uid, {})
             email = emails_by_id.get(uid)
             user_breakdown.append({
                 "user_id": uid,
                 "name": u.get("display_name") or (email or "Unknown").split("@")[0],
                 "email": email,
-                "queries": agg["queries"],
-                "last_active": agg["last_active"],
+                "queries": row["queries"],
+                "last_active": row["last_active"],
             })
 
-    # ── Most-cited documents ──────────────────────────────────────────────
-    citations_res = await asyncio.to_thread(
-        lambda: svc.table("chunk_citations")
-        .select("document_id")
-        .eq("org_id", org_id)
-        .gte("cited_at", cutoff.isoformat())
-        .limit(20000)
-        .execute()
+    # ── Most-cited documents — SQL join+agg avoids a 20k citations pull ───
+    top_docs_res = await asyncio.to_thread(
+        lambda: svc.rpc("get_admin_top_cited_docs", {
+            "p_org_id": org_id, "p_start": cutoff.isoformat(), "p_limit": 5
+        }).execute()
     )
-    doc_cites: dict[str, int] = {}
-    for row in (citations_res.data or []):
-        d = row.get("document_id")
-        if d:
-            doc_cites[d] = doc_cites.get(d, 0) + 1
-    top_doc_ids = sorted(doc_cites.items(), key=lambda kv: kv[1], reverse=True)[:5]
-    top_documents: list[dict[str, Any]] = []
-    if top_doc_ids:
-        doc_rows = await asyncio.to_thread(
-            lambda: svc.table("documents")
-            .select("id, name")
-            .in_("id", [d for d, _ in top_doc_ids])
-            .execute()
-        )
-        doc_names = {row["id"]: row["name"] for row in (doc_rows.data or [])}
-        for did, cites in top_doc_ids:
-            if did in doc_names:
-                top_documents.append({"name": doc_names[did], "citations": cites})
+    top_documents = [
+        {"name": row["name"], "citations": row["citation_count"]}
+        for row in (top_docs_res.data or [])
+        if row.get("name")
+    ]
 
-    # ── Intent breakdown — read from messages.metadata->'intent' ──────────
-    # We also fold in copy_count and time_saved_minutes here so the dashboard
-    # gets V5 quality + ROI signals in one round-trip per period.
-    intent_res = await asyncio.to_thread(
+    # ── Intent + engagement stats — SQL aggregation avoids a 50k msg pull ─
+    intent_rpc_res = await asyncio.to_thread(
+        lambda: svc.rpc("get_admin_intent_stats", {
+            "p_org_id": org_id, "p_start": cutoff.isoformat()
+        }).execute()
+    )
+    intent_rows = intent_rpc_res.data or []
+    total_assistant = sum(row["cnt"] for row in intent_rows)
+    total_copied = sum(row["copied_cnt"] for row in intent_rows)
+    total_minutes_saved = sum(row["minutes_saved"] for row in intent_rows)
+    intent_breakdown = [
+        {
+            "intent": row["intent"],
+            "count": row["cnt"],
+            "copy_rate": (
+                round(row["copied_cnt"] / row["cnt"] * 100, 1) if row["cnt"] else None
+            ),
+        }
+        for row in sorted(intent_rows, key=lambda r: r["cnt"], reverse=True)
+    ]
+
+    # ── Top copied messages — bounded 5-row query ─────────────────────────
+    top_copied_res = await asyncio.to_thread(
         lambda: svc.table("messages")
-        .select("id, metadata, copy_count, time_saved_minutes, content, conversation_id")
+        .select("id, content, copy_count, conversation_id, metadata")
         .eq("org_id", org_id)
         .eq("role", "assistant")
         .gte("created_at", cutoff.isoformat())
-        .limit(50000)
+        .gt("copy_count", 0)
+        .order("copy_count", desc=True)
+        .limit(5)
         .execute()
     )
-    assistant_rows = intent_res.data or []
-    intent_counts: dict[str, int] = {}
-    intent_copied: dict[str, int] = {}
-    intent_total: dict[str, int] = {}
-    total_assistant = 0
-    total_copied = 0
-    total_minutes_saved = 0
-    for row in assistant_rows:
-        meta = row.get("metadata") or {}
-        intent = meta.get("intent")
-        copied = (row.get("copy_count") or 0) > 0
-        total_assistant += 1
-        if copied:
-            total_copied += 1
-        total_minutes_saved += int(row.get("time_saved_minutes") or 0)
-        if intent:
-            intent_counts[intent] = intent_counts.get(intent, 0) + 1
-            intent_total[intent] = intent_total.get(intent, 0) + 1
-            if copied:
-                intent_copied[intent] = intent_copied.get(intent, 0) + 1
-    intent_breakdown = [
-        {
-            "intent": k,
-            "count": v,
-            "copy_rate": (
-                round(intent_copied.get(k, 0) / intent_total[k] * 100, 1)
-                if intent_total.get(k) else None
-            ),
-        }
-        for k, v in sorted(intent_counts.items(), key=lambda kv: kv[1], reverse=True)
-    ]
-
-    # ── V5 #59 — Top copied messages ──────────────────────────────────────
-    top_copied_rows = sorted(
-        (r for r in assistant_rows if (r.get("copy_count") or 0) > 0),
-        key=lambda r: r.get("copy_count") or 0,
-        reverse=True,
-    )[:5]
+    top_copied_rows = top_copied_res.data or []
     top_copied: list[dict[str, Any]] = []
     if top_copied_rows:
         conv_ids_for_titles = list({r["conversation_id"] for r in top_copied_rows if r.get("conversation_id")})

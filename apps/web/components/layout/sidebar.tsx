@@ -37,6 +37,26 @@ export function Sidebar() {
       <div className="border-t border-border p-2">
         <UserMenu user={user} organization={organization} />
       </div>
+
+      <div className="flex items-center justify-center gap-3 border-t border-border px-3 py-2 text-[10px] text-muted-foreground">
+        <Link
+          href="/privacy"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:text-foreground"
+        >
+          Privacy
+        </Link>
+        <span aria-hidden>·</span>
+        <Link
+          href="/terms"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:text-foreground"
+        >
+          Terms
+        </Link>
+      </div>
     </aside>
   );
 }

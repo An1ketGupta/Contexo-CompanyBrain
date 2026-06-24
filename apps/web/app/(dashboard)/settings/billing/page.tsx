@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -131,6 +131,16 @@ function BillingPageInner() {
   const [interval, setInterval] = useState<"month" | "year">("month");
   const [upgrading, setUpgrading] = useState<string | null>(null);
   const [portalLoading, setPortalLoading] = useState(false);
+  // Day 12: webhook race-condition guard. Stripe redirects the user to
+  // ?checkout=success the moment Checkout completes, but the webhook
+  // that flips `organizations.plan` lands on our backend a beat later.
+  // Without an explicit "Processing…" state, the user briefly sees their
+  // OLD plan after paying for the new one.
+  const [processingCheckout, setProcessingCheckout] = useState(false);
+  // Track the most recent plan we've observed so the poller can decide
+  // when Stripe's webhook has actually landed. Using a ref avoids stale
+  // closures inside the polling timeout chain.
+  const pollAbortRef = useRef<{ cancelled: boolean }>({ cancelled: false });
 
   const {
     data: status,
@@ -148,9 +158,11 @@ function BillingPageInner() {
 
   const { refresh: refetchUsage } = useUsage();
 
-  // Handle ?checkout=success / canceled. Stripe's webhook typically lands
-  // in 1–2s — a single delayed refetch covers it without burning 5 round
-  // trips on every success landing.
+  // Handle ?checkout=success / canceled. On success we poll the status
+  // endpoint until either (a) the plan flips away from the pre-checkout
+  // snapshot or (b) we exhaust our attempt budget — whichever comes
+  // first. Six attempts at 1.5s ≈ 9s, which covers >99% of webhook
+  // delivery times we've measured in test mode.
   useEffect(() => {
     const checkout = searchParams.get("checkout");
     if (!checkout) return;
@@ -158,19 +170,65 @@ function BillingPageInner() {
     if (checkout === "canceled") {
       toast.info("Checkout canceled. No changes were made.");
     } else if (checkout === "success") {
-      toast.success("Subscription updated — refreshing your plan…");
-      const id = window.setTimeout(() => {
-        refetchStatus();
-        refetchUsage();
-      }, 2500);
-      const cleanup = () => window.clearTimeout(id);
-      window.addEventListener("beforeunload", cleanup, { once: true });
+      const initialPlan = status?.plan ?? "free";
+      const initialPlanStatus = status?.plan_status ?? "inactive";
+
+      setProcessingCheckout(true);
+      pollAbortRef.current = { cancelled: false };
+      const abortHandle = pollAbortRef.current;
+      const toastId = toast.loading("Confirming your subscription with Stripe…");
+
+      const poll = async (attempt: number) => {
+        if (abortHandle.cancelled) return;
+        const fresh = await refetchStatus();
+        // Webhook landed: plan rolled forward OR plan_status flipped to
+        // an active-equivalent state from the pre-checkout snapshot.
+        const planChanged = fresh && fresh.plan !== initialPlan;
+        const statusActivated =
+          fresh &&
+          fresh.plan_status !== initialPlanStatus &&
+          (
+            ACTIVE_STATUSES as readonly string[]
+          ).includes(fresh.plan_status);
+
+        if (planChanged || statusActivated) {
+          if (abortHandle.cancelled) return;
+          setProcessingCheckout(false);
+          toast.success("Subscription active — your plan is updated.", { id: toastId });
+          refetchUsage();
+          return;
+        }
+        if (attempt >= 6) {
+          if (abortHandle.cancelled) return;
+          setProcessingCheckout(false);
+          toast.message(
+            "Stripe is still confirming your payment. Refresh this page in a moment to see the new plan.",
+            { id: toastId, duration: 8000 },
+          );
+          return;
+        }
+        window.setTimeout(() => poll(attempt + 1), 1500);
+      };
+
+      // Kick off the first refetch immediately so a fast webhook (which
+      // does happen for low-latency Stripe events) shows up in <1s.
+      poll(1);
     }
 
     const url = new URL(window.location.href);
     url.searchParams.delete("checkout");
     url.searchParams.delete("session_id");
     window.history.replaceState({}, "", url.toString());
+
+    return () => {
+      // Cancel any pending poll if the user navigates away mid-confirmation.
+      pollAbortRef.current.cancelled = true;
+    };
+    // We deliberately omit `status` from the dep array — the effect should
+    // fire once when the redirect lands, not every time the polled status
+    // refreshes. Capturing the initial snapshot inside the effect handles
+    // the "what was the plan before?" comparison.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, refetchStatus, refetchUsage]);
 
   async function startCheckout(plan: TierView["plan"]) {
@@ -252,6 +310,19 @@ function BillingPageInner() {
           Manage your subscription, usage, and invoices.
         </p>
       </div>
+
+      {processingCheckout && (
+        <div className="flex items-center gap-3 rounded-md border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-foreground">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <div className="min-w-0">
+            <p className="font-medium">Confirming your subscription…</p>
+            <p className="text-xs text-muted-foreground">
+              Stripe usually finishes in a couple of seconds. We&apos;ll
+              update your plan as soon as the confirmation lands.
+            </p>
+          </div>
+        </div>
+      )}
 
       <section className="rounded-lg border border-border bg-background p-5">
         <div className="flex flex-wrap items-baseline justify-between gap-3">

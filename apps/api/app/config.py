@@ -114,6 +114,12 @@ class Settings(BaseSettings):
     # Per-API-key/minute on the public /v1 endpoints. Tighter than the per-user
     # cap because automation can burn through quotas in seconds.
     rate_limit_api_per_key_per_minute: int = 60
+    # Per-API-key/day cap layered on top of per-minute + per-org-monthly. A
+    # leaked key with a polite-cadence script wouldn't trip the minute limit
+    # but could still burn the org's whole month in a day; this catches that.
+    # Set to 0 to disable. Default budget is generous (~3500 calls/day, well
+    # above any honest automation) — the goal is to cap abuse, not throttle.
+    rate_limit_api_per_key_per_day: int = 3_500
 
     # ── Day-14 integrations: OAuth credentials ─────────────────────────────
     # Google Drive — see https://console.cloud.google.com/apis/credentials.
