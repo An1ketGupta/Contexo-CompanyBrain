@@ -416,6 +416,25 @@ async def complete_upload(
         version_id=initial_version["id"] if initial_version else None,
     )
 
+    # Agent2 Day 1: emit document.uploaded so webhook subscribers + autoflows
+    # see this BEFORE the ingest pipeline finishes. document.processed will
+    # fire later when chunks are embedded. Fire-and-forget — a webhook glitch
+    # never blocks an upload response.
+    try:
+        from app.services.webhooks import trigger_event as _trigger_webhook
+
+        await _trigger_webhook(
+            org_id=org_id,
+            event="document.uploaded",
+            payload={
+                "document_id": body.doc_id,
+                "file_type": result.data["file_type"],
+                "uploaded_by": user_id,
+            },
+        )
+    except Exception as exc:
+        log.warning("document_uploaded_emit_failed: %s", exc)
+
     # V3 #80 — the doc row now exists in 'pending'; an org refreshing the
     # documents page should see it immediately. Status flips later (→ ready
     # / failed) also invalidate from the Inngest pipeline.

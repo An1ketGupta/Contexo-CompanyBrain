@@ -189,6 +189,13 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
                 "auto-tag-document",
                 lambda: _auto_tag_doc(doc_id=doc_id),
             )
+            # Agent2 Day 2 #33 — once tags are in place, run smart routing
+            # to propose a collection assignment. Best-effort: no centroids
+            # yet (empty org) or no match → silent no-op.
+            await step.run(
+                "smart-route-document",
+                lambda: _smart_route_doc(doc_id=doc_id, org_id=org_id),
+            )
             # Agent Day 13 — meeting-transcript routing. If the file
             # extension says it's a meeting transcript we fan out a
             # dedicated event for the MeetingNotesAgent. Cheap inline
@@ -589,6 +596,18 @@ async def _auto_tag_doc(*, doc_id: str) -> dict[str, Any]:
         return await auto_tag_document(document_id=doc_id)
     except Exception as exc:
         log.warning("[inngest] auto-tag failed: doc=%s err=%s", doc_id, exc)
+        return {"status": "failed", "reason": str(exc)[:200]}
+
+
+async def _smart_route_doc(*, doc_id: str, org_id: str) -> dict[str, Any]:
+    """Agent2 Day 2 #33: propose a collection assignment from the doc's
+    summary embedding. Best-effort — never fails the ingest pipeline."""
+    from app.services.smart_routing import suggest_for_document
+
+    try:
+        return await suggest_for_document(document_id=doc_id, org_id=org_id)
+    except Exception as exc:
+        log.warning("[inngest] smart-route failed: doc=%s err=%s", doc_id, exc)
         return {"status": "failed", "reason": str(exc)[:200]}
 
 

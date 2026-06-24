@@ -41,13 +41,20 @@ interface Delivery {
 }
 
 const ALL_EVENTS = [
+  { value: "document.uploaded", label: "Document uploaded" },
   { value: "document.processed", label: "Document processed" },
   { value: "document.failed", label: "Document failed" },
   { value: "query.completed", label: "Query completed" },
+  { value: "message.feedback.negative", label: "Negative feedback on a message" },
   { value: "approval.requested", label: "Approval requested" },
   { value: "approval.decided", label: "Approval decided" },
   { value: "compliance.acknowledged", label: "Compliance acknowledged" },
   { value: "knowledge_gap.detected", label: "Knowledge gap detected" },
+  { value: "agent.completed", label: "Agent run completed" },
+  { value: "agent.failed", label: "Agent run failed" },
+  { value: "employee.joined", label: "Employee joined" },
+  { value: "output.delivered", label: "Output delivered" },
+  { value: "output.failed", label: "Output failed" },
 ];
 
 const fetcher = async (url: string) => {

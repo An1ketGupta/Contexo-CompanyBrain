@@ -18,6 +18,12 @@ from app.routers import (
     auth as auth_router,
 )
 from app.routers import (
+    admin_intake as admin_intake_router,
+)
+from app.routers import (
+    autoflows as autoflows_router,
+)
+from app.routers import (
     billing as billing_router,
 )
 from app.routers import (
@@ -196,6 +202,8 @@ app.include_router(internal_router.router)
 app.include_router(scheduled_reports_router.router)
 app.include_router(billing_router.router)
 app.include_router(webhooks_stripe_router.router)
+app.include_router(autoflows_router.router)
+app.include_router(admin_intake_router.router)
 
 # Inngest serve endpoint — webhook the Inngest server hits to invoke our functions.
 # Mounts at /api/inngest by default.

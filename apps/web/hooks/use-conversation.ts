@@ -49,6 +49,7 @@ interface ConversationResponse {
     updated_at: string;
     scoped_document_id?: string | null;
     scoped_tags?: string[] | null;
+    pinned_context?: string | null;
   };
   messages: PersistedMessage[];
   branches?: Record<string, PersistedBranch[]>;

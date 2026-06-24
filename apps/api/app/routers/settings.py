@@ -84,10 +84,16 @@ class UpdateArchiveSettingsRequest(BaseModel):
 
 
 class UpdateProfileRequest(BaseModel):
-    # Both optional; PATCH allows changing one without echoing the other back.
+    # All optional; PATCH allows changing one without echoing the others back.
     display_name: str | None = Field(default=None, min_length=1, max_length=80)
     # V4 #57 — hide my activity from the team feed.
     activity_private: bool | None = None
+    # Agent2 Day 2 #37 — function-style persona. None clears it. Validated
+    # against the same enum the DB CHECK constraint enforces.
+    persona: str | None = Field(default=None)
+    # Sentinel: explicit clear vs. omitted. Pydantic doesn't expose "user
+    # passed null" vs "user omitted" via Optional alone, so a sibling flag.
+    clear_persona: bool = False
 
 
 class DeleteAccountRequest(BaseModel):
@@ -586,6 +592,16 @@ async def update_profile(
         update["display_name"] = cleaned
     if body.activity_private is not None:
         update["activity_private"] = body.activity_private
+    if body.clear_persona:
+        update["persona"] = None
+    elif body.persona is not None:
+        persona = body.persona.strip().lower()
+        if persona not in {"hr", "sales", "engineering", "finance", "operations", "executive"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Persona must be one of: hr, sales, engineering, finance, operations, executive.",
+            )
+        update["persona"] = persona
 
     if not update:
         raise HTTPException(

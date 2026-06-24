@@ -134,17 +134,70 @@ async def generate_document_summary(
         "summary_generated_at": datetime.now(UTC).isoformat(),
     }
 
+    # Agent2 Day 2 #14: also embed the summary so duplicate detection has
+    # a doc-level vector to compare against. We embed the concatenation of
+    # the document name + summary + key topics — names alone are too short
+    # for a stable cosine, and summaries alone miss obvious title overlaps.
+    # Best-effort: if embedding fails we still persist the summary text.
+    summary_embedding: list[float] | None = None
+    summary_embed_input = " ".join(
+        [doc.data.get("name") or "", summary, " ".join(key_topics)]
+    ).strip()
+    if summary_embed_input:
+        try:
+            from app.services.ingestion.embedder import get_embedder
+
+            embedder = get_embedder()
+            vecs = await embedder.embed_texts(
+                [summary_embed_input], task_type="RETRIEVAL_DOCUMENT"
+            )
+            if vecs and len(vecs[0]) > 0:
+                summary_embedding = list(vecs[0])
+        except Exception as exc:
+            log.warning(
+                "summary_embedding_failed doc=%s err=%s", document_id, exc
+            )
+
+    update_payload: dict[str, Any] = {"metadata": next_metadata}
+    if summary_embedding is not None:
+        update_payload["summary_embedding"] = summary_embedding
+        update_payload["summary_embedded_at"] = datetime.now(UTC).isoformat()
+
     await asyncio.to_thread(
         lambda: client.table("documents")
-        .update({"metadata": next_metadata})
+        .update(update_payload)
         .eq("id", document_id)
         .execute()
     )
+
+    # Fire-and-forget: queue a duplicate scan for this doc now that we have
+    # a fresh summary embedding. Skipped silently if either the embedding
+    # write failed above or the Inngest enqueue itself fails.
+    if summary_embedding is not None:
+        try:
+            import inngest as _inngest_pkg
+
+            from app.inngest.client import get_inngest_client
+
+            await get_inngest_client().send(
+                _inngest_pkg.Event(
+                    name="document/duplicate.scan",
+                    data={
+                        "document_id": document_id,
+                        "org_id": doc.data["org_id"],
+                    },
+                )
+            )
+        except Exception as exc:
+            log.warning(
+                "duplicate_scan_enqueue_failed doc=%s err=%s", document_id, exc
+            )
 
     return {
         "status": "ok",
         "summary_len": len(summary),
         "topic_count": len(key_topics),
+        "embedded_summary": summary_embedding is not None,
     }
 
 

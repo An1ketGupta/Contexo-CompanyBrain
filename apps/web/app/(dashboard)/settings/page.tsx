@@ -168,6 +168,11 @@ export default function SettingsPage() {
 
       <ChangePasswordCard />
 
+      <PersonaCard
+        persona={user?.persona ?? null}
+        onSaved={refresh}
+      />
+
       <ActivityPrivacyCard
         activityPrivate={user?.activity_private ?? false}
         onSaved={refresh}
@@ -481,6 +486,89 @@ function ChangePasswordCard() {
           </Button>
         </div>
       </form>
+    </Card>
+  );
+}
+
+// ── Persona (Agent2 Day 2 #37) ──────────────────────────────────────────────
+// Function-style overlay (hr/sales/eng/…) applied to the system prompt for
+// every chat turn this user makes. Distinct from `role` (admin/member) —
+// persona shapes tone/format/framing, role gates access.
+
+const PERSONA_OPTIONS: ReadonlyArray<{ value: import("@/hooks/use-user").UserPersona; label: string; description: string }> = [
+  { value: "hr", label: "HR", description: "Bias toward policy + compliance docs. Formal tone." },
+  { value: "sales", label: "Sales", description: "Bias toward pricing + case studies. Persuasive framing." },
+  { value: "engineering", label: "Engineering", description: "Bias toward specs + runbooks. Precise + technical." },
+  { value: "finance", label: "Finance", description: "Bias toward budget docs. Specific figures + citations." },
+  { value: "operations", label: "Operations", description: "Bias toward SOPs. Step-by-step procedures." },
+  { value: "executive", label: "Executive", description: "Cross-collection synthesis. Strategic framing." },
+];
+
+function PersonaCard({
+  persona,
+  onSaved,
+}: {
+  persona: import("@/hooks/use-user").UserPersona | null;
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState<string>(persona ?? "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setValue(persona ?? "");
+  }, [persona]);
+
+  const save = async (next: string) => {
+    setValue(next);
+    setSaving(true);
+    try {
+      const body: Record<string, unknown> = next
+        ? { persona: next }
+        : { clear_persona: true };
+      const res = await fetch("/api/users/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).catch((err) => {
+        throw networkError(err);
+      });
+      if (!res.ok) throw await parseApiError(res);
+      toast.success(next ? `Set to ${next}.` : "Persona cleared.");
+      onSaved();
+    } catch (err) {
+      setValue(persona ?? "");
+      reportApiError(err as Awaited<ReturnType<typeof parseApiError>>);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Chat persona"
+      description="Tailors answer framing to your function. Doesn't change which documents are searched — your conversation scope does that."
+    >
+      <div className="space-y-2">
+        <select
+          value={value}
+          disabled={saving}
+          onChange={(e) => save(e.target.value)}
+          className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+          aria-label="Chat persona"
+        >
+          <option value="">No persona (default)</option>
+          {PERSONA_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        {value && (
+          <p className="text-xs text-muted-foreground">
+            {PERSONA_OPTIONS.find((o) => o.value === value)?.description}
+          </p>
+        )}
+      </div>
     </Card>
   );
 }

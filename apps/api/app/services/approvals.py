@@ -37,7 +37,7 @@ log = get_logger(__name__)
 # "agent" is the Day-14 channel for API-triggered agent runs. On approval
 # we fan out the appropriate `agent/<type>/triggered-api` Inngest event
 # instead of sending a side effect directly.
-ExecutionChannel = Literal["gmail", "slack", "notion", "gdocs", "agent"]
+ExecutionChannel = Literal["gmail", "slack", "notion", "gdocs", "agent", "autoflow"]
 
 # Plaintext tokens are 32 url-safe bytes (~43 chars). Long enough to be
 # unguessable; short enough that the email URL stays readable.
@@ -80,7 +80,7 @@ def consteq(a: str, b: str) -> bool:
 # ── Execution fan-out ──────────────────────────────────────────────────────
 
 
-_ALLOWED_CHANNELS: set[str] = {"gmail", "slack", "notion", "gdocs", "agent"}
+_ALLOWED_CHANNELS: set[str] = {"gmail", "slack", "notion", "gdocs", "agent", "autoflow"}
 
 # Agent types accepted on the public API + by the agent-channel approval.
 # Kept in sync with services/agent_registry.py:AGENT_REGISTRY.
@@ -137,6 +137,12 @@ def validate_execution_action(action: dict[str, Any] | None) -> dict[str, Any]:
             )
         if not isinstance(params.get("agent_input"), dict):
             raise ValueError("agent.agent_input must be an object")
+    elif channel == "autoflow":
+        # Autoflow approvals (Agent2 Day 1). Approval is the gate; on resolution
+        # the autoflow_run resumes (or cancels). params carry the run id so the
+        # resume handler can pick the right row without back-references.
+        if not params.get("autoflow_run_id"):
+            raise ValueError("autoflow.autoflow_run_id is required")
 
     return {"channel": channel, "params": params}
 
@@ -264,6 +270,23 @@ async def dispatch_execution(
             api_key_id=params.get("api_key_id"),
             approval_id=approval_id,
             run_id=run_id,
+        )
+    elif channel == "autoflow":
+        # Resume the held autoflow_run. Fired as a distinct Inngest event so
+        # the resume function gets retries + observability separate from the
+        # approval dispatch path.
+        await client.send(
+            inngest.Event(
+                name="autoflow/resume",
+                data={
+                    "job_id": job_id,
+                    "approval_id": approval_id,
+                    "autoflow_run_id": params["autoflow_run_id"],
+                    "org_id": org_id,
+                    "approved": True,
+                },
+                id=f"approval-execute-{approval_id}",
+            )
         )
     else:
         raise ValueError(f"unsupported channel '{channel}'")

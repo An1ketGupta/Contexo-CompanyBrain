@@ -2,6 +2,14 @@
 
 import useSWR from "swr";
 
+export type UserPersona =
+  | "hr"
+  | "sales"
+  | "engineering"
+  | "finance"
+  | "operations"
+  | "executive";
+
 export interface CurrentUser {
   id: string;
   email: string | null;
@@ -9,6 +17,7 @@ export interface CurrentUser {
   role: "admin" | "member";
   org_id: string | null;
   activity_private?: boolean;
+  persona?: UserPersona | null;
 }
 
 export interface CurrentOrg {

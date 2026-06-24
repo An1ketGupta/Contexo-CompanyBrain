@@ -89,11 +89,17 @@ class ChatRequest(BaseModel):
 
 
 class UpdateConversationRequest(BaseModel):
-    # Both fields are optional so the same PATCH can rename, pin, or do both.
-    # Pinning is a single boolean; ordering and "pinned section" rendering
-    # are handled on the read path.
+    # All fields optional so the same PATCH can rename, pin, set scope, or
+    # set pinned context. Pinning is a single boolean; ordering and "pinned
+    # section" rendering are handled on the read path.
     title: str | None = Field(default=None, min_length=1, max_length=TITLE_MAX_LEN)
     is_pinned: bool | None = None
+    # Agent2 Day 2 #39 — freeform context the user wants the LLM to keep in
+    # mind across every turn. Capped at 2000 chars by the DB CHECK; we trim
+    # in code for a clean error message. None alone doesn't clear; pair with
+    # clear_pinned_context=True to unset.
+    pinned_context: str | None = Field(default=None, max_length=2000)
+    clear_pinned_context: bool = False
 
 
 class BulkArchiveRequest(BaseModel):
@@ -730,7 +736,7 @@ async def get_conversation(
         .select(
             "id, title, is_pinned, is_archived, archived_at, archive_reason, "
             "created_at, updated_at, "
-            "scoped_document_id, scoped_tags, scoped_collection_id"
+            "scoped_document_id, scoped_tags, scoped_collection_id, pinned_context"
         )
         .eq("id", conversation_id)
         .maybe_single()
@@ -905,6 +911,14 @@ async def update_conversation(
         payload["title"] = cleaned
     if body.is_pinned is not None:
         payload["is_pinned"] = body.is_pinned
+    if body.clear_pinned_context:
+        payload["pinned_context"] = None
+    elif body.pinned_context is not None:
+        pinned = body.pinned_context.strip()
+        if not pinned:
+            payload["pinned_context"] = None
+        else:
+            payload["pinned_context"] = pinned
 
     if not payload:
         raise HTTPException(
@@ -1206,6 +1220,27 @@ async def update_message_feedback(
             event_type="feedback_given",
             metadata={"feedback": body.feedback},
         )
+
+    # Agent2 Day 1: negative feedback fans into webhooks + autoflows. Lets an
+    # org auto-route a thumbs-down into a review queue or escalation channel.
+    # Fire-and-forget — the user's PATCH has already succeeded.
+    if body.feedback == "negative" and current_user.get("org_id"):
+        try:
+            from app.services.webhooks import trigger_event as _trigger_webhook
+
+            asyncio.create_task(
+                _trigger_webhook(
+                    org_id=current_user["org_id"],
+                    event="message.feedback.negative",
+                    payload={
+                        "message_id": message_id,
+                        "conversation_id": msg.data.get("conversation_id"),
+                        "user_id": current_user.get("user_id"),
+                    },
+                )
+            )
+        except Exception as exc:
+            log.warning("negative_feedback_emit_failed: %s", exc)
 
     # V5 #106 Phase 1: positive feedback = high-quality training signal.
     # Fire-and-forget so a slow training-pair insert never blocks the user's

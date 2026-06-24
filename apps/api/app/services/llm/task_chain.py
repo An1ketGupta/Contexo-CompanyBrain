@@ -368,12 +368,39 @@ async def execute_task(
             f"{org_instructions}\n\n{summary_note}" if org_instructions else summary_note
         )
 
+    # Agent2 Day 2 #39 — user-pinned conversation context. Comes BEFORE the
+    # intent overlay so it's framed as durable background, not the most
+    # immediate instruction. Cap at 2000 chars enforced in DB.
+    if conversation_id:
+        pinned_context = await _fetch_pinned_context(db_client, conversation_id)
+        if pinned_context:
+            pin_note = (
+                "PINNED CONTEXT (the user has fixed this for the conversation; "
+                "honor it across every turn):\n"
+                f"{pinned_context.strip()}"
+            )
+            org_instructions = (
+                f"{org_instructions}\n\n{pin_note}" if org_instructions else pin_note
+            )
+
     # Day 4 #51 — append the intent overlay last so it sits closest to the
     # user turn. Order matters: org rules → summary → mode-specific guidance.
     intent_overlay = intent_overlay_for(intent_result.intent)
     org_instructions = (
         f"{org_instructions}\n\n{intent_overlay}" if org_instructions else intent_overlay
     )
+
+    # Agent2 Day 2 #37 — persona overlay. Applies after intent overlay because
+    # persona shapes tone/format/framing while leaving the intent's
+    # mode-specific guidance intact. Scope notes (above) still control which
+    # docs are searched — persona never overrides retrieval bias.
+    if user_id:
+        persona = await _fetch_user_persona(db_client, user_id)
+        persona_note = _persona_overlay(persona)
+        if persona_note:
+            org_instructions = (
+                f"{org_instructions}\n\n{persona_note}" if org_instructions else persona_note
+            )
 
     # Sign-as hint, gated on TASK_GENERATION. Other intents (Q&A, analysis,
     # search) don't need a signature, so we save the tokens + the extra DB
@@ -682,6 +709,94 @@ async def _resolve_display_name(client: Client, user_id: str) -> str | None:
     return str(name).strip()
 
 
+async def _fetch_pinned_context(client: Client, conversation_id: str) -> str | None:
+    """Agent2 Day 2 #39 — read conversations.pinned_context.
+
+    Returns None on miss / empty. RLS-scoped read; if the caller doesn't own
+    the conversation, we get nothing back (same shape as not-pinned). Never
+    fails the turn.
+    """
+    try:
+        result = await asyncio.to_thread(
+            lambda: client.table("conversations")
+            .select("pinned_context")
+            .eq("id", conversation_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception:
+        return None
+    val = (getattr(result, "data", None) or {}).get("pinned_context") if result else None
+    if not val or not str(val).strip():
+        return None
+    return str(val).strip()
+
+
+async def _fetch_user_persona(client: Client, user_id: str) -> str | None:
+    """Agent2 Day 2 #37 — read users.persona.
+
+    Returns None when unset. Persona values are constrained by the DB CHECK
+    constraint (hr/sales/engineering/finance/operations/executive) so any
+    non-None value here is safe to feed straight into _persona_overlay.
+    """
+    try:
+        result = await asyncio.to_thread(
+            lambda: client.table("users")
+            .select("persona")
+            .eq("id", user_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception:
+        return None
+    val = (getattr(result, "data", None) or {}).get("persona") if result else None
+    return str(val).strip() if val else None
+
+
+# Persona overlays — kept here so the prompt-engineering surface for chat
+# lives in one file. Adding a new persona = update the DB CHECK + this dict.
+_PERSONA_OVERLAYS: dict[str, str] = {
+    "hr": (
+        "USER ROLE: HR. Bias retrieval toward policy / handbook / compliance "
+        "documents. Cite policy names and effective dates explicitly when "
+        "relevant. Use a formal, compliance-conscious tone."
+    ),
+    "sales": (
+        "USER ROLE: Sales. Bias retrieval toward competitor analysis, pricing, "
+        "case studies, and product positioning. Format answers as scannable "
+        "talking points where possible. Favor brevity and persuasive framing."
+    ),
+    "engineering": (
+        "USER ROLE: Engineering. Bias retrieval toward technical specs, "
+        "architecture docs, and runbooks. Include code snippets and exact "
+        "technical terminology. Favor precision over brevity."
+    ),
+    "finance": (
+        "USER ROLE: Finance. Bias retrieval toward budget, forecast, and "
+        "financial-policy documents. Surface specific figures with citations "
+        "to the source documents. Flag stale data explicitly."
+    ),
+    "operations": (
+        "USER ROLE: Operations. Bias retrieval toward process / SOP / runbook "
+        "documents. Format multi-step answers as numbered procedures. Call out "
+        "decision points and prerequisites."
+    ),
+    "executive": (
+        "USER ROLE: Executive. Synthesize across collections. Lead with a 2-3 "
+        "sentence executive summary. Favor strategic framing — risks, "
+        "opportunities, decisions needed — over operational detail."
+    ),
+}
+
+
+def _persona_overlay(persona: str | None) -> str | None:
+    """Resolve a persona string to its system-prompt overlay. None if unset
+    or unrecognised (CHECK constraint should make the latter impossible)."""
+    if not persona:
+        return None
+    return _PERSONA_OVERLAYS.get(persona)
+
+
 async def _scope_system_note(client: Client, document_id: str) -> str | None:
     """One-line scope reminder injected into the system prompt."""
     try:
@@ -922,3 +1037,66 @@ async def execute_task_blocking(
         elif isinstance(event, ErrorEvent):
             error = event.message
     return TaskResult(text=text, sources=sources, tool_calls_made=tool_calls_made, error=error)
+
+
+# ── Autoflow generation entry point ──────────────────────────────────────
+#
+# Used by the generate_output action in app/services/autoflow_actions.py. We
+# expose a dedicated function rather than have the action call execute_task
+# directly because:
+#   1. Autoflow runs aren't tied to a user/conversation — passing in the
+#      conversation-shaped args would be misleading.
+#   2. The action needs the confidence score (a number, not just a band) to
+#      decide whether to gate on approval; the helper threads that out.
+#   3. We get a single source-of-truth file for "what an autoflow looks like
+#      as a chat turn" — important when we evolve the prompt template.
+
+async def run_autoflow_generation(
+    *,
+    org_id: str,
+    prompt: str,
+    scope_tags: list[str] | None = None,
+    intent_hint: str | None = None,  # currently unused; reserved for forced-intent overrides
+    llm_client: LLMClient | None = None,
+) -> dict:
+    """Single-shot KB-backed generation for an autoflow action.
+
+    Returns
+        {"text": str, "sources": [...], "confidence": float | None}
+
+    Sources are the same shape as chat citations (doc_name, chunk_id, page_number,
+    document_id). Confidence is the cosine-averaged retrieval confidence on a
+    0..1 scale, or None when no chunks were cited.
+    """
+    from app.database import get_service_client
+
+    # Service-role client: autoflows run in the background with no user JWT,
+    # but every query already carries an explicit org_id, so RLS would be a
+    # no-op anyway. Matches how Inngest workers talk to the DB elsewhere.
+    db_client = get_service_client()
+
+    text = ""
+    sources: list[dict] = []
+    confidence: float | None = None
+
+    async for event in execute_task(
+        user_message=prompt,
+        org_id=org_id,
+        db_client=db_client,
+        history=None,
+        llm_client=llm_client,
+        stream=False,
+        scoped_tags=scope_tags or None,
+    ):
+        if isinstance(event, FinalEvent):
+            text = event.text
+            sources = event.sources
+        elif isinstance(event, ConfidenceEvent):
+            # ConfidenceEvent.score is on a 0..10 scale; normalise back to 0..1
+            # so the threshold on autoflows.confidence_threshold (also 0..1)
+            # compares apples-to-apples.
+            confidence = round(event.score / 10.0, 4)
+        elif isinstance(event, ErrorEvent):
+            raise RuntimeError(f"autoflow_generation_failed: {event.message}")
+
+    return {"text": text, "sources": sources, "confidence": confidence}
