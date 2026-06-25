@@ -8,6 +8,7 @@ import {
   Brain,
   Briefcase,
   CalendarDays,
+  Hash,
   CheckCircle2,
   ClipboardCheck,
   FileQuestion,
@@ -49,6 +50,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
+  { href: "/channels", label: "Channels", icon: Hash },
   { href: "/history", label: "History", icon: History },
   { href: "/chat/meeting-prep", label: "Meeting prep", icon: CalendarDays },
   { href: "/meetings", label: "Meetings", icon: CalendarDays },
@@ -135,6 +137,12 @@ const NAV_ITEMS: NavItem[] = [
     href: "/admin/compliance",
     label: "Compliance",
     icon: ShieldCheck,
+    adminOnly: true,
+  },
+  {
+    href: "/admin/certifications",
+    label: "Certifications",
+    icon: ClipboardCheck,
     adminOnly: true,
   },
   {

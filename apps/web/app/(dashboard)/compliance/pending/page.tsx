@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Check, FileText, Loader2, ShieldCheck, X } from "lucide-react";
+import { Check, ClipboardCheck, FileText, Loader2, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
 import useSWR from "swr";
 
@@ -19,6 +19,7 @@ interface PendingItem {
     name: string;
     file_type?: string;
     tags?: string[];
+    requires_certification?: boolean;
   } | null;
   document_versions?: {
     version_number?: number;
@@ -178,18 +179,27 @@ function PendingCard({
           >
             <X className="mr-1 h-3.5 w-3.5" /> Doesn&apos;t apply
           </Button>
-          <Button
-            size="sm"
-            disabled={busy}
-            onClick={onAcknowledge}
-          >
-            {busy ? (
-              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Check className="mr-1 h-3.5 w-3.5" />
-            )}
-            Acknowledge
-          </Button>
+          {doc?.requires_certification ? (
+            <Button size="sm" asChild>
+              <Link href={`/compliance/${item.document_id}/quiz`}>
+                <ClipboardCheck className="mr-1 h-3.5 w-3.5" />
+                Take quiz
+              </Link>
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={onAcknowledge}
+            >
+              {busy ? (
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="mr-1 h-3.5 w-3.5" />
+              )}
+              Acknowledge
+            </Button>
+          )}
         </div>
       </div>
 

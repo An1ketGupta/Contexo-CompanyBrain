@@ -1,725 +1,153 @@
 # NirnayaIQ — CLAUDE.md
 
-> Project context file for Claude Code. Read this before making any changes.
+## What This Is
 
-## What This Project Is
+Multi-tenant SaaS **work execution platform** (not a chatbot). Companies upload their knowledge base; employees execute work tasks with full company context. Features: 10 integrations, compliance workflows, background agents, knowledge certifications, multiplayer channels, MCP server, Chrome extension.
 
-**NirnayaIQ** is a multi-tenant SaaS work execution platform. Companies upload their entire knowledge base (PDFs, SOPs, handbooks, brand guides, product docs, culture decks, meeting transcripts) and employees use it to execute any work task — writing emails, drafting job descriptions, posting Slack announcements, answering policy questions, prepping for meetings — with the AI always having full company context.
+Stack: **Next.js** (App Router, React 19, TS5, Tailwind 4, shadcn/ui) + **FastAPI** (Python 3.12+) + **Supabase** (Postgres + pgvector + Auth + Storage) + **Chrome MV3** extension.
 
-**Not a Q&A chatbot. A work execution platform with AI-powered company context, 9 live integrations, compliance workflows, autonomous background agents, and a Chrome extension.**
-
-Stack: Next.js (frontend) + FastAPI Python (AI/RAG backend) + Supabase (DB/auth/storage/vector) + Chrome MV3 extension.
-
-Current phase: Pre-seed, free-tier infrastructure, solo engineer (Aniket). Codebase has shipped through v5 + an Agent sprint (41 DB migrations, production-ready).
-
----
-
-## Project Structure
-
-```
-apps/
-  api/                   FastAPI Python backend
-    app/
-      services/          35+ service modules
-      routers/           25+ API routers
-      inngest/           20 Inngest background job files
-      models/            Pydantic models
-      middleware/
-      auth.py, config.py, database.py, errors.py, main.py
-    Dockerfile
-    railway.json
-    pyproject.toml
-    tests/
-      retrieval/         Retrieval test suite (FTS, vector, hybrid, RRF)
-  web/                   Next.js frontend
-    app/
-      (auth)/            login, signup, accept-invite
-      (dashboard)/       chat, documents, settings, activity, approvals,
-                         compliance, insights, help, history, notifications,
-                         archive, admin (11 pages)
-      api/               70+ Next.js proxy routes to FastAPI
-    components/          100+ components (chat 30+, documents 15+, admin 10+,
-                         settings 2+)
-    hooks/               18+ custom hooks
-    lib/                 types, utils, API client, Supabase client
-extensions/
-  chrome/                MV3 Chrome side-panel extension ("Company Brain")
-    src/
-      background.ts      Service worker (opens panel, scrapes page via Readability)
-      sidepanel/         React side-panel app (chat + "Add to Brain")
-      manifest.config.ts Vite/CRXJS manifest definition
-supabase/
-  migrations/            41 SQL migration files (001 → 041)
-ARCHITECTURE.md          Full tech stack decisions + data models
-ROADMAP.md / V2-V5_Roadmap.md / Agent_Roadmap.md
-PRICING.md
-CLAUDE.md                This file
-```
+58 DB migrations. Deployed: Vercel (frontend) + Railway (backend, Dockerfile).
 
 ---
 
 ## How to Run
 
-**Frontend (Next.js):**
 ```bash
-cd apps/web
-pnpm install
-pnpm dev          # http://localhost:3000
+# Frontend
+cd apps/web && pnpm dev          # :3000
+
+# Backend
+cd apps/api && uv run uvicorn app.main:app --reload  # :8000
+
+# Supabase local
+supabase start && supabase db push
+
+# Chrome extension
+cd extensions/chrome && pnpm dev  # load unpacked from dist/
 ```
 
-**Backend (FastAPI):**
-```bash
-cd apps/api
-uv sync
-uv run uvicorn app.main:app --reload  # http://localhost:8000
-```
-
-**Supabase local:**
-```bash
-supabase start    # starts local Postgres + Auth + Storage
-supabase db push  # apply all 41 migrations
-```
-
-**Chrome extension:**
-```bash
-cd extensions/chrome
-pnpm install
-pnpm dev          # Vite/CRXJS dev build — load unpacked from dist/ in chrome://extensions
-pnpm build        # production build
-```
-
-**Environment files:**
-- `apps/web/.env.local` — Next.js env vars
-- `apps/api/.env` — FastAPI env vars
-- `.env.example` at root for all required variables
+Env files: `apps/web/.env.local`, `apps/api/.env`. See `.env.example` for all vars.
 
 ---
 
-## Tech Stack
+## Architecture Principles — Never Violate
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | Next.js (App Router), React 19, TypeScript 5, Tailwind CSS 4, shadcn/ui |
-| Backend | FastAPI (Python 3.12+), Pydantic, uvicorn |
-| Database | Supabase PostgreSQL + pgvector |
-| Auth | Supabase Auth (email/password + Google OAuth) |
-| File Storage | Supabase Storage (swappable to Cloudflare R2) |
-| Vector Search | pgvector (cosine similarity, IVFFlat index, 768 dims) |
-| Full-Text Search | PostgreSQL tsvector + GIN index |
-| Hybrid Retrieval | RRF (Reciprocal Rank Fusion) merging vector + FTS |
-| LLM | Google Gemini 2.0 Flash (default, swappable to Claude/OpenAI) |
-| Embeddings | Google text-embedding-004 (768 dims, swappable to OpenAI 1536) |
-| Background Jobs | Inngest (17 function files, event-driven orchestration) |
-| Caching | Upstash Redis |
-| Email | Resend (transactional + inbound forwarding) |
-| LLM Observability | Langfuse (tracing, prompt versioning, sample rate) |
-| Error Tracking | Sentry |
-| Document Parsing | PyMuPDF (PDF), python-docx (DOCX), openpyxl (XLSX), python-pptx (PPTX), beautifulsoup4 (HTML) |
-| Chrome Extension | MV3 side panel, Vite + @crxjs/vite-plugin + React + TypeScript, @mozilla/readability |
-| Frontend Hosting | Vercel |
-| Backend Hosting | Railway (Dockerfile + railway.json) |
+1. **Adapter for every external service.** LLM, embeddings, storage, email — thin wrappers only. `LLM_PROVIDER=claude` in env switches providers without code changes.
+
+2. **Multi-tenancy via RLS, not app logic.** Every table has `org_id`. RLS enforces it at DB level. Use `service_role` client only in Inngest functions, never in HTTP handlers.
+
+3. **Hybrid search on every tool call.** `search_company_knowledge` always runs vector + FTS merged via RRF. Never vector-only.
+
+4. **Tool-use, not pure RAG.** LLM calls `search_company_knowledge(query)` multiple times per turn (max 8 calls, 4 rounds). Never pre-compute a single search from the user message.
+
+5. **Chat is bounded; background agents are autonomous.** Chat: max 4 tool rounds, LLM does not self-correct. Inngest agents (Onboarding, MeetingNotes, PolicyPropagation, SupportResponse, VersionDiff) run full autonomous loops.
+
+6. **Document processing is always async.** Never parse/embed in an HTTP handler. Always queue via Inngest (`document/ingest`).
+
+7. **Sources on every output.** "Based on:" panel with document names, not inline citations.
+
+8. **Chat guardrails are constants.** Max 4 rounds / 8 searches / 20 chunks / 16k chars. Change in `task_chain.py` consciously.
 
 ---
 
-## Architecture Principles
-
-**Never violate these:**
-
-1. **Every external service has an adapter.** LLM, embeddings, vector store, file storage, and email are each accessed through a thin wrapper. Never call provider SDKs directly from business logic. `LLM_PROVIDER=claude` in env is all it takes to switch.
-
-2. **Multi-tenancy via RLS, not app logic.** Every table has `org_id`. Supabase RLS policies enforce it at DB level. Never filter by `org_id` in application code and rely on that for security — always use RLS. Use `service_role` client only in Inngest background functions (never in HTTP handlers).
-
-3. **Hybrid search inside every tool call.** The LLM's `search_company_knowledge` tool always runs vector search + PostgreSQL FTS merged via RRF. Never vector-only. This is the retrieval engine for all chat outputs.
-
-4. **Tool-use, not pure RAG.** The LLM decides what to search for by calling `search_company_knowledge(query)` multiple times per turn (max 8 calls, max 4 tool rounds). We never pre-compute a single search from the user's message.
-
-5. **Chat is NOT a full agent. Background jobs are.** Chat tool calls are bounded per turn — the LLM does not loop or self-correct in chat. Background agents (Inngest) are different: OnboardingAgent, MeetingNotesAgent, PolicyPropagationAgent, SupportResponseAgent, VersionDiffAgent operate autonomously and write their results to the DB.
-
-6. **Document processing is always async.** Never parse/embed a document in an HTTP request handler. Always queue via Inngest (`document/ingest` event).
-
-7. **Sources on every output.** Every generated output surfaces which documents were used as context — a "Based on:" panel with document names, not inline citations. This builds trust and reveals knowledge gaps.
-
-8. **Chat guardrails are constants, not config.** Max 4 tool rounds, max 8 searches, max 20 context chunks, 16k char input limit. These protect latency and cost. Change them in `task_chain.py` consciously, not casually.
-
----
-
-## Key File Locations
+## Key Locations
 
 ```
 apps/api/app/
-├── services/
-│   ├── ingestion/
-│   │   ├── parser.py              PDF/DOCX/TXT/MD/XLSX/PPTX/HTML/CSV/VTT parsing
-│   │   ├── chunker.py             RecursiveCharacterTextSplitter (1000 chars / 200 overlap)
-│   │   ├── embedder.py            Google text-embedding-004 adapter
-│   │   ├── pipeline.py            Orchestrates parse → chunk → embed → store
-│   │   └── store.py               Writes chunks + embeddings to Supabase
-│   ├── retrieval/
-│   │   ├── vector_search.py       pgvector cosine search (k=8); returns version_number
-│   │   ├── fts_search.py          PostgreSQL full-text search (LIMIT 20); returns version_number
-│   │   ├── hybrid_search.py       RRF fusion — called by search_company_knowledge tool
-│   │   └── search_cache.py        Redis-cached hybrid_search (60s TTL, rehydrates text from PG on hit)
-│   ├── llm/
-│   │   ├── client.py              Gemini/Claude/OpenAI adapter + SEARCH_TOOL definition
-│   │   ├── task_chain.py          Tool-use pipeline: LLM → parallel search → generation
-│   │   ├── task_chain_stream.py   Streaming variant: emits searching/sources/token/done events
-│   │   └── types.py               Message, ToolCall, LLMResponse types
-│   ├── agents/
-│   │   ├── base_agent.py          Base class (all agents use tool-use, max 4 rounds)
-│   │   ├── onboarding_agent.py    First-run workspace setup
-│   │   ├── meeting_notes_agent.py Processes meeting transcripts → structured notes
-│   │   ├── policy_propagation_agent.py  Applies policies across workspace
-│   │   ├── support_response_agent.py    Generates support ticket drafts
-│   │   └── version_diff_agent.py  Diffs document versions → summary of changes
-│   ├── integrations/
-│   │   ├── drive.py               Google Drive OAuth polling + file sync
-│   │   ├── notion.py              Export conversations to Notion pages
-│   │   ├── slack.py               Slack bot, OAuth, channel posting, event handling
-│   │   ├── slack_block_kit.py     Slack Block Kit UI generation
-│   │   ├── slack_commands.py      /nirnaya slash command handler
-│   │   ├── gmail.py               Gmail OAuth + send via REST API
-│   │   ├── email_forward.py       Inbound email → document (Resend webhook)
-│   │   └── text_ingest.py         Raw text document ingest
-│   ├── analytics.py               Product telemetry event logging
-│   ├── activity.py                Team activity feed generation
-│   ├── approvals.py               Approval workflow service (email + token-based)
-│   ├── auto_tagger.py             Auto-assigns tags to uploaded documents
-│   ├── citation_tracker.py        Tracks source documents used per output
-│   ├── competitor_detector.py     Regex-based competitor mention detection (no LLM)
-│   ├── compliance.py              Policy compliance check service
-│   ├── coverage.py                Knowledge base coverage metrics
-│   ├── document_summary.py        Auto-generates per-document summaries
-│   ├── documents_cache.py         Invalidates doc-list + search caches on doc change
-│   ├── health_score.py            Document staleness / health scoring
-│   ├── intent.py                  Writing vs. analysis intent classification
-│   ├── moderation.py              Content moderation (profanity, PII detection)
-│   ├── notifications.py           In-app notification creation + delivery
-│   ├── observability.py           Sentry + structured logging setup
-│   ├── onboarding.py              Onboarding flow orchestration
-│   ├── org_config.py              Per-org AI configuration
-│   ├── query_logs.py              Per-turn query log writer (powers /history)
-│   ├── rate_limit.py              Per-user/per-org rate limiting (Redis-backed)
-│   ├── recommendations.py         Recommended-documents widget logic
-│   ├── redis_cache.py             Upstash Redis wrapper
-│   ├── summarization.py           Conversation summarization
-│   ├── time_savings.py            Computes and stores time-saved metrics
-│   ├── toc_extractor.py           Extracts table of contents from documents
-│   ├── webhooks.py                Outbound webhook dispatch
-│   ├── langfuse/__init__.py       LLM tracing + observability
-│   ├── agent_registry.py          Registers all agent types
-│   ├── agent_callbacks.py         Agent event tracking
-│   └── api_keys.py                API key management (hash, validate, revoke)
-├── routers/
-│   ├── chat.py                    POST /chat, POST /chat/stream, branching, pinning, sharing, export
-│   ├── documents.py               Upload (50MB max), list, delete, tag, bulk ops
-│   ├── collections.py             Document collection CRUD + scoping
-│   ├── templates.py               Saved prompt templates CRUD
-│   ├── approvals.py               Approval workflows (submit, resolve, public token endpoint)
-│   ├── compliance.py              Compliance acknowledgements
-│   ├── slack_router.py            Slack OAuth + slash commands + block kit events
-│   ├── gmail_router.py            Gmail OAuth + send endpoint
-│   ├── integrations.py            OAuth flows (Drive, Notion, Email forward)
-│   ├── integrations_v2.py         Extended OAuth flows for new providers
-│   ├── notifications.py           In-app notifications CRUD
-│   ├── public_api.py              /v1 API key-authenticated public endpoints
-│   ├── support.py                 Support ticket endpoints
-│   ├── admin.py                   Admin: analytics, coverage, health, knowledge gaps,
-│   │                              agent runs, compliance, moderation, support, digests,
-│   │                              competitor mentions
-│   ├── meeting_prep.py            Meeting notes + prep endpoints
-│   ├── settings.py                User + org settings
-│   ├── invitations.py             Team invitation flow
-│   ├── organizations.py           Org management (admin only)
-│   ├── team.py                    Team/workspace management
-│   ├── document_versions.py       Version upload (init/complete), version history, diffs
-│   ├── sharing.py                 Public conversation share links
-│   ├── search.py                  Document search endpoint
-│   ├── time_savings.py            Time savings analytics endpoint
-│   ├── usage.py                   Rate limit status + monthly quota
-│   ├── webhooks.py                Outbound webhook management
-│   ├── health.py                  Health check
-│   └── auth.py                    Supabase auth webhook (org creation on signup)
-├── inngest/
-│   ├── functions.py               Document ingestion pipeline
-│   ├── approval_functions.py      Approval workflow steps + email dispatch
-│   ├── archive_functions.py       Conversation auto-archive + retention-delete crons (daily)
-│   ├── compliance_functions.py    Policy compliance checks + Slack notifications
-│   ├── feedback_functions.py      User feedback processing
-│   ├── gmail_functions.py         Gmail send + delivery tracking
-│   ├── integration_functions.py   Drive/Notion/Slack polling
-│   ├── integration_write_functions.py  Async writes to integrations
-│   ├── knowledge_gap_functions.py Knowledge gap detection + flagging
-│   ├── meeting_functions.py       Meeting transcript processing
-│   ├── onboarding_functions.py    Onboarding workflows
-│   ├── policy_functions.py        Policy propagation + compliance
-│   ├── query_log_retention.py     Prunes old query_logs rows on a schedule
-│   ├── slack_functions.py         Slack message posting
-│   ├── slack_inbound_functions.py Handles inbound Slack messages to the bot
-│   ├── support_functions.py       Support ticket generation
-│   ├── version_diff_functions.py  Document version diffing
-│   ├── webhook_functions.py       Webhook event dispatch
-│   └── api_trigger_functions.py   External API-triggered workflows
-└── auth.py                        verify_jwt() FastAPI dependency
+  services/ingestion/   parser → chunker → embedder → pipeline → store
+  services/retrieval/   vector_search, fts_search, hybrid_search (RRF), search_cache
+  services/llm/         client (provider adapter), task_chain, task_chain_stream
+  services/agents/      base_agent + 5 agent types
+  services/integrations/ per-provider OAuth + sync modules
+  mcp/                  server.py (Streamable HTTP, JSON-RPC 2.0), tools.py (5 tools)
+  routers/              25+ routers; chat.py is the main entry point
+  inngest/              20 function files; register all in main.py
+  auth.py               verify_jwt() FastAPI dependency
 
-apps/web/
-├── app/
-│   ├── (auth)/
-│   │   ├── login/page.tsx         Email/password + Google OAuth
-│   │   ├── signup/page.tsx        Org creation flow
-│   │   └── accept-invite/page.tsx Invitation acceptance
-│   ├── signup-form.tsx            Signup form component (email, password, name, company)
-│   └── (dashboard)/
-│       ├── layout.tsx             Main layout (sidebar, header, command palette)
-│       ├── chat/page.tsx          Default chat / new conversation
-│       ├── chat/[id]/page.tsx     Specific conversation
-│       ├── chat/meeting-prep/page.tsx  Meeting prep mode
-│       ├── documents/page.tsx     Document management (list, filter, upload, tag, bulk)
-│       ├── settings/page.tsx      Profile, org settings, team management
-│       ├── settings/api/page.tsx  API keys + public API docs
-│       ├── settings/integrations/page.tsx  Drive, Notion, Slack, Gmail, Email forward
-│       ├── settings/collections/page.tsx   Document collections
-│       ├── settings/webhooks/page.tsx      Outbound webhooks
-│       ├── settings/templates/page.tsx     Prompt template library management
-│       ├── activity/page.tsx      Team activity feed
-│       ├── approvals/page.tsx     Pending approval queue
-│       ├── archive/page.tsx       Archived conversations
-│       ├── compliance/pending/page.tsx  Policy acknowledgements
-│       ├── history/page.tsx       Per-user query history (powered by query_logs)
-│       ├── insights/page.tsx      Analytics (time saved, knowledge gaps, coverage)
-│       ├── notifications/page.tsx In-app notifications feed
-│       ├── help/...               FAQ + help articles
-│       └── admin/                 11 admin pages:
-│           ├── analytics/         Product telemetry charts
-│           ├── coverage/          Knowledge base coverage
-│           ├── health/            Document health scores
-│           ├── knowledge-gaps/    Under-served queries
-│           ├── moderation/        Content moderation logs
-│           ├── confidence/        Confidence threshold settings
-│           ├── compliance/        Compliance status grid
-│           ├── agent-runs/        Agent execution history + logs
-│           ├── competitor-mentions/ Competitor mention log (org + user watchlists)
-│           ├── support/           Support ticket queue
-│           └── support/[id]/      Individual ticket
-├── components/
-│   ├── chat/                      30+ components (messages, input, citations, scope selector,
-│   │                              confidence badge, export, Slack post, Gmail send, approvals, etc.)
-│   ├── documents/
-│   │   ├── upload-context.tsx     Upload queue state (React context)
-│   │   ├── upload-widget.tsx      Floating upload progress indicator
-│   │   ├── upload-dialog.tsx      Full-screen upload interface
-│   │   ├── document-table.tsx     Table view
-│   │   ├── document-card-list.tsx Grid view
-│   │   ├── document-filters.tsx   Status, type, tags, search, sort
-│   │   ├── bulk-action-bar.tsx    Multi-select operations
-│   │   └── version-history.tsx    Document version timeline
-│   ├── layout/
-│   │   ├── sidebar.tsx            Main navigation
-│   │   ├── sidebar-nav.tsx        Nav items
-│   │   └── header.tsx             Top bar (notifications, user menu)
-│   ├── admin/                     Charts, stat cards, agent runs table, compliance report
-│   ├── compliance/                Acknowledgement banner + dialog
-│   ├── command-palette/           Cmd+K (search conversations, docs, actions)
-│   ├── onboarding/                First-run wizard
-│   ├── settings/
-│   │   ├── collection-form-dialog.tsx  Create/edit collection
-│   │   └── template-form-dialog.tsx    Create/edit prompt template
-│   └── ui/                        shadcn/ui primitives
-└── hooks/
-    ├── use-chat.ts                SSE streaming + conversation state
-    ├── use-conversation.ts        Single conversation data + mutations
-    ├── use-conversations.ts       Conversation list + branching
-    ├── use-collections.ts         Document collections
-    ├── use-debounced.ts           Generic debounce hook
-    ├── use-documents.ts           Document list + SWR
-    ├── use-documents-realtime.ts  Supabase Realtime for document status updates
-    ├── use-document-status.ts     Per-document processing status polling
-    ├── use-document-ready-toast.ts  Toast when doc finishes processing
-    ├── use-keyboard-shortcuts.ts  Cmd+K, Cmd+/, etc.
-    ├── use-media-query.ts         Responsive breakpoint detection
-    ├── use-notifications.ts       In-app notification list + mark-read
-    ├── use-organization.ts        Current org data + mutations
-    ├── use-query-history.ts       Per-user query history (query_logs)
-    ├── use-recommendations.ts     Recommended-documents widget
-    ├── use-templates.ts           Saved prompt templates (CRUD + recordUse)
-    ├── use-usage.ts               Monthly quota status
-    └── use-user.ts                Current user + org (useCurrentUser)
+apps/web/app/(dashboard)/
+  chat/                 main chat + [id] + meeting-prep
+  documents/            upload, list, version history
+  settings/             profile, team, API keys, integrations, collections, webhooks, templates
+  compliance/           pending acks + quiz UI
+  admin/                11 pages (analytics, coverage, health, gaps, moderation, etc.)
+
+apps/web/components/    chat/ (30+), documents/ (15+), admin/ (10+), layout/
+apps/web/hooks/         18+ hooks — use-chat.ts is the SSE streaming core
+extensions/chrome/src/  background.ts (service worker), sidepanel/ (React app)
+supabase/migrations/    001 → 058 SQL files
 ```
-
----
-
-## Environment Variables
-
-```bash
-# AI Providers
-GEMINI_API_KEY=                   # Google AI Studio — free tier
-ANTHROPIC_API_KEY=                # Claude — for switching LLM provider
-OPENAI_API_KEY=                   # OpenAI — for switching embeddings
-
-# Provider selection (change to switch providers without code changes)
-LLM_PROVIDER=gemini               # gemini | claude | openai
-EMBEDDING_PROVIDER=google         # google | openai
-EMBEDDING_DIMENSIONS=768          # 768 for Google, 1536 for OpenAI
-
-# Chat tuning (override defaults in task_chain.py)
-CHAT_MAX_TOOL_ROUNDS=4
-CHAT_MAX_SEARCHES=8
-CHAT_MAX_CONTEXT_CHUNKS=20
-CHAT_HISTORY_TURNS=10
-CHAT_MAX_MESSAGE_CHARS=16000
-CHAT_SEARCH_K=8
-
-# Supabase
-SUPABASE_URL=
-SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=        # backend only, never expose to browser
-
-# Next.js public vars (safe for browser)
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
-NEXT_PUBLIC_API_URL=              # FastAPI base URL (server-side: API_URL)
-
-# Background jobs
-INNGEST_SIGNING_KEY=
-INNGEST_EVENT_KEY=
-
-# Caching + rate limiting
-UPSTASH_REDIS_REST_URL=
-UPSTASH_REDIS_REST_TOKEN=
-RATE_LIMIT_CHAT_PER_USER_PER_MINUTE=20
-RATE_LIMIT_CHAT_MONTHLY_STARTER=500
-RATE_LIMIT_CHAT_MONTHLY_GROWTH=2500
-
-# Email (Resend)
-RESEND_API_KEY=
-EMAIL_FROM=
-EMAIL_RENDER_URL=                 # URL of the Next.js email render route
-INTERNAL_EMAIL_SECRET=
-INBOUND_EMAIL_DOMAIN=             # For email-forward ingest
-INBOUND_EMAIL_WEBHOOK_SECRET=
-
-# Integrations — Google (Drive + Gmail)
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-GOOGLE_OAUTH_REDIRECT_URI=
-GMAIL_OAUTH_REDIRECT_URI=
-
-# Integrations — Notion
-NOTION_CLIENT_ID=
-NOTION_CLIENT_SECRET=
-NOTION_OAUTH_REDIRECT_URI=
-
-# Integrations — Slack
-SLACK_CLIENT_ID=
-SLACK_CLIENT_SECRET=
-SLACK_SIGNING_SECRET=
-SLACK_OAUTH_REDIRECT_URI=
-
-# OAuth state protection
-OAUTH_STATE_SECRET=
-
-# Observability
-SENTRY_DSN=
-SENTRY_TRACES_SAMPLE_RATE=0.1
-LANGFUSE_PUBLIC_KEY=
-LANGFUSE_SECRET_KEY=
-LANGFUSE_SAMPLE_RATE=0.3
-RELEASE_VERSION=
-
-# Storage (Cloudflare R2 — used when STORAGE_PROVIDER=r2 on paid tier)
-STORAGE_PROVIDER=supabase         # supabase | r2
-R2_ACCOUNT_ID=
-R2_ACCESS_KEY_ID=
-R2_SECRET_ACCESS_KEY=
-R2_BUCKET_NAME=
-
-# Runtime
-ENVIRONMENT=production            # development | production
-DEBUG=false
-LOG_FORMAT=json
-LOG_LEVEL=INFO
-ALLOWED_ORIGINS=                  # comma-separated CORS origins
-```
-
----
-
-## Database Schema
-
-41 migrations (001 → 041). All tables have RLS enabled with `org_id` on every row.
-
-```sql
--- Core
-organizations         id, name, slug, plan, created_at, ai_instructions,
-                      competitor_names TEXT[], recommended_documents JSONB,
-                      metadata JSONB
-users                 id (= auth.uid), org_id, role, display_name, activity_private,
-                      competitor_names TEXT[]
-documents             id, org_id, name, file_path, file_type, status, chunk_count,
-                      health_score, health_label, gap_flag_count, summary, toc,
-                      current_version_id, requires_acknowledgement
-chunks                id, org_id, document_id, content, content_tsv (generated),
-                      chunk_index, page_number, section_heading,
-                      is_archived, document_version_id
-embeddings            id, chunk_id, org_id, embedding vector(768)
-conversations         id, org_id, user_id, title, scoped_document_id,
-                      scoped_tags, scoped_collection_id, is_archived
-messages              id, conversation_id, org_id, role, content, sources JSONB,
-                      feedback, delivery_status, langfuse_trace_id, metadata JSONB,
-                      parent_message_id, is_active_branch, is_pinned
-
--- Team
-invitations           id, org_id, email, inviter_id, token, accepted_at, expires_at
-
--- Features
-document_tags         id, org_id, name, created_at
-document_collections  id, org_id, creator_id, name, tag_filters, created_at
-document_versions     id, document_id, version_number, file_path, file_size_bytes,
-                      uploaded_by, is_current, content_hash, chunk_summary, created_at
-document_diffs        id, document_id, from_version_id, to_version_id,
-                      from_version, to_version, diff_summary, created_at
-prompt_templates      id, org_id, created_by, title, description, template_text,
-                      category, is_shared, is_builtin, use_count, variables JSONB
-shared_conversations  id, conversation_id, token, expires_at, is_public
-query_logs            id, user_id, org_id, conversation_id, message_id, query_text,
-                      intent, response_length, source_count, tool_calls, latency_ms,
-                      model_used, created_at
-
--- Integrations
-integrations          id, org_id, scope_user_id, provider, access_token, refresh_token,
-                      token_expiry, scopes, metadata JSONB, resources JSONB,
-                      sync_cursor, last_synced_at, last_error, webhook_secret
-gmail_integrations    id, org_id, user_id, email_address, has_send_scope, connected_at
-api_keys              id, org_id, user_id, key_hash, name, last_used_at
-
--- Compliance & Approvals
-compliance_policies   id, org_id, name, document_id, requires_ack, enforcement_date
-compliance_acknowledgements  id, org_id, user_id, policy_id, acknowledged_at
-approval_workflows    id, org_id, creator_id, item_type, item_id, approvers JSONB,
-                      status, change_reason, decided_at
-document_drafts       id, org_id, creator_id, document_id, content, status, approver_id
-
--- Agents & Automation
-agent_runs            id, org_id, user_id, agent_type, status, result_json, created_at
-meeting_transcripts   id, org_id, uploader_id, file_path, transcript_text, status
-
--- Notifications & Observability
-notifications         id, org_id, user_id, type, title, body, metadata JSONB,
-                      link_url, dedupe_key, read_at, created_at
-competitor_mentions   id, org_id, user_id, source_type, source_id, matched_term,
-                      watchlist_type, snippet, dismissed_at, created_at
-analytics_events      id, org_id, user_id, event_type, metadata JSONB, created_at
-activity_feed         id, org_id, user_id, activity_type, summary, is_private, created_at
-webhooks              id, org_id, event_type, url, metadata JSONB
-```
-
-`content_tsv` in `chunks` is a generated column — never write to it directly.
-
-`chunks.is_archived = true` = soft-deleted by a version upload. Search RPCs exclude archived rows. Hard-delete only happens when the parent document is deleted. No automated purge job exists — archived chunks accumulate until document deletion.
-
----
-
-## Streaming Chat — Event Types
-
-`POST /chat/stream` emits SSE events as JSON lines:
-
-| kind | payload | description |
-|------|---------|-------------|
-| `intent` | `{ mode: "writing" \| "analysis" }` | Intent classification result |
-| `searching` | `{ query: string }` | LLM issued a search tool call |
-| `searched` | `{ query: string, count: number }` | Search returned results |
-| `sources` | `{ sources: Source[] }` | Final source documents used |
-| `token` | `{ text: string }` | Generated text chunk |
-| `confidence` | `{ level: "low" \| "medium" \| "high" }` | Retrieval confidence |
-| `final` | `{ content: string, message_id: string }` | Full response (also saved to DB) |
-| `error` | `{ message: string }` | Error (stream closes after this) |
-
----
-
-## Integrations
-
-All integrations are opt-in at org level. OAuth state is verified via `OAUTH_STATE_SECRET`.
-
-| Integration | Type | What it does |
-|------------|------|-------------|
-| Google Drive | Org OAuth | Polls for new files via Inngest, queues ingestion into knowledge base |
-| Notion | Per-user OAuth | Exports conversation outputs as Notion pages |
-| Slack | Org OAuth (bot token) | Posts outputs to channels/threads, handles `/nirnaya` slash commands |
-| Gmail | Per-user OAuth | Sends email outputs via Gmail REST API, tracks delivery status |
-| Email Forward | Inbound (Resend) | Receives forwarded emails, creates documents from email bodies |
-| OneDrive / SharePoint | Org OAuth (Microsoft Graph) | Polls selected OneDrive Business drives + SharePoint document libraries via Graph deltaLink every 10 min. PDF/DOCX/XLSX/PPTX/MD/TXT routed through the regular parser pipeline. |
-| Confluence | Org OAuth (Atlassian 3LO) | Polls selected Confluence Cloud spaces every 15 min; ingests page bodies (storage XHTML → text via BS4) plus PDF/DOCX attachments. |
-| GitHub | Org App install | Polls every 15 min for /docs trees, README, *.md/*.mdx, plus Issues and Discussions (GraphQL). Installation tokens minted server-side via RS256-signed app JWT. |
-| Dropbox / Business | Org OAuth | Polls selected folders every 10 min via cursor-based `/files/list_folder/continue`. Files routed through `/files/get_temporary_link` so the bearer never lands in worker payloads. |
-
-**Storage shapes** — two coexist:
-- **Per-provider tables** (legacy: `drive_integrations`, `notion_integrations`, `gmail_integrations`, `slack_integrations`). One row per (org, [user]).
-- **Unified `integrations` table** (migration 036, used by OneDrive/Confluence/GitHub/Dropbox): columns include `provider`, `scope_user_id`, `access_token`, `refresh_token`, `token_expiry`, `scopes`, `metadata JSONB`, `resources JSONB`, `sync_cursor`, `last_synced_at`, `last_error`, `webhook_secret`. Provider service modules in `app/services/integrations/` share helpers in `_unified.py` (row CRUD, token refresh, cursor management, binary ingestion queue).
-
-**Shared external-binary ingest event**: `doc/process-binary-external` (registered in `app/inngest/integration_functions.py`). OneDrive, SharePoint, Confluence attachments, and Dropbox all queue this event; the worker downloads bytes and runs the regular `process_document` pipeline — no Supabase Storage round trip required since the source of truth lives in the integration's API.
-
-Slack notes:
-- Slash command: `/nirnaya [query]` → ephemeral response with search results
-- Block Kit actions: approve, save as template, post to another channel
-- Bot token stored per org workspace in `integrations` table
-
-Gmail notes:
-- Scopes: `drive.readonly` + `gmail.send` (requires re-auth if Drive was connected first)
-- Re-auth banner shown when scope is missing
-- Delivery status tracked on `messages.delivery_status`
-
----
-
-## Chrome Extension
-
-MV3 side-panel extension, name "Company Brain". Published separately from the web app.
-
-**Two capabilities:**
-1. **Chat** — streams chat against the org's knowledge base from inside any browser tab. Uses the same `/chat/stream` SSE endpoint as the web app. Conversation threading via `conversation_id` stored in component state.
-2. **"Add to Brain"** — scrapes the active tab via `@mozilla/readability` (runs in service worker, serializes DOM via `chrome.scripting.executeScript`), then POSTs to `/documents/from-url` to ingest the page as a document.
-
-**Auth**: Session stored in `chrome.storage.local` key `cb.session.v1`. Sign-in goes through Supabase auth; the token is passed as a Bearer header on every API call. Session expiry triggers a re-login flow.
-
-**Permissions used**: `sidePanel`, `scripting`, `activeTab`, `storage`, `tabs`. No `<all_urls>` host permission — `activeTab` covers scraping only on user gesture.
-
----
-
-## Background Agents
-
-Agents are triggered by Inngest events (not HTTP requests). All extend `BaseAgent` and use the same tool-use loop as chat (max 4 rounds). They write their outputs to the DB.
-
-| Agent | Inngest event | Output |
-|-------|--------------|--------|
-| `OnboardingAgent` | `agent/onboarding` | Sets up workspace config, tags, initial knowledge gaps |
-| `MeetingNotesAgent` | `agent/meeting-notes` | Structured notes + action items from transcript |
-| `PolicyPropagationAgent` | `agent/policy-propagation` | Applies policy changes across affected documents |
-| `SupportResponseAgent` | `agent/support` | Drafts support ticket responses |
-| `VersionDiffAgent` | `agent/version-diff` | Summarizes changes between document versions |
 
 ---
 
 ## Coding Conventions
 
-**Python (FastAPI):**
-- Python 3.12+, type hints everywhere
-- Pydantic models for all request/response bodies
-- `FastAPI Depends()` for auth, DB client injection
-- `async def` for all route handlers
-- Never call `supabase.table().select()` without RLS-scoped client in HTTP handlers
-- Use service role client only in Inngest background functions (never in HTTP handlers)
-- All Inngest functions use `inngest.function` decorator + step-based retries
+**Python:** type hints everywhere, Pydantic for all request/response bodies, `async def` on all handlers, `Depends(verify_jwt)` for auth, `inngest.function` + `step.run()` for background jobs.
 
-**TypeScript (Next.js):**
-- TypeScript strict mode
-- `cn()` from `lib/utils.ts` for className merging
-- shadcn/ui components only — no new UI libraries without a specific reason
-- React Server Components by default; `'use client'` only when needed
-- Never put secrets in `NEXT_PUBLIC_*` vars
-- All FastAPI calls go through Next.js API proxy routes — never call FastAPI directly from the browser in prod
+**TypeScript:** strict mode, `cn()` for classNames, shadcn/ui only, RSC by default (`'use client'` only when needed), never put secrets in `NEXT_PUBLIC_*`, all FastAPI calls go through Next.js proxy routes.
 
-**Both:**
-- No comments unless the WHY is non-obvious
-- No premature abstraction — 3 similar lines is fine
-- Error messages must be user-readable for anything user-facing
+**Both:** no comments unless WHY is non-obvious, no premature abstraction, user-readable error messages at the boundary.
 
 ---
 
 ## Common Tasks
 
-**Add a new database table:**
-1. Create `supabase/migrations/042_description.sql`
-2. Add table + RLS policy + relevant indexes (org_id, org_id + status, etc.)
-3. Run `supabase db push`
-4. Add TypeScript type to `apps/web/lib/types.ts`
+**New DB table:** `supabase/migrations/0NN_name.sql` → table + RLS policy + indexes → `supabase db push` → type in `apps/web/lib/types.ts`
 
-**Add a new API endpoint:**
-1. Add route to relevant file in `apps/api/app/routers/`
-2. Add Pydantic request/response models
-3. Add `Depends(verify_jwt)` for auth
-4. Add Next.js proxy route in `apps/web/app/api/` if frontend needs it
+**New API endpoint:** add to `apps/api/app/routers/` (Pydantic models + `Depends(verify_jwt)`) → Next.js proxy route in `apps/web/app/api/`
 
-**Add a new Inngest background job:**
-1. Add function to relevant file in `apps/api/app/inngest/`
-2. Register it in the Inngest serve handler in `main.py`
-3. Trigger with `inngest_client.send({"name": "your/event", "data": {...}})`
-4. Use step functions (`step.run()`) for retryable chunks of work
+**New Inngest job:** add to `apps/api/app/inngest/` → register in `main.py` → trigger via `inngest_client.send({"name": "...", "data": {...}})` → use `step.run()` for retryable chunks
 
-**Add a new integration:**
-1. Add OAuth router to `apps/api/app/routers/integrations.py` or new file
-2. Add service in `apps/api/app/services/integrations/`
-3. Add Inngest polling function in `apps/api/app/inngest/integration_functions.py`
-4. Store tokens in `integrations` table (encrypted at rest via Supabase)
-5. Add settings UI in `apps/web/app/(dashboard)/settings/integrations/page.tsx`
+**New integration:** OAuth router → service in `services/integrations/` → Inngest polling function → store tokens in `integrations` table → settings UI in `settings/integrations/page.tsx`
 
-**Add a feature to the Chrome extension:**
-- Extension lives in `extensions/chrome/src/sidepanel/` (React side-panel app)
-- `background.ts` is the MV3 service worker — handles tab scraping via `chrome.scripting.executeScript` + Readability
-- Auth session stored in `chrome.storage.local` via `sidepanel/lib/storage.ts`
-- API calls go through `sidepanel/lib/api.ts` (uses the public Next.js API URL, not FastAPI directly)
-- The extension uses `activeTab` permission only — no idle content scripts
+**Switch LLM:** `LLM_PROVIDER=claude` + `ANTHROPIC_API_KEY` — `services/llm/client.py` already handles the branch.
 
-**Switch LLM from Gemini to Claude:**
-1. Set `LLM_PROVIDER=claude` in env
-2. Set `ANTHROPIC_API_KEY=`
-3. `apps/api/app/services/llm/client.py` already handles the branch — verify it
-
-**Switch embeddings from Google to OpenAI:**
-1. Set `EMBEDDING_PROVIDER=openai`, `EMBEDDING_DIMENSIONS=1536`
-2. Set `OPENAI_API_KEY=`
-3. Update `apps/api/app/services/ingestion/embedder.py`
-4. **Run re-embedding job** — cannot mix 768-dim and 1536-dim vectors
-5. Add migration: `ALTER TABLE embeddings ALTER COLUMN embedding TYPE vector(1536)`
+**Switch embeddings:** `EMBEDDING_PROVIDER=openai` + `EMBEDDING_DIMENSIONS=1536` → update `embedder.py` → re-embed all chunks → migration to alter vector column type.
 
 ---
 
-## What We're NOT Building Next
+## Integrations
 
-Explicitly deferred — do not implement without a decision:
-- SSO / SAML (not needed until Enterprise plan)
-- Reranker / Cohere Rerank (RRF fusion is sufficient)
+Two storage shapes coexist: **legacy per-provider tables** (`drive_integrations`, `notion_integrations`, `slack_integrations`, `gmail_integrations`) and **unified `integrations` table** (migration 036, used by OneDrive/Confluence/GitHub/Dropbox/Jira). Shared helpers in `services/integrations/_unified.py`.
+
+External binary ingest event: `doc/process-binary-external` — OneDrive, Confluence, Dropbox queue this; worker downloads bytes and runs the standard pipeline without a Supabase Storage round trip.
+
+Gmail re-auth required if Drive was connected first (scopes don't overlap). Re-auth banner shown when `has_send_scope = false`.
+
+---
+
+## What We're NOT Building
+
+- SSO / SAML
+- Reranker (RRF is sufficient)
 - LlamaParse (PyMuPDF + python-docx is sufficient)
-- Mobile app (responsive web covers mobile)
-- Multi-workspace / sub-orgs (Business plan feature, future)
-- Real-time collaborative editing (Google Docs-style)
+- Mobile app
+- Multi-workspace / sub-orgs
+- Real-time collaborative editing
 
-Everything else previously listed as "deferred" (Slack, Notion, Drive, webhooks, rate limiting, document versioning, approvals, compliance) **is already implemented**.
+---
+
+## DB Notes
+
+- `chunks.content_tsv` is a **generated column** — never write to it.
+- `chunks.is_archived = true` = soft-deleted by version upload. Search RPCs exclude them. Hard-delete only on parent document deletion. No purge job — archived chunks accumulate.
+- `conversations.is_channel` + `channel_visibility` added in migration 058 for team channels.
+- `knowledge_quizzes`: partial unique — one active quiz per `(document_id, document_version_id)`.
 
 ---
 
 ## Deployment
 
-**Frontend:** Push to `main` → Vercel auto-deploys  
-**Backend:** Push to `main` → Railway auto-deploys (Docker build via `railway.json`)  
-**Database migrations:** `supabase db push` — manual, run from local, always test on staging first  
-**Inngest:** Functions auto-registered on backend startup; deploy key set in Railway env  
-**Observability:** Sentry DSN + Langfuse keys set in Railway env; no deploy steps needed
+- Frontend: push to `main` → Vercel auto-deploys
+- Backend: push to `main` → Railway auto-deploys (Docker)
+- Migrations: `supabase db push` — manual, test on staging first
+- Inngest functions register on backend startup
 
-Production checklist:
-- [ ] All env vars set in Railway + Vercel dashboards
-- [ ] `supabase db push` run against production project
-- [ ] Inngest signing key matches between Railway and Inngest dashboard
-- [ ] Sentry release version matches `RELEASE_VERSION` env var
-- [ ] CORS `ALLOWED_ORIGINS` includes production frontend URL
+## Pricing
 
----
+| Plan | Price | Users | Docs | Queries/mo |
+|------|-------|-------|------|-----------|
+| Starter | $49 | 10 | 100 | 500 |
+| Team | $129 | 30 | 1,000 | 3,000 |
+| Business | $299 | ∞ | ∞ | ∞ |
 
-## Pricing (for reference in UI)
-
-| Plan | Price | Users | Documents | Queries/month |
-|------|-------|-------|-----------|---------------|
-| Starter | $49/month | 10 | 100 | 500 |
-| Team | $129/month | 30 | 1,000 | 3,000 |
-| Business | $299/month | Unlimited | Unlimited | Unlimited |
-
-Quarterly: ~10% off. Annual: ~20% off. See `PRICING.md` for full details.
-
----
-
-## References
-
-- Full architecture decisions: `ARCHITECTURE.md`
-- Roadmap history: `ROADMAP.md`, `V2_ROADMAP.md` → `V5_Roadmap.md`, `Agent_Roadmap.md`
-- Supabase docs: https://supabase.com/docs
-- FastAPI docs: https://fastapi.tiangolo.com
-- Inngest Python SDK: https://www.inngest.com/docs/sdk/python
-- Google Gemini API: https://ai.google.dev/api/python/google/generativeai
-- Langfuse docs: https://langfuse.com/docs
-- Resend docs: https://resend.com/docs
+See `PRICING.md` for full details.

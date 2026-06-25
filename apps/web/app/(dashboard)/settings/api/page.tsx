@@ -111,6 +111,8 @@ export default function ApiKeysPage() {
 
       <AgentTriggerDocs />
 
+      <McpSection />
+
       <SdkSnippets />
 
       <CreateDialog
@@ -244,6 +246,98 @@ function AgentTriggerDocs() {
           <code>HMAC(INTERNAL_EMAIL_SECRET, api_key_id)</code> — the{" "}
           <code>X-NirnayaIQ-Api-Key-Id</code> header echoes the key id so your
           receiver can derive the same value server-side.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function McpSection() {
+  const origin = useOrigin();
+  const apiUrl = origin.replace(/:\d+$/, ":8000"); // point at FastAPI in dev
+  return (
+    <section className="space-y-3 rounded-lg border border-border bg-background p-4">
+      <header>
+        <p className="text-sm font-medium">MCP server (Model Context Protocol)</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Connect any MCP-compatible AI client (Claude Desktop, Cursor, Continue.dev,
+          etc.) directly to your knowledge base. The server exposes five tools:
+          search, list documents, get summary, list agents, and run agent.
+        </p>
+      </header>
+
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground">
+          Claude Desktop — add to <code>claude_desktop_config.json</code>
+        </p>
+        <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">
+{`{
+  "mcpServers": {
+    "nirnayaiq": {
+      "url": "${apiUrl}/mcp",
+      "headers": {
+        "Authorization": "Bearer cb_live_…"
+      }
+    }
+  }
+}`}
+        </pre>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground">
+          Cursor / Continue.dev — <code>.cursor/mcp.json</code> or{" "}
+          <code>config.yaml</code>
+        </p>
+        <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">
+{`# Cursor mcp.json
+{
+  "mcpServers": {
+    "nirnayaiq": {
+      "url": "${apiUrl}/mcp",
+      "headers": { "Authorization": "Bearer cb_live_…" }
+    }
+  }
+}
+
+# Continue.dev config.yaml (under contextProviders)
+contextProviders:
+  - name: mcp
+    params:
+      serverUrl: "${apiUrl}/mcp"
+      headers:
+        Authorization: "Bearer cb_live_…"`}
+        </pre>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground">
+          Raw JSON-RPC test (curl)
+        </p>
+        <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">
+{`# Initialize session
+curl -X POST ${apiUrl}/mcp \\
+  -H "Authorization: Bearer cb_live_…" \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"curl","version":"0"}}}'
+
+# List available tools
+curl -X POST ${apiUrl}/mcp \\
+  -H "Authorization: Bearer cb_live_…" \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+
+# Search the knowledge base
+curl -X POST ${apiUrl}/mcp \\
+  -H "Authorization: Bearer cb_live_…" \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_company_knowledge","arguments":{"query":"refund policy","top_k":5}}}'`}
+        </pre>
+        <p className="text-xs text-muted-foreground">
+          The endpoint follows{" "}
+          <span className="font-medium">MCP Streamable HTTP</span> transport
+          (spec 2024-11-05). Every tool call is audited under{" "}
+          <code>/admin/agent-runs</code>.
         </p>
       </div>
     </section>
