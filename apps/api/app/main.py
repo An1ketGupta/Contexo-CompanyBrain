@@ -21,6 +21,15 @@ from app.routers import (
     admin_intake as admin_intake_router,
 )
 from app.routers import (
+    knowledge_health as knowledge_health_router,
+)
+from app.routers import (
+    sequences as sequences_router,
+)
+from app.routers import (
+    internal_announcements as internal_announcements_router,
+)
+from app.routers import (
     autoflows as autoflows_router,
 )
 from app.routers import (
@@ -73,6 +82,12 @@ from app.routers import (
     scheduled_reports as scheduled_reports_router,
 )
 from app.routers import (
+    briefings as briefings_router,
+)
+from app.routers import (
+    org_personas as org_personas_router,
+)
+from app.routers import (
     settings as settings_router,
 )
 from app.routers import (
@@ -96,6 +111,37 @@ from app.routers import (
 from app.routers import (
     webhooks as webhooks_router,
 )
+from app.routers import (
+    recruiting as recruiting_router,
+)
+from app.routers import (
+    sales_enablement as sales_enablement_router,
+)
+from app.routers import (
+    executive_assistant as executive_assistant_router,
+)
+from app.routers import (
+    calendar_meetings as calendar_meetings_router,
+)
+from app.routers import (
+    action_items as action_items_router,
+)
+from app.routers import (
+    admin_quality as admin_quality_router,
+)
+from app.routers import (
+    google_workspace_router,
+)
+from app.routers import (
+    agent2_integrations as agent2_integrations_router,
+)
+from app.routers import (
+    channels as channels_router,
+)
+from app.routers import (
+    certifications as certifications_router,
+)
+from app.mcp import router as mcp_router
 
 
 def create_app() -> FastAPI:
@@ -175,6 +221,8 @@ app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(search.router)
 app.include_router(settings_router.router)
+app.include_router(org_personas_router.router)
+app.include_router(briefings_router.router)
 app.include_router(invitations.router)
 app.include_router(auth_router.router)
 app.include_router(usage_router.router)
@@ -204,6 +252,20 @@ app.include_router(billing_router.router)
 app.include_router(webhooks_stripe_router.router)
 app.include_router(autoflows_router.router)
 app.include_router(admin_intake_router.router)
+app.include_router(knowledge_health_router.router)
+app.include_router(sequences_router.router)
+app.include_router(internal_announcements_router.router)
+app.include_router(recruiting_router.router)
+app.include_router(sales_enablement_router.router)
+app.include_router(executive_assistant_router.router)
+app.include_router(calendar_meetings_router.router)
+app.include_router(action_items_router.router)
+app.include_router(admin_quality_router.router)
+app.include_router(google_workspace_router.router)
+app.include_router(agent2_integrations_router.router)
+app.include_router(channels_router.router)
+app.include_router(certifications_router.router)
+app.include_router(mcp_router)
 
 # Inngest serve endpoint — webhook the Inngest server hits to invoke our functions.
 # Mounts at /api/inngest by default.

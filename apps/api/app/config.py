@@ -247,6 +247,37 @@ class Settings(BaseSettings):
     embedding_finetune_min_pairs: int = 50
     embedding_finetune_recommended_pairs: int = 200
 
+    # ── Agent2 Day 5: ATS integrations (#20) ──────────────────────────────
+    # All three ATS providers authenticate via an org-supplied API key, not
+    # OAuth — there's no provider-side OAuth app to provision here. Persisted
+    # to `integrations.access_token` and validated at connect time. These
+    # config keys are reserved for future webhook signing if/when needed.
+    greenhouse_webhook_secret: str = ""
+    lever_webhook_secret: str = ""
+    ashby_webhook_secret: str = ""
+
+    # ── Agent2 Day 6: Asana + Linear OAuth (#44) ──────────────────────────
+    asana_client_id: str = ""
+    asana_client_secret: str = ""
+    asana_oauth_redirect_uri: str = (
+        "http://localhost:8000/integrations/asana/callback"
+    )
+
+    linear_client_id: str = ""
+    linear_client_secret: str = ""
+    linear_oauth_redirect_uri: str = (
+        "http://localhost:8000/integrations/linear/callback"
+    )
+
+    # Jira Cloud — Atlassian OAuth 3LO. Separate from atlassian_* (which is
+    # the Confluence-scoped app) so each integration card can be enabled or
+    # disabled independently.
+    jira_client_id: str = ""
+    jira_client_secret: str = ""
+    jira_oauth_redirect_uri: str = (
+        "http://localhost:8000/integrations/jira/callback"
+    )
+
 
 class ProductionConfigError(RuntimeError):
     """Raised at startup when production env vars are missing.

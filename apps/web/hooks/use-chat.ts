@@ -265,6 +265,12 @@ export function useChat({
    * Drive a single chat turn. If `existingAssistantLocalId` is provided, we
    * reuse that bubble instead of appending fresh user+assistant rows —
    * that's the retry path.
+   *
+   * `retryMode` (Production Roadmap 1.5) tells the backend to re-run the
+   * same prompt with looser constraints:
+   *   - "broader" drops scope (whole knowledge base, not just the pinned doc/tags).
+   *   - "deeper"  doubles the search budget for one turn.
+   * Only meaningful when `existing` is supplied — it's a retry, not a fresh send.
    */
   const runTurn = useCallback(
     async (
@@ -274,6 +280,7 @@ export function useChat({
         userLocalId: string;
         clientMessageId: string;
       } | null,
+      retryMode?: "broader" | "deeper",
     ): Promise<void> => {
       const trimmed = text.trim();
       if (!trimmed || isStreaming) return;
@@ -386,6 +393,11 @@ export function useChat({
               // a brand-new conversation; backend ignores it once persisted.
               scoped_collection_id:
                 !convoIdRef.current && scopedCollectionId ? scopedCollectionId : undefined,
+              // Production Roadmap 1.5 — Answer Improvement retry. The
+              // backend re-runs execute_task with budget overrides; the new
+              // answer lands as a fresh branch under the same parent user
+              // message, surfaced via the branch navigator.
+              retry_mode: retryMode,
             }),
             signal: controller.signal,
           });
@@ -510,6 +522,28 @@ export function useChat({
       });
     },
     [messages, runTurn],
+  );
+
+  /**
+   * Production Roadmap 1.5 — Answer Improvement.
+   * Re-run a low-confidence COMPLETED assistant turn with a different
+   * retrieval strategy. Unlike `retry` (which is for hard errors), this
+   * runs on a successful but unsatisfying answer. We don't reuse the same
+   * client_message_id because we WANT a fresh user-message row + a fresh
+   * assistant row pair — the user explicitly asked for a different attempt
+   * and should see it in the timeline (not silently overwrite the prior
+   * answer). The user bubble doesn't repeat in the visible thread because
+   * the chat list de-dupes consecutive user messages with identical text
+   * — see message-list.tsx. (Falls back to a new pair if dedupe is off.)
+   */
+  const retryWithMode = useCallback(
+    async (assistantLocalId: string, mode: "broader" | "deeper") => {
+      if (isStreaming) return;
+      const target = messages.find((m) => m.local_id === assistantLocalId);
+      if (!target || target.role !== "assistant" || !target.pending_text) return;
+      await runTurn(target.pending_text, null, mode);
+    },
+    [isStreaming, messages, runTurn],
   );
 
   /**
@@ -825,6 +859,7 @@ export function useChat({
     send,
     stop,
     retry,
+    retryWithMode,
     setFeedback,
     regenerate,
     switchBranch,

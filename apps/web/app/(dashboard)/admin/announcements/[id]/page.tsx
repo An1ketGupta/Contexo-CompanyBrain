@@ -1,0 +1,429 @@
+"use client";
+
+import { useParams, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import useSWR from "swr";
+import { Calendar, Loader2, Send, X } from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Skeleton } from "@/components/ui/skeleton";
+
+interface Announcement {
+  id: string;
+  request_text: string;
+  email_subject: string | null;
+  email_body: string | null;
+  slack_body: string | null;
+  notion_title: string | null;
+  notion_body: string | null;
+  status: string;
+  scheduled_for: string | null;
+  recipients: string[];
+  slack_channel_id: string | null;
+  notion_parent_page_id: string | null;
+  sent_at: string | null;
+  email_sent_count: number;
+  slack_ts: string | null;
+  notion_page_url: string | null;
+  error_message: string | null;
+  created_at: string;
+}
+
+interface Response {
+  announcement: Announcement;
+}
+
+type TabId = "email" | "slack" | "notion";
+
+const fetcher = async <T,>(url: string): Promise<T> => {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.json();
+};
+
+function toLocalIso(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
+export default function AnnouncementDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const id = params?.id as string;
+
+  const { data, error, isLoading, mutate } = useSWR<Response>(
+    id ? `/api/admin/announcements/${id}` : null,
+    fetcher,
+    { revalidateOnFocus: false },
+  );
+
+  const [tab, setTab] = useState<TabId>("email");
+
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailBody, setEmailBody] = useState("");
+  const [slackBody, setSlackBody] = useState("");
+  const [notionTitle, setNotionTitle] = useState("");
+  const [notionBody, setNotionBody] = useState("");
+
+  const [recipients, setRecipients] = useState("");
+  const [slackChannel, setSlackChannel] = useState("");
+  const [notionParent, setNotionParent] = useState("");
+  const [whenLocal, setWhenLocal] = useState("");
+
+  const [working, setWorking] = useState(false);
+
+  useEffect(() => {
+    if (!data) return;
+    const a = data.announcement;
+    setEmailSubject(a.email_subject ?? "");
+    setEmailBody(a.email_body ?? "");
+    setSlackBody(a.slack_body ?? "");
+    setNotionTitle(a.notion_title ?? "");
+    setNotionBody(a.notion_body ?? "");
+    setRecipients((a.recipients ?? []).join(", "));
+    setSlackChannel(a.slack_channel_id ?? "");
+    setNotionParent(a.notion_parent_page_id ?? "");
+    if (a.scheduled_for) {
+      setWhenLocal(toLocalIso(new Date(a.scheduled_for)));
+    } else if (!whenLocal) {
+      // Default to 1 hour from now.
+      const d = new Date(Date.now() + 60 * 60 * 1000);
+      d.setSeconds(0, 0);
+      setWhenLocal(toLocalIso(d));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  if (isLoading) {
+    return (
+      <div className="mx-auto max-w-4xl space-y-4 p-6">
+        <Skeleton className="h-10 w-1/2" />
+        <Skeleton className="h-72 w-full" />
+      </div>
+    );
+  }
+  if (error || !data) {
+    return (
+      <div className="mx-auto max-w-4xl p-6 text-sm text-destructive">
+        {(error as Error)?.message ?? "Not found."}
+      </div>
+    );
+  }
+
+  const a = data.announcement;
+  const isDraft = a.status === "draft";
+
+  const saveDraft = async () => {
+    setWorking(true);
+    try {
+      const res = await fetch(`/api/admin/announcements/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email_subject: emailSubject,
+          email_body: emailBody,
+          slack_body: slackBody,
+          notion_title: notionTitle,
+          notion_body: notionBody,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `Failed (${res.status})`);
+      }
+      toast.success("Saved.");
+      mutate();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const schedule = async () => {
+    if (!whenLocal) {
+      toast.error("Pick a send time.");
+      return;
+    }
+    setWorking(true);
+    try {
+      // Save edits first.
+      await fetch(`/api/admin/announcements/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email_subject: emailSubject,
+          email_body: emailBody,
+          slack_body: slackBody,
+          notion_title: notionTitle,
+          notion_body: notionBody,
+        }),
+      });
+
+      const recipientList = recipients
+        .split(/[,\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const scheduledFor = new Date(whenLocal).toISOString();
+
+      const res = await fetch(`/api/admin/announcements/${id}/schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scheduled_for: scheduledFor,
+          recipients: recipientList,
+          slack_channel_id: slackChannel || null,
+          notion_parent_page_id: notionParent || null,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `Failed (${res.status})`);
+      }
+      toast.success("Announcement scheduled.");
+      mutate();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const cancel = async () => {
+    if (!confirm("Cancel this announcement? Scheduled channels won't fire.")) return;
+    setWorking(true);
+    try {
+      const res = await fetch(`/api/admin/announcements/${id}/cancel`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(`Failed (${res.status})`);
+      mutate();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-4xl space-y-6 p-6 md:p-8">
+      <header className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {emailSubject || "Untitled announcement"}
+          </h1>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Drafted from: &ldquo;{a.request_text}&rdquo;
+          </p>
+        </div>
+        <Badge>{a.status}</Badge>
+      </header>
+
+      <div className="flex gap-1 border-b">
+        <TabButton active={tab === "email"} onClick={() => setTab("email")} label="Email" />
+        <TabButton active={tab === "slack"} onClick={() => setTab("slack")} label="Slack" />
+        <TabButton active={tab === "notion"} onClick={() => setTab("notion")} label="Notion" />
+      </div>
+
+      {tab === "email" && (
+        <section className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="email-subject">Subject</Label>
+            <Input
+              id="email-subject"
+              value={emailSubject}
+              onChange={(e) => setEmailSubject(e.target.value)}
+              disabled={!isDraft}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="email-body">Body (Markdown)</Label>
+            <Textarea
+              id="email-body"
+              value={emailBody}
+              onChange={(e) => setEmailBody(e.target.value)}
+              rows={16}
+              className="font-mono text-sm"
+              disabled={!isDraft}
+            />
+          </div>
+        </section>
+      )}
+      {tab === "slack" && (
+        <section className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="slack-body">Slack post (mrkdwn)</Label>
+            <Textarea
+              id="slack-body"
+              value={slackBody}
+              onChange={(e) => setSlackBody(e.target.value)}
+              rows={14}
+              className="font-mono text-sm"
+              disabled={!isDraft}
+            />
+          </div>
+        </section>
+      )}
+      {tab === "notion" && (
+        <section className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="notion-title">Page title</Label>
+            <Input
+              id="notion-title"
+              value={notionTitle}
+              onChange={(e) => setNotionTitle(e.target.value)}
+              disabled={!isDraft}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="notion-body">Body (Markdown)</Label>
+            <Textarea
+              id="notion-body"
+              value={notionBody}
+              onChange={(e) => setNotionBody(e.target.value)}
+              rows={14}
+              className="font-mono text-sm"
+              disabled={!isDraft}
+            />
+          </div>
+        </section>
+      )}
+
+      <section className="rounded-md border bg-card p-4">
+        <h2 className="text-sm font-medium">Channels & schedule</h2>
+        <div className="mt-3 space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="recipients">Email recipients</Label>
+            <Textarea
+              id="recipients"
+              value={recipients}
+              onChange={(e) => setRecipients(e.target.value)}
+              placeholder="alice@acme.com, bob@acme.com"
+              rows={2}
+              disabled={!isDraft}
+            />
+            <p className="text-xs text-muted-foreground">
+              Comma-separated. Leave empty to skip email.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="slack-channel">Slack channel ID</Label>
+              <Input
+                id="slack-channel"
+                value={slackChannel}
+                onChange={(e) => setSlackChannel(e.target.value)}
+                placeholder="C0123ABCD"
+                disabled={!isDraft}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="notion-parent">Notion parent page ID</Label>
+              <Input
+                id="notion-parent"
+                value={notionParent}
+                onChange={(e) => setNotionParent(e.target.value)}
+                placeholder="32-char id"
+                disabled={!isDraft}
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="when">Send at</Label>
+            <Input
+              id="when"
+              type="datetime-local"
+              value={whenLocal}
+              onChange={(e) => setWhenLocal(e.target.value)}
+              disabled={!isDraft}
+            />
+          </div>
+        </div>
+      </section>
+
+      {a.status !== "draft" && (
+        <section className="rounded-md border bg-muted/30 p-4 text-xs text-muted-foreground">
+          {a.status === "scheduled" && a.scheduled_for && (
+            <p>Will send at {new Date(a.scheduled_for).toLocaleString()}.</p>
+          )}
+          {a.status === "sent" && (
+            <ul className="space-y-1">
+              {a.email_sent_count > 0 && <li>📧 Sent to {a.email_sent_count} recipient(s).</li>}
+              {a.slack_ts && <li>💬 Slack posted ({a.slack_ts}).</li>}
+              {a.notion_page_url && (
+                <li>
+                  📝{" "}
+                  <a href={a.notion_page_url} target="_blank" rel="noreferrer" className="underline">
+                    Notion page
+                  </a>
+                </li>
+              )}
+            </ul>
+          )}
+          {a.error_message && <p className="text-destructive">{a.error_message}</p>}
+        </section>
+      )}
+
+      <div className="flex justify-end gap-2">
+        {(a.status === "draft" || a.status === "scheduled") && (
+          <Button variant="outline" onClick={cancel} disabled={working} className="gap-2">
+            <X className="size-4" />
+            Cancel
+          </Button>
+        )}
+        {isDraft && (
+          <>
+            <Button variant="outline" onClick={saveDraft} disabled={working}>
+              Save draft
+            </Button>
+            <Button onClick={schedule} disabled={working} className="gap-2">
+              {working ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Calendar className="size-4" />
+              )}
+              {working ? "Scheduling…" : "Approve & schedule"}
+            </Button>
+          </>
+        )}
+        <Button variant="ghost" onClick={() => router.push("/admin/announcements")}>
+          Back
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "border-b-2 px-3 py-2 text-sm font-medium " +
+        (active
+          ? "border-foreground text-foreground"
+          : "border-transparent text-muted-foreground hover:text-foreground")
+      }
+    >
+      {label}
+    </button>
+  );
+}

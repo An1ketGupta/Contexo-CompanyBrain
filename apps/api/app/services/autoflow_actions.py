@@ -495,17 +495,67 @@ async def _handle_hold_for_approval(ctx: ActionContext) -> ActionResult:
 
 
 async def _handle_create_task(ctx: ActionContext) -> ActionResult:
-    """Stub: full Asana/Linear/Notion task creation lands Day 4/6.
+    """Create an external task in Linear / Jira / Asana / Notion.
 
-    Registering the type now means the eventual Builder UI won't need a
-    schema migration to expose it. Calling it before the real handler ships
-    fails fast with a clear message so an over-eager flow author sees the
-    problem in the run history rather than silent breakage.
+    config:
+        provider          : str (required) — 'linear' | 'jira' | 'asana' | 'notion'
+        user_id           : str (required) — the workspace member whose OAuth
+                            row to use. Most flows want the autoflow author
+                            here; templating like {{trigger.user_id}} works.
+        title             : str (required)
+        description       : str (optional)
+        assignee_email    : str (optional) — looked up on the provider side
+        due_date          : str (optional) — YYYY-MM-DD
+        notion_parent_id  : str (required for provider='notion')
+
+    output:
+        provider          : str
+        task_id           : str
+        identifier        : str | None — e.g. PROJ-123 for Jira/Linear
+        url               : str | None
     """
-    raise ActionUnavailable(
-        "create_task is reserved for Day 4/6 (Asana/Linear/Notion task adapters). "
-        "Not yet wired."
+    from app.services.action_tracker import _create_one
+
+    cfg = render_config(
+        ctx.action.config,
+        prior_outputs=ctx.prior_outputs,
+        trigger_payload=ctx.trigger_payload,
     )
+    provider = (cfg.get("provider") or "").strip().lower()
+    if provider not in ("linear", "jira", "asana", "notion"):
+        raise ActionExecutionError(
+            "create_task requires provider in {linear,jira,asana,notion}"
+        )
+    user_id = (cfg.get("user_id") or "").strip()
+    if not user_id:
+        raise ActionExecutionError(
+            "create_task requires 'user_id' (the workspace member whose "
+            "integration credentials to use)"
+        )
+    title = (cfg.get("title") or "").strip()
+    if not title:
+        raise ActionExecutionError("create_task requires non-empty 'title'")
+
+    try:
+        result = await _create_one(
+            target=provider,  # type: ignore[arg-type]
+            org_id=ctx.org_id,
+            user_id=user_id,
+            action_text=title,
+            notes=(cfg.get("description") or "").strip(),
+            owner_email=(cfg.get("assignee_email") or None),
+            due_date=(cfg.get("due_date") or None),
+            notion_parent_page_id=(cfg.get("notion_parent_id") or None),
+        )
+    except PermissionError as exc:
+        # Missing/expired OAuth — terminal; the author needs to reconnect.
+        raise ActionExecutionError(f"{provider}_unavailable: {exc}") from exc
+    return {
+        "provider": provider,
+        "task_id": result.get("task_id"),
+        "identifier": result.get("identifier"),
+        "url": result.get("url"),
+    }
 
 
 # ── Registry ─────────────────────────────────────────────────────────────

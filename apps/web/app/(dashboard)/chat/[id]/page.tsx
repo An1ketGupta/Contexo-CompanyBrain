@@ -84,6 +84,7 @@ export default function ChatConversationPage({
     send,
     stop,
     retry,
+    retryWithMode,
     setFeedback,
     regenerate,
     switchBranch,
@@ -236,6 +237,7 @@ export default function ChatConversationPage({
             onFeedback={setFeedback}
             onRegenerate={regenerate}
             onSwitchBranch={switchBranch}
+            onRetryWithMode={retryWithMode}
             isStreaming={isStreaming}
           />
         )}

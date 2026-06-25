@@ -6,8 +6,14 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await params;
+  let body: unknown = {};
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
   return proxyJson(req, `/chat/messages/${encodeURIComponent(id)}/copied`, {
     method: "POST",
-    body: {},
+    body,
   });
 }

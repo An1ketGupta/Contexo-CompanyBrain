@@ -73,6 +73,7 @@ export default function ChatNewPage() {
     send,
     stop,
     retry,
+    retryWithMode,
     setFeedback,
   } = useChat({
     conversationId: null,
@@ -123,7 +124,13 @@ export default function ChatNewPage() {
             />
           </div>
         ) : (
-          <MessageList messages={messages} onRetry={retry} onFeedback={setFeedback} />
+          <MessageList
+            messages={messages}
+            onRetry={retry}
+            onFeedback={setFeedback}
+            onRetryWithMode={retryWithMode}
+            isStreaming={isStreaming}
+          />
         )}
         <div className="px-4 md:px-6">
           <KnowledgeGapBanner gap={knowledgeGap} onDismiss={dismissKnowledgeGap} />

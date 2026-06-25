@@ -30,11 +30,18 @@ class QueryIntent(str, Enum):
     TASK_GENERATION = "task_generation"
     ANALYSIS = "analysis"
     SEARCH = "search"
+    # Production Roadmap 1.9 — Time-boxed Quick Answer. A specialization of
+    # FACTUAL_QA for short, single-fact lookups ("what's our holiday policy",
+    # "who owns the API runbook"). Drives the orchestrator to cap tool rounds
+    # and search count for sub-2s perceived latency.
+    QUICK_ANSWER = "quick_answer"
 
 
 # Order matters — task_generation wins over analysis if both match, because
-# "summarize and write" is fundamentally a write task. Search and factual_qa
-# are last-resort fallbacks.
+# "summarize and write" is fundamentally a write task. QUICK_ANSWER runs
+# AFTER task_generation/analysis (a "write a summary of vacation policy" is
+# still a task, not a lookup) but BEFORE the broader factual_qa so a short
+# policy question maps to a bounded turn instead of full-depth retrieval.
 _INTENT_PATTERNS: dict[QueryIntent, tuple[re.Pattern[str], ...]] = {
     QueryIntent.TASK_GENERATION: tuple(
         re.compile(p, re.IGNORECASE)
@@ -73,6 +80,28 @@ _INTENT_PATTERNS: dict[QueryIntent, tuple[re.Pattern[str], ...]] = {
             r"\b(any|do we have) (doc(ument)?s?|files?|info)\b",
         )
     ),
+    # Production Roadmap 1.9 — bounded "give me one fact" lookups. The
+    # heuristic is shape-driven, not topic-driven: a short interrogative
+    # under ~14 words is almost always answerable from a single chunk, and
+    # full-depth retrieval just adds latency. We deliberately gate this
+    # behind a max-length predicate (checked in classify_intent) so a long
+    # discursive "what does our policy say about ..." question still goes
+    # through the regular FACTUAL_QA path with full search depth.
+    #
+    # These patterns ALSO match FACTUAL_QA; the priority ordering ensures
+    # the bounded variant wins when the message is short enough.
+    QueryIntent.QUICK_ANSWER: tuple(
+        re.compile(p, re.IGNORECASE)
+        for p in (
+            # Short "what is / what's the X" forms.
+            r"^\s*(what(?:'s| is| are)|who(?:'s| is| are)|when(?:'s| is)|where(?:'s| is))\b",
+            # Single-word factual nouns commonly used as fragments.
+            r"^\s*(holiday|vacation|pto|wfh|salary|payday|expense|reimbursement|"
+            r"benefits|insurance|onboarding|password|wifi|office)\s+policy\b",
+            # Looks-up that don't need synthesis.
+            r"^\s*(define|definition of)\b",
+        )
+    ),
     QueryIntent.FACTUAL_QA: tuple(
         re.compile(p, re.IGNORECASE)
         for p in (
@@ -82,6 +111,12 @@ _INTENT_PATTERNS: dict[QueryIntent, tuple[re.Pattern[str], ...]] = {
         )
     ),
 }
+
+# Word-count cap on QUICK_ANSWER. Above this, even a question-shape message
+# is probably worth full-depth retrieval (the user is providing context, not
+# just looking up a fact). Conservatively low — we'd rather miss a quick
+# answer than ship a slow one as quick.
+_QUICK_ANSWER_MAX_WORDS = 14
 
 
 @dataclass(frozen=True)
@@ -96,12 +131,19 @@ def classify_intent(query: str) -> IntentClassification:
     if not q:
         return IntentClassification(intent=QueryIntent.FACTUAL_QA, matched_patterns=())
 
+    # QUICK_ANSWER is short-circuited above FACTUAL_QA by a length gate so
+    # long discursive question-shape messages still get full retrieval.
+    word_count = len(q.split())
+
     for intent in (
         QueryIntent.TASK_GENERATION,
         QueryIntent.ANALYSIS,
         QueryIntent.SEARCH,
+        QueryIntent.QUICK_ANSWER,
         QueryIntent.FACTUAL_QA,
     ):
+        if intent == QueryIntent.QUICK_ANSWER and word_count > _QUICK_ANSWER_MAX_WORDS:
+            continue
         hits: list[str] = []
         for pat in _INTENT_PATTERNS[intent]:
             if pat.search(q):
@@ -142,6 +184,12 @@ INTENT_SYSTEM_OVERLAYS: dict[QueryIntent, str] = {
         "with short excerpts that answer the user's lookup. If multiple "
         "documents are relevant, show all of them. Be factual — let the "
         "retrieved content speak; minimize editorial framing."
+    ),
+    QueryIntent.QUICK_ANSWER: (
+        "INTENT: quick factual lookup. One or two sentences max. Lead with "
+        "the answer; no preamble like 'According to our policy'. Cite the "
+        "source. If retrieval didn't surface the fact, say so in one line — "
+        "do not pad the answer to fill space."
     ),
 }
 

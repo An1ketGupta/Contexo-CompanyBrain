@@ -873,6 +873,90 @@ async def get_signed_url(
     return {"url": url, "name": owned.data["name"], "expires_in": 600}
 
 
+# Production Roadmap 1.6 — inline preview for non-PDF documents. Returns
+# the document's chunks in order so the chat preview sheet can render the
+# parsed text directly without the user having to open the source file.
+# PDFs use the signed-url endpoint above; this is the text fallback.
+#
+# We hard-cap the response at PREVIEW_CHUNK_LIMIT chunks so a 5MB doc with
+# 500 chunks doesn't blow up the wire. The preview UI shows "Open document"
+# to fetch the full file when the limit is hit. RLS enforces the org check
+# on `chunks.org_id`; archived chunks are excluded so a stale version
+# doesn't leak.
+PREVIEW_CHUNK_LIMIT = 80
+
+
+@router.get("/{doc_id}/chunks")
+async def get_document_chunks(
+    doc_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Return ordered, non-archived chunks for an in-app text preview.
+
+    Used by the chat's inline document-preview sheet for DOCX/MD/HTML/TXT
+    documents (PDFs go through signed-url + iframe). Chunks come from the
+    current document version only — archived chunks (replaced by a
+    version upload) are filtered out so the preview always matches the
+    citation.
+
+    Returns at most PREVIEW_CHUNK_LIMIT chunks; clients should fall back
+    to the signed URL when `truncated` is true.
+    """
+    org_id: str | None = current_user["org_id"]
+    if not org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="No organization found."
+        )
+    _require_uuid(doc_id)
+
+    client = get_user_client(current_user["token"])
+
+    def _run() -> dict[str, Any]:
+        # RLS-scoped read; missing/cross-org doc returns no row → 404.
+        meta_res = (
+            client.table("documents")
+            .select("id, name, file_type")
+            .eq("id", doc_id)
+            .maybe_single()
+            .execute()
+        )
+        if not meta_res or not meta_res.data:
+            return {"_missing": True}
+
+        chunks_res = (
+            client.table("chunks")
+            .select("chunk_index, page_number, section_heading, content")
+            .eq("document_id", doc_id)
+            .eq("is_archived", False)
+            .order("chunk_index")
+            .limit(PREVIEW_CHUNK_LIMIT + 1)
+            .execute()
+        )
+        rows = chunks_res.data or []
+        truncated = len(rows) > PREVIEW_CHUNK_LIMIT
+        return {
+            "document": meta_res.data,
+            "chunks": rows[:PREVIEW_CHUNK_LIMIT],
+            "truncated": truncated,
+        }
+
+    result = await asyncio.to_thread(_run)
+    if result.get("_missing"):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Document not found."
+        )
+    return result
+
+
+def _require_uuid(value: str) -> None:
+    try:
+        uuid.UUID(value)
+    except (ValueError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid document id.",
+        ) from exc
+
+
 # ── Bulk operations ───────────────────────────────────────────────────────────
 
 

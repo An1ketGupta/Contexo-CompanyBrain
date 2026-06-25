@@ -2,60 +2,37 @@
 
 import { use, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import useSWR from "swr";
-import { AlertTriangle, ChevronLeft, Play } from "lucide-react";
+import { toast } from "sonner";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronLeft,
+  Edit,
+  Play,
+  XCircle,
+} from "lucide-react";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-
-interface AutoflowRow {
-  id: string;
-  name: string;
-  description: string | null;
-  trigger_type: string;
-  trigger_config: { cron?: string; filters?: Record<string, unknown> };
-  actions: Array<{ type: string; order: number; config: Record<string, unknown> }>;
-  confidence_threshold: number | null;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-  last_fired_at: string | null;
-}
-
-interface RunStep {
-  index: number;
-  type: string;
-  status: string;
-  started_at?: string;
-  completed_at?: string;
-  error?: string;
-  output?: Record<string, unknown>;
-}
-
-interface AutoflowRun {
-  id: string;
-  autoflow_id: string;
-  status: "pending" | "running" | "completed" | "failed" | "held_for_approval" | "cancelled";
-  steps: RunStep[];
-  steps_completed: number;
-  total_steps: number;
-  error_message: string | null;
-  blocking_approval_id: string | null;
-  started_at: string;
-  completed_at: string | null;
-  trigger_payload: Record<string, unknown>;
-}
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TestRunner } from "@/components/autoflows/test-runner";
+import { getTrigger } from "@/lib/autoflow/triggers";
+import { getAction } from "@/lib/autoflow/catalog";
+import { getIcon } from "@/lib/autoflow/icons";
+import type { AutoflowRow, AutoflowRun, AutoflowDraft } from "@/lib/autoflow/types";
 
 const STATUS_VARIANT: Record<
   AutoflowRun["status"],
-  "default" | "secondary" | "outline" | "destructive"
+  "default" | "warning" | "outline" | "destructive" | "success"
 > = {
   pending: "outline",
-  running: "secondary",
-  completed: "default",
+  running: "warning",
+  completed: "success",
   failed: "destructive",
-  held_for_approval: "secondary",
+  held_for_approval: "warning",
   cancelled: "outline",
 };
 
@@ -72,38 +49,50 @@ export default function AutoflowDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const router = useRouter();
   const { id } = use(params);
-  const [running, setRunning] = useState(false);
-  const [lastRunResult, setLastRunResult] = useState<string | null>(null);
+  const [testOpen, setTestOpen] = useState(false);
 
   const {
     data: autoflow,
     error,
     isLoading,
+    mutate: mutateFlow,
   } = useSWR<AutoflowRow>(`/api/admin/autoflows/${id}`, fetcher);
-  const {
-    data: runsData,
-    mutate: mutateRuns,
-  } = useSWR<{ runs: AutoflowRun[] }>(`/api/admin/autoflows/${id}/runs`, fetcher, {
-    refreshInterval: 5_000,
-  });
 
-  const handleRunNow = async () => {
-    setRunning(true);
-    setLastRunResult(null);
+  const { data: runsData, mutate: mutateRuns } = useSWR<{ runs: AutoflowRun[] }>(
+    `/api/admin/autoflows/${id}/runs`,
+    fetcher,
+    { refreshInterval: 5_000 },
+  );
+
+  const toggleActive = async () => {
+    if (!autoflow) return;
+    const next = !autoflow.is_active;
+    await mutateFlow({ ...autoflow, is_active: next }, { revalidate: false });
     try {
-      const res = await fetch(`/api/admin/autoflows/${id}/run-now`, {
-        method: "POST",
+      const res = await fetch(`/api/admin/autoflows/${id}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trigger_payload: { test: true } }),
+        body: JSON.stringify({ is_active: next }),
       });
-      const body = await res.json();
-      setLastRunResult(JSON.stringify(body));
-      mutateRuns();
+      if (!res.ok) throw new Error(`Failed (${res.status})`);
+      toast.success(next ? "Activated" : "Paused");
     } catch (e) {
-      setLastRunResult(`Error: ${(e as Error).message}`);
-    } finally {
-      setRunning(false);
+      toast.error(e instanceof Error ? e.message : "Update failed");
+      mutateFlow();
+    }
+  };
+
+  const remove = async () => {
+    if (!autoflow) return;
+    if (!confirm(`Delete "${autoflow.name}"? This can't be undone.`)) return;
+    const res = await fetch(`/api/admin/autoflows/${id}`, { method: "DELETE" });
+    if (res.ok || res.status === 204) {
+      toast.success("Deleted");
+      router.push("/admin/autoflows");
+    } else {
+      toast.error(`Delete failed (${res.status})`);
     }
   };
 
@@ -122,109 +111,239 @@ export default function AutoflowDetailPage({
           <span>{(error as Error).message}</span>
         </div>
       ) : isLoading || !autoflow ? (
-        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-40 w-full" />
       ) : (
         <>
           <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div>
+            <div className="min-w-0 flex-1 space-y-2">
               <h1 className="text-2xl font-semibold tracking-tight">{autoflow.name}</h1>
               {autoflow.description && (
-                <p className="mt-1 text-sm text-muted-foreground">{autoflow.description}</p>
+                <p className="text-sm text-muted-foreground">{autoflow.description}</p>
               )}
-              <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                <Badge variant="outline" className="font-mono">
-                  {autoflow.trigger_type}
-                </Badge>
-                {autoflow.trigger_type === "scheduled" && autoflow.trigger_config.cron && (
-                  <Badge variant="secondary" className="font-mono">
-                    {autoflow.trigger_config.cron}
-                  </Badge>
-                )}
-                {!autoflow.is_active && <Badge variant="outline">Inactive</Badge>}
-                {autoflow.confidence_threshold != null && (
-                  <Badge variant="secondary">
-                    Gate ≥ {(autoflow.confidence_threshold * 100).toFixed(0)}%
-                  </Badge>
-                )}
-              </div>
+              <FlowSummary autoflow={autoflow} />
             </div>
-            <Button onClick={handleRunNow} disabled={running} className="gap-2">
-              <Play className="size-4" />
-              {running ? "Running…" : "Run now"}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" onClick={toggleActive}>
+                {autoflow.is_active ? "Pause" : "Activate"}
+              </Button>
+              <Button variant="outline" onClick={() => setTestOpen(true)} className="gap-1">
+                <Play className="size-4" />
+                Test
+              </Button>
+              <Button asChild className="gap-1">
+                <Link href={`/admin/autoflows/${id}/edit`}>
+                  <Edit className="size-4" />
+                  Edit
+                </Link>
+              </Button>
+            </div>
           </header>
 
-          <section className="rounded-md border bg-card p-4">
-            <h2 className="text-sm font-medium">Actions</h2>
-            <ol className="mt-3 space-y-2">
-              {[...autoflow.actions]
-                .sort((a, b) => a.order - b.order)
-                .map((a, i) => (
-                  <li key={i} className="flex items-start gap-3 text-sm">
-                    <span className="mt-0.5 font-mono text-xs text-muted-foreground">
-                      {i + 1}.
-                    </span>
-                    <Badge variant="outline" className="font-mono">
-                      {a.type}
-                    </Badge>
-                    <pre className="flex-1 overflow-x-auto rounded bg-muted px-2 py-1 text-xs">
-                      {JSON.stringify(a.config, null, 2)}
-                    </pre>
-                  </li>
-                ))}
-            </ol>
-          </section>
+          <Tabs defaultValue="overview">
+            <TabsList>
+              <TabsTrigger value="overview">Overview</TabsTrigger>
+              <TabsTrigger value="runs">
+                Run history ({runsData?.runs?.length ?? 0})
+              </TabsTrigger>
+              <TabsTrigger value="settings">Settings</TabsTrigger>
+            </TabsList>
 
-          {lastRunResult && (
-            <pre className="overflow-x-auto rounded-md border bg-card p-3 text-xs">
-              {lastRunResult}
-            </pre>
-          )}
+            <TabsContent value="overview" className="mt-4">
+              <FlowOverview autoflow={autoflow} />
+            </TabsContent>
 
-          <section className="rounded-md border bg-card p-4">
-            <h2 className="text-sm font-medium">Run history</h2>
-            {!runsData?.runs.length ? (
-              <p className="mt-3 text-xs text-muted-foreground">No runs yet.</p>
-            ) : (
-              <ul className="mt-3 space-y-2">
-                {runsData.runs.map((run) => (
-                  <li key={run.id} className="rounded border p-3 text-xs">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Badge variant={STATUS_VARIANT[run.status]}>{run.status}</Badge>
-                        <span className="text-muted-foreground">
-                          {run.steps_completed}/{run.total_steps} steps
-                        </span>
-                      </div>
-                      <span className="text-muted-foreground">
-                        {new Date(run.started_at).toLocaleString()}
-                      </span>
-                    </div>
-                    {run.error_message && (
-                      <p className="mt-2 text-destructive">{run.error_message}</p>
-                    )}
-                    {run.steps.length > 0 && (
-                      <ol className="mt-2 space-y-1">
-                        {run.steps.map((step) => (
-                          <li key={step.index} className="flex items-center gap-2">
-                            <Badge variant="outline" className="font-mono text-[10px]">
-                              {step.status}
-                            </Badge>
-                            <span className="font-mono">{step.type}</span>
-                            {step.error && (
-                              <span className="text-destructive">{step.error}</span>
-                            )}
-                          </li>
-                        ))}
-                      </ol>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+            <TabsContent value="runs" className="mt-4">
+              <RunHistory runs={runsData?.runs ?? []} actions={autoflow.actions} onRefresh={mutateRuns} />
+            </TabsContent>
+
+            <TabsContent value="settings" className="mt-4">
+              <div className="space-y-4 rounded-md border bg-card p-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Danger zone
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Deletes the autoflow and its run history. Cannot be undone.
+                  </p>
+                </div>
+                <Button variant="destructive" onClick={remove}>
+                  Delete autoflow
+                </Button>
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          <TestRunner
+            open={testOpen}
+            onOpenChange={setTestOpen}
+            autoflowId={id}
+            draft={autoflow as unknown as AutoflowDraft}
+          />
         </>
       )}
+    </div>
+  );
+}
+
+function FlowSummary({ autoflow }: { autoflow: AutoflowRow }) {
+  const trigger = getTrigger(autoflow.trigger_type);
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <Badge variant="outline">{trigger.label}</Badge>
+      {autoflow.trigger_type === "scheduled" && autoflow.trigger_config?.cron && (
+        <Badge variant="accent" className="font-mono">{autoflow.trigger_config.cron}</Badge>
+      )}
+      {!autoflow.is_active && <Badge variant="outline">Paused</Badge>}
+      {autoflow.confidence_threshold != null && (
+        <Badge variant="accent">Gate ≥ {(autoflow.confidence_threshold * 100).toFixed(0)}%</Badge>
+      )}
+      {autoflow.last_fired_at && (
+        <span className="text-muted-foreground">
+          last fired {new Date(autoflow.last_fired_at).toLocaleString()}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function FlowOverview({ autoflow }: { autoflow: AutoflowRow }) {
+  const trigger = getTrigger(autoflow.trigger_type);
+  const TriggerIcon = getIcon(trigger.icon);
+  const sorted = autoflow.actions.slice().sort((a, b) => a.order - b.order);
+
+  return (
+    <div className="space-y-2 rounded-md border bg-card p-4">
+      <div className="flex items-start gap-3 border-b pb-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+          <TriggerIcon className="size-5" />
+        </div>
+        <div>
+          <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+            When
+          </Badge>
+          <p className="mt-1 text-sm font-medium">{trigger.label}</p>
+          {autoflow.trigger_config?.filters &&
+            Object.keys(autoflow.trigger_config.filters).length > 0 && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Filters:{" "}
+                <code className="font-mono">
+                  {JSON.stringify(autoflow.trigger_config.filters)}
+                </code>
+              </p>
+            )}
+        </div>
+      </div>
+
+      <ol className="space-y-2 pt-3">
+        {sorted.map((a, i) => {
+          const entry = getAction(a.type);
+          const Icon = getIcon(entry.icon);
+          return (
+            <li key={i} className="flex items-start gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-md border bg-card text-muted-foreground">
+                <Icon className="size-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <Badge variant="outline" className="text-[10px]">Step {i + 1}</Badge>
+                <p className="mt-1 text-sm font-medium">{entry.label}</p>
+                <ConfigPreview config={a.config} />
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+function ConfigPreview({ config }: { config: Record<string, unknown> }) {
+  const entries = Object.entries(config).filter(([_, v]) => v !== "" && v != null);
+  if (entries.length === 0) return null;
+  return (
+    <dl className="mt-2 space-y-1 text-xs">
+      {entries.map(([k, v]) => (
+        <div key={k} className="flex gap-2">
+          <dt className="shrink-0 font-mono text-muted-foreground">{k}:</dt>
+          <dd className="min-w-0 break-words">
+            {typeof v === "string" ? v : JSON.stringify(v)}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function RunHistory({
+  runs,
+  actions,
+  onRefresh,
+}: {
+  runs: AutoflowRun[];
+  actions: AutoflowRow["actions"];
+  onRefresh: () => void;
+}) {
+  if (!runs.length) {
+    return (
+      <div className="rounded-md border border-dashed p-10 text-center text-sm text-muted-foreground">
+        No runs yet. Hit <strong>Test</strong> to fire one with a mock payload.
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <div className="flex justify-end">
+        <Button variant="ghost" size="sm" onClick={onRefresh}>
+          Refresh
+        </Button>
+      </div>
+      <ul className="space-y-2">
+        {runs.map((run) => (
+          <li key={run.id} className="rounded-md border bg-card p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={STATUS_VARIANT[run.status]} className="capitalize">
+                  {run.status.replace(/_/g, " ")}
+                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  {run.steps_completed}/{run.total_steps} steps
+                </span>
+              </div>
+              <span className="text-xs text-muted-foreground">
+                {new Date(run.started_at).toLocaleString()}
+              </span>
+            </div>
+            {run.error_message && (
+              <p className="mt-2 text-xs text-destructive">{run.error_message}</p>
+            )}
+            {run.steps.length > 0 && (
+              <ol className="mt-2 space-y-1">
+                {run.steps.map((step) => {
+                  const action = actions.find((a) => a.order === step.index);
+                  const entry = action ? getAction(action.type) : null;
+                  return (
+                    <li key={step.index} className="flex items-center gap-2 text-xs">
+                      {step.status === "completed" ? (
+                        <CheckCircle2 className="size-3.5 text-emerald-600" />
+                      ) : step.status === "failed" ? (
+                        <XCircle className="size-3.5 text-destructive" />
+                      ) : (
+                        <span className="size-3.5 rounded-full border border-muted-foreground/40" />
+                      )}
+                      <span className="font-mono text-muted-foreground">
+                        {step.index + 1}. {entry?.shortLabel ?? step.type}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {step.status.replace(/_/g, " ")}
+                      </span>
+                      {step.error && <span className="text-destructive">· {step.error}</span>}
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

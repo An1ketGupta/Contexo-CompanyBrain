@@ -14,6 +14,11 @@ export interface CreateTemplatePayload {
   template_text: string;
   category: TemplateCategory;
   is_shared: boolean;
+  // Production Roadmap 1.7 — when true, the template carries a
+  // pinned_context preamble instead of a full template_text body. The
+  // chat input's "Apply context" picker filters by this flag.
+  is_context_template?: boolean;
+  pinned_context?: string | null;
 }
 
 export interface UpdateTemplatePayload {
@@ -22,12 +27,21 @@ export interface UpdateTemplatePayload {
   template_text?: string;
   category?: TemplateCategory;
   is_shared?: boolean;
+  pinned_context?: string | null;
 }
 
-function buildKey(category?: TemplateCategory | "All", search?: string): string {
+// Production Roadmap 1.7 — picker kind. Backend filters by is_context_template.
+export type TemplateKind = "all" | "prompt" | "context";
+
+function buildKey(
+  category?: TemplateCategory | "All",
+  search?: string,
+  kind?: TemplateKind,
+): string {
   const params = new URLSearchParams();
   if (category && category !== "All") params.set("category", category);
   if (search) params.set("search", search);
+  if (kind && kind !== "all") params.set("kind", kind);
   const qs = params.toString();
   return qs ? `/api/templates?${qs}` : "/api/templates";
 }
@@ -51,8 +65,12 @@ const fetcher = async (url: string): Promise<TemplatesResponse> => {
 export function useTemplates(
   category: TemplateCategory | "All" = "All",
   search: string = "",
+  kind: TemplateKind = "all",
 ) {
-  const key = useMemo(() => buildKey(category, search), [category, search]);
+  const key = useMemo(
+    () => buildKey(category, search, kind),
+    [category, search, kind],
+  );
 
   const { data, error, isLoading, mutate } = useSWR<TemplatesResponse>(
     key,

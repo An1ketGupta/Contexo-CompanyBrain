@@ -31,6 +31,8 @@ EventType = Literal[
     "acknowledgement_reminder",
     "scheduled_usage_summary",
     "scheduled_knowledge_health",
+    "internal_announcement",
+    "weekly_briefing",
 ]
 
 

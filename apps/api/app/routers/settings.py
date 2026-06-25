@@ -89,11 +89,19 @@ class UpdateProfileRequest(BaseModel):
     # V4 #57 — hide my activity from the team feed.
     activity_private: bool | None = None
     # Agent2 Day 2 #37 — function-style persona. None clears it. Validated
-    # against the same enum the DB CHECK constraint enforces.
+    # against the same enum the DB CHECK constraint enforces, plus 'custom'
+    # and 'org:<uuid>' for Feature 1.11.
     persona: str | None = Field(default=None)
     # Sentinel: explicit clear vs. omitted. Pydantic doesn't expose "user
     # passed null" vs "user omitted" via Optional alone, so a sibling flag.
     clear_persona: bool = False
+    # Feature 1.11 — custom persona body. Only applied when persona='custom'
+    # is selected on the same request, OR when the user already has
+    # persona='custom' and is editing the prompt without flipping kind.
+    custom_persona_name: str | None = Field(default=None, max_length=80)
+    custom_persona_instructions: str | None = Field(
+        default=None, max_length=2000
+    )
 
 
 class DeleteAccountRequest(BaseModel):
@@ -594,14 +602,45 @@ async def update_profile(
         update["activity_private"] = body.activity_private
     if body.clear_persona:
         update["persona"] = None
+        # Also wipe the custom payload so a later switch back to 'custom'
+        # doesn't resurrect stale instructions the user thought they cleared.
+        update["custom_persona_name"] = None
+        update["custom_persona_instructions"] = None
     elif body.persona is not None:
-        persona = body.persona.strip().lower()
-        if persona not in {"hr", "sales", "engineering", "finance", "operations", "executive"}:
+        persona = body.persona.strip()
+        builtin = {"hr", "sales", "engineering", "finance", "operations", "executive"}
+        valid_builtin = persona.lower() in builtin
+        valid_custom = persona == "custom"
+        # org:<uuid> form. Match the same regex as the DB CHECK so the SQL
+        # layer never has to reject a value we already accepted here.
+        valid_org = bool(re.fullmatch(
+            r"org:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            persona,
+        ))
+        if not (valid_builtin or valid_custom or valid_org):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Persona must be one of: hr, sales, engineering, finance, operations, executive.",
+                detail=(
+                    "Persona must be a built-in role, 'custom', or 'org:<uuid>'."
+                ),
             )
-        update["persona"] = persona
+        update["persona"] = persona.lower() if valid_builtin else persona
+
+    # Custom persona fields — accept independently so the user can edit
+    # their saved custom prompt without flipping the persona kind. The DB
+    # CHECK constraints enforce length bounds; we mirror the friendly
+    # message here to avoid a 500 if a client bypasses the UI cap.
+    if body.custom_persona_name is not None:
+        name = body.custom_persona_name.strip()
+        update["custom_persona_name"] = name or None
+    if body.custom_persona_instructions is not None:
+        instr = body.custom_persona_instructions.strip()
+        if instr and len(instr) < 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Custom persona instructions must be at least 10 characters.",
+            )
+        update["custom_persona_instructions"] = instr or None
 
     if not update:
         raise HTTPException(

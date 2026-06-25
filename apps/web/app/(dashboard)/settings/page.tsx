@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCurrentUser } from "@/hooks/use-user";
+import { useOrgPersonas } from "@/hooks/use-org-personas";
 import { createClient } from "@/lib/supabase/client";
 import { networkError, parseApiError, reportApiError } from "@/lib/errors";
 
@@ -170,8 +171,12 @@ export default function SettingsPage() {
 
       <PersonaCard
         persona={user?.persona ?? null}
+        customName={user?.custom_persona_name ?? null}
+        customInstructions={user?.custom_persona_instructions ?? null}
         onSaved={refresh}
       />
+
+      <BriefingPreferencesCard />
 
       <ActivityPrivacyCard
         activityPrivate={user?.activity_private ?? false}
@@ -490,12 +495,19 @@ function ChangePasswordCard() {
   );
 }
 
-// ── Persona (Agent2 Day 2 #37) ──────────────────────────────────────────────
-// Function-style overlay (hr/sales/eng/…) applied to the system prompt for
-// every chat turn this user makes. Distinct from `role` (admin/member) —
-// persona shapes tone/format/framing, role gates access.
+// ── Persona (Agent2 Day 2 #37 + Feature 1.11) ───────────────────────────────
+// Function-style overlay applied to the system prompt for every chat turn.
+// Three flavors:
+//   • Built-in: one of 6 hardcoded function profiles.
+//   • Custom:   user-authored prompt saved on the user row.
+//   • Org:      admin-curated shared persona ("org:<uuid>") — see PersonaCard
+//                 reads from /api/org-personas.
 
-const PERSONA_OPTIONS: ReadonlyArray<{ value: import("@/hooks/use-user").UserPersona; label: string; description: string }> = [
+const BUILTIN_PERSONA_OPTIONS: ReadonlyArray<{
+  value: import("@/hooks/use-user").BuiltInPersona;
+  label: string;
+  description: string;
+}> = [
   { value: "hr", label: "HR", description: "Bias toward policy + compliance docs. Formal tone." },
   { value: "sales", label: "Sales", description: "Bias toward pricing + case studies. Persuasive framing." },
   { value: "engineering", label: "Engineering", description: "Bias toward specs + runbooks. Precise + technical." },
@@ -506,25 +518,37 @@ const PERSONA_OPTIONS: ReadonlyArray<{ value: import("@/hooks/use-user").UserPer
 
 function PersonaCard({
   persona,
+  customName,
+  customInstructions,
   onSaved,
 }: {
-  persona: import("@/hooks/use-user").UserPersona | null;
+  persona: string | null;
+  customName: string | null;
+  customInstructions: string | null;
   onSaved: () => void;
 }) {
+  const { personas: orgPersonas } = useOrgPersonas();
   const [value, setValue] = useState<string>(persona ?? "");
   const [saving, setSaving] = useState(false);
+
+  // Custom prompt editing state — only used when value === "custom".
+  const [draftName, setDraftName] = useState<string>(customName ?? "");
+  const [draftInstr, setDraftInstr] = useState<string>(customInstructions ?? "");
 
   useEffect(() => {
     setValue(persona ?? "");
   }, [persona]);
+  useEffect(() => {
+    setDraftName(customName ?? "");
+    setDraftInstr(customInstructions ?? "");
+  }, [customName, customInstructions]);
 
-  const save = async (next: string) => {
-    setValue(next);
+  const persist = async (
+    body: Record<string, unknown>,
+    successMessage: string,
+  ): Promise<boolean> => {
     setSaving(true);
     try {
-      const body: Record<string, unknown> = next
-        ? { persona: next }
-        : { clear_persona: true };
       const res = await fetch("/api/users/me", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -533,41 +557,364 @@ function PersonaCard({
         throw networkError(err);
       });
       if (!res.ok) throw await parseApiError(res);
-      toast.success(next ? `Set to ${next}.` : "Persona cleared.");
+      toast.success(successMessage);
       onSaved();
+      return true;
     } catch (err) {
-      setValue(persona ?? "");
       reportApiError(err as Awaited<ReturnType<typeof parseApiError>>);
+      return false;
     } finally {
       setSaving(false);
     }
   };
+
+  const onSelectChange = async (next: string) => {
+    const prev = value;
+    setValue(next);
+    if (!next) {
+      const ok = await persist({ clear_persona: true }, "Persona cleared.");
+      if (!ok) setValue(prev);
+      return;
+    }
+    if (next === "custom") {
+      // Don't save until the user fills in instructions.
+      return;
+    }
+    const ok = await persist({ persona: next }, "Persona updated.");
+    if (!ok) setValue(prev);
+  };
+
+  const saveCustom = async () => {
+    const name = draftName.trim();
+    const instr = draftInstr.trim();
+    if (instr.length < 10) {
+      toast.error("Add at least 10 characters of instructions.");
+      return;
+    }
+    await persist(
+      {
+        persona: "custom",
+        custom_persona_name: name || null,
+        custom_persona_instructions: instr,
+      },
+      "Custom persona saved.",
+    );
+  };
+
+  // Resolve the description for the currently-selected persona (built-in or org).
+  const selectedDescription = (() => {
+    if (!value) return null;
+    const builtin = BUILTIN_PERSONA_OPTIONS.find((o) => o.value === value);
+    if (builtin) return builtin.description;
+    if (value === "custom") {
+      return customInstructions
+        ? `Your custom persona${customName ? ` — "${customName}"` : ""}.`
+        : "Add a name + instructions below.";
+    }
+    if (value.startsWith("org:")) {
+      const id = value.slice(4);
+      const op = orgPersonas.find((p) => p.id === id);
+      return op?.description ?? op?.instructions?.slice(0, 140) ?? null;
+    }
+    return null;
+  })();
 
   return (
     <Card
       title="Chat persona"
       description="Tailors answer framing to your function. Doesn't change which documents are searched — your conversation scope does that."
     >
-      <div className="space-y-2">
+      <div className="space-y-3">
         <select
           value={value}
           disabled={saving}
-          onChange={(e) => save(e.target.value)}
+          onChange={(e) => void onSelectChange(e.target.value)}
           className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
           aria-label="Chat persona"
         >
           <option value="">No persona (default)</option>
-          {PERSONA_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
+          <optgroup label="Built-in">
+            {BUILTIN_PERSONA_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </optgroup>
+          {orgPersonas.length > 0 && (
+            <optgroup label="Shared in your org">
+              {orgPersonas.map((p) => (
+                <option key={p.id} value={`org:${p.id}`}>
+                  {p.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          <optgroup label="Personal">
+            <option value="custom">Custom (your own prompt)…</option>
+          </optgroup>
         </select>
-        {value && (
-          <p className="text-xs text-muted-foreground">
-            {PERSONA_OPTIONS.find((o) => o.value === value)?.description}
-          </p>
+        {selectedDescription && (
+          <p className="text-xs text-muted-foreground">{selectedDescription}</p>
         )}
+
+        {value === "custom" && (
+          <div className="space-y-2 rounded-md border border-border bg-muted/30 p-3">
+            <Label htmlFor="custom-persona-name" className="text-xs">
+              Role name <span className="text-muted-foreground">(optional)</span>
+            </Label>
+            <Input
+              id="custom-persona-name"
+              value={draftName}
+              maxLength={80}
+              placeholder="e.g. Customer Success Manager"
+              onChange={(e) => setDraftName(e.target.value)}
+              disabled={saving}
+            />
+            <Label htmlFor="custom-persona-instr" className="text-xs">
+              Instructions{" "}
+              <span className="text-muted-foreground">
+                ({draftInstr.length}/2000)
+              </span>
+            </Label>
+            <Textarea
+              id="custom-persona-instr"
+              value={draftInstr}
+              maxLength={2000}
+              rows={4}
+              placeholder="Bias retrieval toward… Format answers as… Use a tone that…"
+              onChange={(e) => setDraftInstr(e.target.value)}
+              disabled={saving}
+            />
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                onClick={() => void saveCustom()}
+                disabled={saving || draftInstr.trim().length < 10}
+              >
+                {saving ? "Saving…" : "Save persona"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// ── Briefing preferences (Feature 2.2) ──────────────────────────────────────
+// Per-user opt-in + schedule for the Monday-morning briefing.
+
+interface BriefingPrefs {
+  enabled: boolean;
+  weekday: number;
+  hour: number;
+  timezone: string;
+  via_email: boolean;
+  via_inapp: boolean;
+  topics: string[];
+}
+
+const WEEKDAYS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+function BriefingPreferencesCard() {
+  const { data, error, isLoading, mutate } = useSWR<{ preferences: BriefingPrefs }>(
+    "/api/briefings/preferences",
+    async (url) => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Failed to load (${res.status})`);
+      return res.json();
+    },
+    { revalidateOnFocus: false },
+  );
+  const [saving, setSaving] = useState(false);
+
+  const save = async (patch: Partial<BriefingPrefs>) => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/briefings/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+        toast.error(errBody.message ?? "Could not save.");
+        return;
+      }
+      toast.success("Briefing settings saved.");
+      await mutate();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const runNow = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/briefings/run-now", { method: "POST" });
+      if (!res.ok) {
+        toast.error("Could not queue a briefing.");
+        return;
+      }
+      toast.success("Briefing queued. It'll appear in your bell within a minute or two.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (error) {
+    return (
+      <Card
+        title="Weekly briefing"
+        description="A Monday-morning snapshot of what needs your attention."
+      >
+        <p className="text-sm text-muted-foreground">
+          Couldn&apos;t load your preferences. Refresh to retry.
+        </p>
+      </Card>
+    );
+  }
+
+  if (isLoading || !data) {
+    return (
+      <Card
+        title="Weekly briefing"
+        description="A Monday-morning snapshot of what needs your attention."
+      >
+        <div className="space-y-2">
+          <div className="h-8 w-full rounded bg-muted" />
+          <div className="h-8 w-2/3 rounded bg-muted" />
+        </div>
+      </Card>
+    );
+  }
+
+  const prefs = data.preferences;
+  const browserTz = typeof Intl !== "undefined"
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : "UTC";
+
+  return (
+    <Card
+      title="Weekly briefing"
+      description="A Monday-morning snapshot of what needs your attention. Synthesizes your meetings, knowledge gaps, and stale docs into one short read."
+    >
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">Send briefings</p>
+            <p className="text-xs text-muted-foreground">
+              Toggles delivery without losing your schedule.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant={prefs.enabled ? "primary" : "outline"}
+            disabled={saving}
+            onClick={() => void save({ enabled: !prefs.enabled })}
+          >
+            {prefs.enabled ? "On" : "Off"}
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Day</Label>
+            <select
+              value={prefs.weekday}
+              disabled={saving || !prefs.enabled}
+              onChange={(e) => void save({ weekday: Number(e.target.value) })}
+              className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+            >
+              {WEEKDAYS.map((label, idx) => (
+                <option key={idx} value={idx}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Hour (local)</Label>
+            <select
+              value={prefs.hour}
+              disabled={saving || !prefs.enabled}
+              onChange={(e) => void save({ hour: Number(e.target.value) })}
+              className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+            >
+              {Array.from({ length: 24 }, (_, i) => (
+                <option key={i} value={i}>
+                  {i.toString().padStart(2, "0")}:00
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Timezone</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                value={prefs.timezone}
+                disabled={saving || !prefs.enabled}
+                onChange={(e) =>
+                  void mutate(
+                    { preferences: { ...prefs, timezone: e.target.value } },
+                    { revalidate: false },
+                  )
+                }
+                onBlur={(e) =>
+                  e.target.value !== prefs.timezone &&
+                  void save({ timezone: e.target.value || "UTC" })
+                }
+              />
+              {browserTz && browserTz !== prefs.timezone && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void save({ timezone: browserTz })}
+                >
+                  Use {browserTz}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant={prefs.via_email ? "primary" : "outline"}
+            disabled={saving || !prefs.enabled}
+            onClick={() => void save({ via_email: !prefs.via_email })}
+          >
+            <Mail className="mr-1.5 h-3.5 w-3.5" />
+            Email {prefs.via_email ? "on" : "off"}
+          </Button>
+          <Button
+            size="sm"
+            variant={prefs.via_inapp ? "primary" : "outline"}
+            disabled={saving || !prefs.enabled}
+            onClick={() => void save({ via_inapp: !prefs.via_inapp })}
+          >
+            In-app {prefs.via_inapp ? "on" : "off"}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={saving || !prefs.enabled}
+            onClick={() => void runNow()}
+          >
+            Send a preview now
+          </Button>
+        </div>
       </div>
     </Card>
   );

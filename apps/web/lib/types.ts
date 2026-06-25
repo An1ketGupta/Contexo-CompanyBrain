@@ -128,7 +128,11 @@ export type QueryIntent =
   | "factual_qa"
   | "task_generation"
   | "analysis"
-  | "search";
+  | "search"
+  // Production Roadmap 1.9 — Time-boxed Quick Answer. A bounded
+  // specialization of factual_qa for short fact lookups; the orchestrator
+  // caps tool rounds + search count for sub-2s perceived latency.
+  | "quick_answer";
 
 export interface MessageMetadata {
   confidence?: MessageConfidence;
@@ -241,6 +245,11 @@ export interface PromptTemplate {
   use_count: number;
   // V4 #70 — {{variable}} definitions.
   variables: TemplateVariable[];
+  // Production Roadmap 1.7 — context-template discriminator + payload.
+  // When `is_context_template=true`, this row stores a reusable
+  // pinned_context preamble; `template_text` is unused for these rows.
+  is_context_template: boolean;
+  pinned_context: string | null;
   org_id: string | null;
   created_by: string | null;
   created_at: string;

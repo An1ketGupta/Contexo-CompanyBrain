@@ -7,9 +7,11 @@ import {
   Brain,
   ChevronLeft,
   ChevronRight,
+  Globe,
   Loader2,
   RefreshCw,
   ShieldAlert,
+  Telescope,
   ThumbsDown,
   ThumbsUp,
   X,
@@ -78,6 +80,13 @@ interface MessageItemProps {
   onFeedback?: (assistantLocalId: string, feedback: MessageFeedback) => void;
   onRegenerate?: (assistantLocalId: string, refinement?: string) => void;
   onSwitchBranch?: (assistantLocalId: string, branchIndex: number) => void;
+  /** Production Roadmap 1.5 — re-run a low-confidence answer with different
+   *  retrieval strategy. The two buttons are rendered automatically when
+   *  this callback is supplied AND confidence.level === "low". */
+  onRetryWithMode?: (
+    assistantLocalId: string,
+    mode: "broader" | "deeper",
+  ) => void;
   /** When a stream is in flight elsewhere, disable regenerate so we don't
    *  fire concurrent SSE streams from the same hook. */
   streamingDisabled?: boolean;
@@ -91,6 +100,10 @@ const INTENT_LABELS: Record<QueryIntent, string> = {
   task_generation: "Writing mode",
   analysis: "Analysis mode",
   search: "Search mode",
+  // Production Roadmap 1.9 — Quick Answer: bounded retrieval for short
+  // factual lookups. The badge label is the user-visible cue that this
+  // turn ran on the fast path.
+  quick_answer: "Quick answer",
 };
 
 export function MessageItem({
@@ -100,6 +113,7 @@ export function MessageItem({
   onFeedback,
   onRegenerate,
   onSwitchBranch,
+  onRetryWithMode,
   streamingDisabled,
   priorUserText,
 }: MessageItemProps) {
@@ -146,8 +160,25 @@ export function MessageItem({
         )}
 
         {message.confidence && !isError && (
-          <div className="mb-2">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             <ConfidenceBadge confidence={message.confidence} />
+            {/* Production Roadmap 1.5 — Answer Improvement. Surfaces two
+                retry buttons on low-confidence answers so users have an
+                escalation path short of rewording the question. We don't
+                expose them on medium/high (low signal-to-noise) or while
+                streaming (the retry would race the in-flight turn). */}
+            {message.confidence.level === "low" &&
+              !isStreaming &&
+              !isError &&
+              hasContent &&
+              onRetryWithMode &&
+              message.server_id && (
+                <RetryWithModeButtons
+                  disabled={streamingDisabled}
+                  onBroader={() => onRetryWithMode(message.local_id, "broader")}
+                  onDeeper={() => onRetryWithMode(message.local_id, "deeper")}
+                />
+              )}
           </div>
         )}
 
@@ -421,6 +452,39 @@ function BranchNavigator({
         title="Next response"
       >
         <ChevronRight className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function RetryWithModeButtons({
+  disabled,
+  onBroader,
+  onDeeper,
+}: {
+  disabled?: boolean;
+  onBroader: () => void;
+  onDeeper: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <button
+        type="button"
+        onClick={onBroader}
+        disabled={disabled}
+        className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        title="Re-run this prompt against your full knowledge base (ignore scope)."
+      >
+        <Globe className="h-3 w-3" /> Search broader
+      </button>
+      <button
+        type="button"
+        onClick={onDeeper}
+        disabled={disabled}
+        className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        title="Re-run with a deeper search (more retrievals, more rounds)."
+      >
+        <Telescope className="h-3 w-3" /> Search deeper
       </button>
     </div>
   );

@@ -1,0 +1,115 @@
+"use client";
+
+import Link from "next/link";
+import { useState } from "react";
+import useSWR from "swr";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+
+interface Meeting {
+  id: string;
+  title: string | null;
+  start_time: string;
+  end_time: string;
+  attendee_emails: string[];
+  meeting_url: string | null;
+  prep_brief_status: "pending" | "generating" | "ready" | "failed" | "skipped";
+  prep_brief_available_at: string | null;
+}
+
+const fetcher = async (url: string): Promise<{ meetings: Meeting[] }> => {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.json();
+};
+
+const STATUS_BADGE: Record<string, string> = {
+  ready: "bg-emerald-100 text-emerald-700",
+  generating: "bg-amber-100 text-amber-700",
+  pending: "bg-zinc-100 text-zinc-700",
+  failed: "bg-red-100 text-red-700",
+  skipped: "bg-zinc-100 text-zinc-500",
+};
+
+export default function CalendarMeetingsPage() {
+  const { data, error, isLoading, mutate } = useSWR<{ meetings: Meeting[] }>(
+    "/api/calendar/meetings",
+    fetcher,
+    { revalidateOnFocus: false },
+  );
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      await fetch("/api/calendar/meetings/sync", { method: "POST" });
+      await mutate();
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Upcoming meetings</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Prep briefs auto-generate 2 hours before each meeting. Connect
+            Google Workspace in settings if you haven&apos;t already.
+          </p>
+        </div>
+        <Button variant="outline" onClick={handleSync} disabled={syncing}>
+          {syncing ? "Syncing…" : "Sync now"}
+        </Button>
+      </header>
+
+      {isLoading ? (
+        <Skeleton className="h-40 w-full" />
+      ) : error ? (
+        <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          Failed to load meetings.
+        </div>
+      ) : !data?.meetings?.length ? (
+        <div className="rounded border border-dashed p-8 text-center text-sm text-muted-foreground">
+          No upcoming meetings. Connect Google Workspace to sync your calendar.
+        </div>
+      ) : (
+        <ul className="space-y-3">
+          {data.meetings.map((m) => (
+            <li
+              key={m.id}
+              className="rounded border bg-white p-4 transition hover:bg-zinc-50"
+            >
+              <Link href={`/calendar/${m.id}`} className="block">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <h2 className="truncate font-medium">{m.title ?? "(no title)"}</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {new Date(m.start_time).toLocaleString()}
+                      {m.attendee_emails?.length > 0 && (
+                        <> · {m.attendee_emails.length} attendee
+                          {m.attendee_emails.length === 1 ? "" : "s"}</>
+                      )}
+                    </p>
+                  </div>
+                  <Badge className={STATUS_BADGE[m.prep_brief_status] ?? ""}>
+                    {m.prep_brief_status === "ready"
+                      ? "Brief ready"
+                      : m.prep_brief_status === "generating"
+                        ? "Generating…"
+                        : m.prep_brief_status === "pending"
+                          ? "Brief pending"
+                          : m.prep_brief_status}
+                  </Badge>
+                </div>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}

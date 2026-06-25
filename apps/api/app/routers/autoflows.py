@@ -346,6 +346,146 @@ async def run_autoflow_now(
 # ── Trigger-type catalogue (helps the future builder UI) ────────────────
 
 
+@router.get("/_meta/activity")
+async def list_recent_activity(
+    limit: int = Query(default=100, ge=1, le=500),
+    status_filter: str | None = Query(default=None, alias="status"),
+    autoflow_id: str | None = Query(default=None),
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Cross-flow run timeline for the Autoflows activity dashboard.
+
+    Members can read for transparency; the dashboard is admin-gated in the UI.
+    Joins `autoflows.name` so the timeline can render the flow without a 2nd
+    round-trip per row.
+    """
+    org_id, _user_id, token = _require_org(current_user)
+    client = _client_for_org(token)
+
+    def _fetch() -> tuple[list[dict[str, Any]], dict[str, str]]:
+        q = (
+            client.table("autoflow_runs")
+            .select("*")
+            .eq("org_id", org_id)
+            .order("started_at", desc=True)
+            .limit(limit)
+        )
+        if status_filter:
+            q = q.eq("status", status_filter)
+        if autoflow_id:
+            q = q.eq("autoflow_id", autoflow_id)
+        runs = q.execute().data or []
+        if not runs:
+            return [], {}
+        ids = list({r["autoflow_id"] for r in runs})
+        flows = (
+            client.table("autoflows")
+            .select("id,name,is_active")
+            .in_("id", ids)
+            .execute()
+            .data
+            or []
+        )
+        name_map = {f["id"]: f["name"] for f in flows}
+        return runs, name_map
+
+    runs, name_map = await asyncio.to_thread(_fetch)
+    annotated = []
+    for r in runs:
+        annotated.append(
+            {
+                **AutoflowRunRead(**r).model_dump(mode="json"),
+                "autoflow_name": name_map.get(r["autoflow_id"], "Deleted autoflow"),
+            }
+        )
+
+    # Lightweight aggregates for the dashboard header (last `limit` runs only —
+    # the caller already chose the lookback window via `limit`).
+    total = len(annotated)
+    by_status: dict[str, int] = {}
+    durations_ms: list[int] = []
+    for r in annotated:
+        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+        started = r.get("started_at")
+        completed = r.get("completed_at")
+        if started and completed:
+            try:
+                from datetime import datetime as _dt
+
+                dur = (
+                    _dt.fromisoformat(completed.replace("Z", "+00:00"))
+                    - _dt.fromisoformat(started.replace("Z", "+00:00"))
+                ).total_seconds() * 1000
+                if dur >= 0:
+                    durations_ms.append(int(dur))
+            except (ValueError, TypeError):
+                pass
+    durations_ms.sort()
+    p95 = durations_ms[int(len(durations_ms) * 0.95)] if durations_ms else None
+    return {
+        "runs": annotated,
+        "stats": {
+            "total": total,
+            "by_status": by_status,
+            "p95_duration_ms": p95,
+        },
+    }
+
+
+@router.post("/{autoflow_id}/duplicate", response_model=AutoflowRead, status_code=status.HTTP_201_CREATED)
+async def duplicate_autoflow(
+    autoflow_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Clone an existing autoflow as an inactive draft.
+
+    The clone is inactive so it can't fire while an admin tweaks it. Name gets
+    a "(copy)" suffix; everything else (including confidence_threshold and
+    actions) is preserved verbatim.
+    """
+    org_id, user_id, token = _require_org(current_user)
+    await _require_admin(token, user_id)
+    svc = get_service_client()
+
+    def _fetch_src() -> dict[str, Any] | None:
+        res = (
+            svc.table("autoflows")
+            .select("*")
+            .eq("id", autoflow_id)
+            .eq("org_id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        return res.data if res else None
+
+    src = await asyncio.to_thread(_fetch_src)
+    if not src:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Autoflow not found.")
+
+    payload = {
+        "org_id": org_id,
+        "created_by": user_id,
+        "name": f"{src['name']} (copy)"[:120],
+        "description": src.get("description"),
+        "trigger_type": src["trigger_type"],
+        "trigger_config": src.get("trigger_config") or {},
+        "actions": src.get("actions") or [],
+        "confidence_threshold": src.get("confidence_threshold"),
+        "is_active": False,
+    }
+
+    def _insert() -> dict[str, Any]:
+        res = svc.table("autoflows").insert(payload).execute()
+        rows = res.data or []
+        if not rows:
+            raise RuntimeError("autoflow duplicate returned no rows")
+        return rows[0]
+
+    row = await asyncio.to_thread(_insert)
+    log.info("autoflow_duplicated src=%s dst=%s org=%s", autoflow_id, row["id"], org_id)
+    return _serialize_row(row)
+
+
 @router.get("/_meta/trigger-types")
 async def list_trigger_types() -> dict[str, Any]:
     """Static metadata for the builder UI dropdowns.

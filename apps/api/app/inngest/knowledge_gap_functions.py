@@ -342,8 +342,22 @@ async def _notify_admins(
     draft_id: str,
     stub_preview: str,
 ) -> None:
+    """Fan out a knowledge-gap alert to every org admin across three channels.
+
+    Production Roadmap 1.8 — three-channel delivery so admins notice the gap:
+      1. In-app notification (always) — shows up in the bell popover. Cheap,
+         no external dependency.
+      2. Slack DM (when Slack is connected for the org) — admins live in
+         Slack; an in-app row alone is easy to miss.
+      3. Email — kept as the universal fallback. Same dedupe_key per draft
+         prevents Inngest step retries from double-sending.
+
+    Each channel uses the draft_id in its dedupe key so re-firing this step
+    (or the threshold function debounce window) is idempotent.
+    """
     from app.config import get_settings
     from app.services.email import send_email_event
+    from app.services.notifications import create_notification
 
     settings = get_settings()
     svc = get_service_client()
@@ -373,8 +387,74 @@ async def _notify_admins(
         return
 
     review_url = f"{settings.app_url.rstrip('/')}/admin/knowledge-gaps?draft={draft_id}"
+    link_path = f"/admin/knowledge-gaps?draft={draft_id}"
 
-    # Dedupe key per-draft so re-firing this step doesn't double-send.
+    # 1. In-app notifications — fire first because they're the cheapest +
+    #    most reliable channel. A failure here logs but doesn't block the
+    #    other channels; the user can still see the draft in the admin panel.
+    notif_title = "Knowledge gap detected"
+    notif_body = (
+        f"\"{topic}\" was asked {count}× this week with no matching docs. "
+        f"An AI-drafted stub is ready for your review."
+    )
+    for admin_id, _email, _name in admins:
+        try:
+            await create_notification(
+                org_id=org_id,
+                user_id=admin_id,
+                type="knowledge_gap",
+                title=notif_title,
+                body=notif_body,
+                metadata={
+                    "topic": topic,
+                    "count": count,
+                    "draft_id": draft_id,
+                },
+                link_url=link_path,
+                dedupe_key=f"draft-{draft_id}",
+            )
+        except Exception as exc:
+            log.warning(
+                "knowledge_gap_notif_failed",
+                org_id=org_id,
+                admin_id=admin_id,
+                error=str(exc),
+            )
+
+    # 2. Slack DMs — opt-in per org. The integration check happens inside
+    #    send_dm via get_bot_token; a missing token raises PermissionError
+    #    which we swallow (the org just hasn't connected Slack). Any other
+    #    failure logs but doesn't block emails.
+    slack_text = (
+        f":mag: *Knowledge gap detected*\n"
+        f"`{topic}` has been asked *{count}* times this week and your "
+        f"knowledge base has nothing on it. I drafted a stub document — "
+        f"<{review_url}|review and approve> to publish it."
+    )
+    for admin_id, email, _name in admins:
+        try:
+            from app.services.integrations.slack import send_dm
+
+            await send_dm(
+                org_id=org_id,
+                user_email=email,
+                text=slack_text,
+            )
+        except PermissionError:
+            # Slack not connected for this org — expected; we fall through
+            # to email. Break out of the loop on the first admin since the
+            # connection state is org-wide, not per-admin.
+            break
+        except Exception as exc:
+            log.warning(
+                "knowledge_gap_slack_dm_failed",
+                org_id=org_id,
+                admin_id=admin_id,
+                error=str(exc),
+            )
+
+    # 3. Email — kept as the universal fallback so admins who don't check
+    #    Slack or the in-app bell still hear about it. Dedupe key per draft.
     for admin_id, email, _name in admins:
         await send_email_event(
             event_type="knowledge_gap_alert",  # type: ignore[arg-type]

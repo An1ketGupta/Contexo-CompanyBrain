@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
@@ -297,14 +297,30 @@ async def get_admin_analytics(
 
 @router.get("/knowledge-health")
 async def get_knowledge_health(
+    label: str = Query(
+        default="needs_attention",
+        pattern="^(all|healthy|stale|at_risk|unused|needs_attention)$",
+    ),
+    limit: int = Query(default=200, ge=1, le=1000),
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
+    """Health overview + filterable doc list.
+
+    * Counts are computed over all ready docs (capped at 5000).
+    * Doc list is filtered by `label` (default 'needs_attention' =
+      stale + at_risk + unused) and capped by `limit`. The list now drives
+      Feature 1.14's bulk-action UI, so callers want more than the prior 20.
+    """
     org_id = await _require_admin(current_user)
     svc = get_service_client()
 
     docs_res = await asyncio.to_thread(
         lambda: svc.table("documents")
-        .select("id, name, file_type, health_score, health_label, last_accessed_at, created_at, citation_count, gap_flag_count, health_computed_at")
+        .select(
+            "id, name, file_type, health_score, health_label, last_accessed_at,"
+            " created_at, citation_count, gap_flag_count, health_computed_at,"
+            " created_by, review_due_at, last_reviewed_at"
+        )
         .eq("org_id", org_id)
         .eq("status", "ready")
         .limit(5000)
@@ -313,42 +329,233 @@ async def get_knowledge_health(
     docs = docs_res.data or []
 
     counts = {"healthy": 0, "stale": 0, "at_risk": 0, "unused": 0, "unscored": 0}
-    at_risk: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     now = datetime.now(UTC)
 
+    if label == "needs_attention":
+        keep = {"stale", "at_risk", "unused"}
+    elif label == "all":
+        keep = {"healthy", "stale", "at_risk", "unused", "unscored"}
+    else:
+        keep = {label}
+
     for d in docs:
-        label = d.get("health_label") or "unscored"
-        if label in counts:
-            counts[label] += 1
+        doc_label = d.get("health_label") or "unscored"
+        if doc_label in counts:
+            counts[doc_label] += 1
         else:
             counts["unscored"] += 1
 
-        if label in ("at_risk", "unused"):
+        if doc_label in keep:
             created = d.get("created_at")
             try:
-                created_dt = datetime.fromisoformat((created or "").replace("Z", "+00:00"))
+                created_dt = datetime.fromisoformat(
+                    (created or "").replace("Z", "+00:00")
+                )
                 age_days = max(0, (now - created_dt).days)
             except (ValueError, AttributeError):
                 age_days = 0
-            at_risk.append({
+            rows.append({
                 "id": d["id"],
                 "name": d["name"],
                 "file_type": d.get("file_type"),
                 "health_score": d.get("health_score") or 0,
-                "health_label": label,
+                "health_label": doc_label,
                 "last_accessed_at": d.get("last_accessed_at"),
                 "age_days": age_days,
                 "citation_count": d.get("citation_count") or 0,
                 "gap_flag_count": d.get("gap_flag_count") or 0,
+                "created_by": d.get("created_by"),
+                "review_due_at": d.get("review_due_at"),
+                "last_reviewed_at": d.get("last_reviewed_at"),
             })
 
-    at_risk.sort(key=lambda r: r["health_score"])
+    rows.sort(key=lambda r: r["health_score"])
 
     return {
         "counts": counts,
         "total": len(docs),
-        "at_risk_docs": at_risk[:20],
+        # Keep `at_risk_docs` for back-compat with the existing UI.
+        "at_risk_docs": rows[:20],
+        "docs": rows[:limit],
+        "label": label,
+        "limit": limit,
     }
+
+
+# ── Feature 1.14 — Bulk health remediation ──────────────────────────────────
+# Admins select N documents on the health page and trigger one of three
+# bulk actions. We model these as one endpoint with a discriminated body so
+# the proxy + frontend hit a single URL and we can add more actions later.
+
+class _BulkHealthBody(BaseModel):
+    action: Literal["mark_for_review", "request_owner_review", "archive"]
+    document_ids: list[str] = Field(..., min_length=1, max_length=500)
+
+
+@router.post("/knowledge-health/bulk-action")
+async def bulk_health_action(
+    body: _BulkHealthBody,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Apply a remediation action to a batch of documents.
+
+    Actions:
+      * mark_for_review — sets review_due_at = NOW() so the doc lights up
+        on the next cron sweep and on the owner's review queue.
+      * request_owner_review — also sends an in-app notification to each
+        owner (created_by). Deduped per (owner, doc) via dedupe_key.
+      * archive — soft-delete via status='archived' so the doc disappears
+        from search but the row + chunks stick around for un-archive.
+    """
+    org_id = await _require_admin(current_user)
+    svc = get_service_client()
+    # De-dupe + cap (the body limit is 500 but defensive on the SQL side).
+    doc_ids = sorted({did for did in body.document_ids if isinstance(did, str)})
+    if not doc_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No document_ids provided.",
+        )
+
+    # Pull metadata for the targeted docs — needed to notify owners and to
+    # filter cross-org IDs out before mutating. This is a single round-trip
+    # regardless of action so we can return a tight summary either way.
+    docs_res = await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .select("id, name, created_by, status")
+        .eq("org_id", org_id)
+        .in_("id", doc_ids)
+        .execute()
+    )
+    docs = docs_res.data or []
+    valid_ids = [d["id"] for d in docs]
+    skipped = len(doc_ids) - len(valid_ids)
+    if not valid_ids:
+        return {"updated": 0, "skipped": skipped, "notified": 0}
+
+    now_iso = datetime.now(UTC).isoformat()
+
+    if body.action == "mark_for_review":
+        await asyncio.to_thread(
+            lambda: svc.table("documents")
+            .update({"review_due_at": now_iso})
+            .eq("org_id", org_id)
+            .in_("id", valid_ids)
+            .execute()
+        )
+        return {"updated": len(valid_ids), "skipped": skipped, "notified": 0}
+
+    if body.action == "archive":
+        # Note: we use status='archived' (lower-cased) — chat retrieval and
+        # the documents list both already exclude non-'ready' statuses.
+        await asyncio.to_thread(
+            lambda: svc.table("documents")
+            .update({"status": "archived"})
+            .eq("org_id", org_id)
+            .in_("id", valid_ids)
+            .execute()
+        )
+        return {"updated": len(valid_ids), "skipped": skipped, "notified": 0}
+
+    # request_owner_review — set review_due_at AND notify each owner.
+    await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .update({"review_due_at": now_iso})
+        .eq("org_id", org_id)
+        .in_("id", valid_ids)
+        .execute()
+    )
+
+    notified = 0
+    try:
+        from app.services.notifications import create_notification
+
+        for d in docs:
+            owner = d.get("created_by")
+            if not owner:
+                continue
+            res = await create_notification(
+                org_id=org_id,
+                user_id=owner,
+                type="document_review_requested",
+                title="Knowledge admin requested a review",
+                body=f"Please review “{d.get('name') or 'an untitled document'}”.",
+                metadata={"document_id": d["id"]},
+                link_url=f"/documents?id={d['id']}",
+                # One notification per (owner, doc, day) — re-firing the
+                # bulk action the same day is a no-op for the owner.
+                dedupe_key=f"review:{d['id']}:{now_iso[:10]}",
+                client=svc,
+            )
+            if res:
+                notified += 1
+    except Exception as exc:
+        log.warning("bulk_review_notify_failed", extra={"err": str(exc)})
+
+    return {
+        "updated": len(valid_ids),
+        "skipped": skipped,
+        "notified": notified,
+    }
+
+
+# ── Feature 2.1 — Knowledge Graph ────────────────────────────────────────────
+# Two endpoints:
+#   GET  /admin/knowledge-graph         — return the latest ok snapshot
+#   POST /admin/knowledge-graph/refresh — fire an Inngest event to recompute
+# Both are admin-only via _require_admin().
+
+@router.get("/knowledge-graph")
+async def get_knowledge_graph(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    org_id = await _require_admin(current_user)
+    svc = get_service_client()
+
+    res = await asyncio.to_thread(
+        lambda: svc.table("knowledge_graph_snapshots")
+        .select("id, doc_count, cluster_count, status, clusters, nodes, edges, params, created_at")
+        .eq("org_id", org_id)
+        .eq("status", "ok")
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    rows = res.data or []
+    if not rows:
+        return {"snapshot": None}
+    return {"snapshot": rows[0]}
+
+
+@router.post("/knowledge-graph/refresh")
+async def refresh_knowledge_graph(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Trigger an out-of-band recompute. Returns immediately; the new
+    snapshot lands when the Inngest worker finishes. Debounced by org
+    (per the function definition) so double-clicks don't double-charge."""
+    org_id = await _require_admin(current_user)
+    try:
+        from app.inngest.client import get_inngest_client
+        import inngest as _inngest
+
+        client = get_inngest_client()
+        await asyncio.to_thread(
+            lambda: client.send(
+                _inngest.Event(
+                    name="knowledge-graph/refresh",
+                    data={"org_id": org_id, "trigger": "manual"},
+                )
+            )
+        )
+    except Exception as exc:
+        log.warning("kg_manual_refresh_failed org=%s err=%s", org_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not queue refresh. Try again in a minute.",
+        ) from exc
+    return {"queued": True}
 
 
 # ── Moderation logs (Day 2) ──────────────────────────────────────────────────

@@ -71,6 +71,10 @@ TemplateCategory = Literal[
 TITLE_MAX = 120
 DESC_MAX = 280
 TEMPLATE_MAX = 8000
+# Production Roadmap 1.7 — same cap as conversations.pinned_context CHECK
+# in migration 050. Enforced again on the DB by migration 054's CHECK on
+# prompt_templates.pinned_context. Keep the three values in lockstep.
+PINNED_CONTEXT_MAX = 2000
 
 # Templates returned per request. The popover paginates naturally by category
 # tabs, and 200 is plenty for the longest realistic org. The hard cap defends
@@ -90,6 +94,11 @@ class TemplateVariable(BaseModel):
 class TemplateBody(BaseModel):
     title: str = Field(..., min_length=1, max_length=TITLE_MAX)
     description: str | None = Field(default=None, max_length=DESC_MAX)
+    # template_text is required for prompt templates, ignored for context
+    # templates. We accept it as required at the API surface for prompt
+    # templates and let context-template creation pass a placeholder
+    # (validated by the discriminator below) — that's friendlier than two
+    # separate request models for what's 80% the same shape.
     template_text: str = Field(..., min_length=1, max_length=TEMPLATE_MAX)
     category: TemplateCategory = "Other"
     is_shared: bool = False
@@ -97,6 +106,13 @@ class TemplateBody(BaseModel):
     # from `template_text` on the server. Cap at 20 to keep the use-dialog
     # usable; anything beyond is a different kind of UI need.
     variables: list[TemplateVariable] | None = Field(default=None, max_length=20)
+    # Production Roadmap 1.7 — context-template flag + payload. When
+    # `is_context_template=True`, `pinned_context` is required and the
+    # template_text is ignored by clients applying the template; only the
+    # pinned_context is copied onto the conversation. The DB CHECK
+    # `prompt_templates_context_payload_chk` enforces consistency.
+    is_context_template: bool = False
+    pinned_context: str | None = Field(default=None, max_length=PINNED_CONTEXT_MAX)
 
     @field_validator("title", "template_text")
     @classmethod
@@ -113,6 +129,11 @@ class TemplateUpdate(BaseModel):
     category: TemplateCategory | None = None
     is_shared: bool | None = None
     variables: list[TemplateVariable] | None = Field(default=None, max_length=20)
+    # Production Roadmap 1.7 — pinned_context edits for context templates.
+    # `is_context_template` is NOT mutable post-creation because the DB
+    # CHECK constraint would force a coordinated NULL/NOT-NULL swap on
+    # pinned_context; leave that to delete + re-create.
+    pinned_context: str | None = Field(default=None, max_length=PINNED_CONTEXT_MAX)
 
 
 class UseTemplateBody(BaseModel):
@@ -158,6 +179,10 @@ def _to_dict(row: dict[str, Any]) -> dict[str, Any]:
         "is_builtin": row.get("is_builtin", False),
         "use_count": row.get("use_count", 0),
         "variables": variables,
+        # Production Roadmap 1.7 — surface the discriminator + payload so
+        # the chat input's "Apply context" picker can filter and use them.
+        "is_context_template": bool(row.get("is_context_template", False)),
+        "pinned_context": row.get("pinned_context"),
         "org_id": row.get("org_id"),
         "created_by": row.get("created_by"),
         "created_at": row.get("created_at"),
@@ -169,6 +194,11 @@ def _to_dict(row: dict[str, Any]) -> dict[str, Any]:
 async def list_templates(
     category: TemplateCategory | None = Query(default=None),
     search: str | None = Query(default=None, max_length=120),
+    # Production Roadmap 1.7 — let the chat input picker fetch only context
+    # templates without filtering 200 prompt templates client-side. Three-
+    # value enum so the caller can be explicit; default None preserves the
+    # original "everything visible" behavior for the existing prompt picker.
+    kind: Literal["prompt", "context", "all"] = Query(default="all"),
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
     """Return every template the caller can see, ordered by popularity then
@@ -185,8 +215,13 @@ async def list_templates(
     def _run() -> list[dict[str, Any]]:
         q = client.table("prompt_templates").select(
             "id, org_id, created_by, title, description, template_text, "
-            "category, is_shared, is_builtin, use_count, variables, created_at, updated_at"
+            "category, is_shared, is_builtin, use_count, variables, "
+            "is_context_template, pinned_context, created_at, updated_at"
         )
+        if kind == "context":
+            q = q.eq("is_context_template", True)
+        elif kind == "prompt":
+            q = q.eq("is_context_template", False)
         if category:
             q = q.eq("category", category)
         if search:
@@ -218,6 +253,21 @@ async def create_template(
         )
 
     client = get_user_client(current_user["token"])
+
+    # Production Roadmap 1.7 — validate the discriminator before we touch
+    # the DB so we return a clean 400 rather than a Postgres CHECK error.
+    if body.is_context_template:
+        if not body.pinned_context or not body.pinned_context.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Context templates require a non-empty pinned_context.",
+            )
+    else:
+        if body.pinned_context is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="pinned_context is only valid for context templates.",
+            )
 
     if body.variables is not None:
         # Trust the explicit list, but only if every placeholder it names is
@@ -257,6 +307,10 @@ async def create_template(
         "is_shared": body.is_shared,
         "is_builtin": False,
         "variables": stored_variables,
+        "is_context_template": body.is_context_template,
+        "pinned_context": (
+            body.pinned_context.strip() if body.is_context_template and body.pinned_context else None
+        ),
     }
 
     def _run() -> dict[str, Any]:
@@ -313,6 +367,17 @@ async def update_template(
             }
             for v in body.variables
         ]
+    if body.pinned_context is not None:
+        # Production Roadmap 1.7 — only applies to context templates.
+        # The DB CHECK constraint rejects a non-null pinned_context on
+        # rows where is_context_template=false, so a misuse fails closed.
+        trimmed = body.pinned_context.strip()
+        if not trimmed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="pinned_context cannot be blanked — delete the template instead.",
+            )
+        update["pinned_context"] = trimmed
 
     if not update:
         raise HTTPException(

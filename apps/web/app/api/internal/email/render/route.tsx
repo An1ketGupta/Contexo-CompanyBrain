@@ -82,6 +82,16 @@ import {
   scheduledKnowledgeHealthSubject,
   type ScheduledKnowledgeHealthEmailProps,
 } from "@/emails/scheduled-knowledge-health";
+import {
+  InternalAnnouncementEmail,
+  internalAnnouncementSubject,
+  type InternalAnnouncementEmailProps,
+} from "@/emails/internal-announcement";
+import {
+  WeeklyBriefingEmail,
+  weeklyBriefingSubject,
+  type WeeklyBriefingEmailProps,
+} from "@/emails/weekly-briefing";
 
 /**
  * Server-to-server email rendering. The FastAPI Inngest worker calls this
@@ -164,6 +174,14 @@ const TEMPLATES = {
     Component: ScheduledKnowledgeHealthEmail,
     subject: scheduledKnowledgeHealthSubject,
   } satisfies Template<ScheduledKnowledgeHealthEmailProps>,
+  internal_announcement: {
+    Component: InternalAnnouncementEmail,
+    subject: internalAnnouncementSubject,
+  } satisfies Template<InternalAnnouncementEmailProps>,
+  weekly_briefing: {
+    Component: WeeklyBriefingEmail,
+    subject: weeklyBriefingSubject,
+  } satisfies Template<WeeklyBriefingEmailProps>,
 };
 
 type TemplateName = keyof typeof TEMPLATES;

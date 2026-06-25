@@ -11,6 +11,10 @@ interface MessageListProps {
   onFeedback?: (assistantLocalId: string, feedback: MessageFeedback) => void;
   onRegenerate?: (assistantLocalId: string, refinement?: string) => void;
   onSwitchBranch?: (assistantLocalId: string, branchIndex: number) => void;
+  onRetryWithMode?: (
+    assistantLocalId: string,
+    mode: "broader" | "deeper",
+  ) => void;
   isStreaming?: boolean;
 }
 
@@ -20,6 +24,7 @@ export function MessageList({
   onFeedback,
   onRegenerate,
   onSwitchBranch,
+  onRetryWithMode,
   isStreaming,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -76,6 +81,7 @@ export function MessageList({
               onFeedback={onFeedback}
               onRegenerate={onRegenerate}
               onSwitchBranch={onSwitchBranch}
+              onRetryWithMode={onRetryWithMode}
               streamingDisabled={!!isStreaming}
               priorUserText={priorUserText}
             />

@@ -2,10 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ChevronDown, Clock, ExternalLink, FileText, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { ChevronDown, Clock, ExternalLink, FileText } from "lucide-react";
 import type { MessageSource } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { DocumentPreviewSheet } from "./document-preview-sheet";
 
 interface CitationsProps {
   sources: MessageSource[];
@@ -153,7 +153,10 @@ function groupExcerptsByPage(
 
 function CitationCard({ group }: { group: CitationGroup }) {
   const [open, setOpen] = useState(false);
-  const [opening, setOpening] = useState(false);
+  // Production Roadmap 1.6 — inline preview replaces the old new-tab open.
+  // `previewPage` is the page the sheet should jump to on mount; null = doc start.
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewPage, setPreviewPage] = useState<number | null>(null);
 
   const pageLabel =
     group.pages.length === 0
@@ -164,35 +167,12 @@ function CitationCard({ group }: { group: CitationGroup }) {
   const versionLabel =
     group.version_number != null ? `v${group.version_number}` : null;
 
-  const openDocument = async (preferredPage?: number | null) => {
-    if (!group.document_id) {
-      toast.error("Document link unavailable.");
-      return;
-    }
-    setOpening(true);
-    try {
-      const res = await fetch(`/api/documents/${group.document_id}/signed-url`);
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail ?? body.error ?? `Failed (${res.status})`);
-      }
-      const { url } = (await res.json()) as { url: string };
-      // PDF page anchor — only meaningful when the browser's built-in PDF
-      // viewer is rendering, but harmless on other formats. We detect PDF by
-      // the original filename in either the document name or the signed URL.
-      const page =
-        preferredPage ?? (group.pages.length > 0 ? group.pages[0] : null);
-      const isPdf =
-        /\.pdf(\?|$)/i.test(url) || /\.pdf$/i.test(group.document_name);
-      const target = page != null && isPdf ? `${url}#page=${page}` : url;
-      window.open(target, "_blank", "noopener,noreferrer");
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Could not open document.",
-      );
-    } finally {
-      setOpening(false);
-    }
+  const openPreview = (preferredPage?: number | null) => {
+    if (!group.document_id) return;
+    setPreviewPage(
+      preferredPage ?? (group.pages.length > 0 ? group.pages[0] : null),
+    );
+    setPreviewOpen(true);
   };
 
   return (
@@ -243,10 +223,9 @@ function CitationCard({ group }: { group: CitationGroup }) {
                     {group.document_id ? (
                       <button
                         type="button"
-                        onClick={() => openDocument(pg.page_number)}
-                        disabled={opening}
-                        className="rounded-full bg-background px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground ring-1 ring-border/70 transition-colors hover:bg-primary/10 hover:text-primary hover:ring-primary/40 disabled:opacity-50"
-                        aria-label={`Open document at page ${pg.page_number}`}
+                        onClick={() => openPreview(pg.page_number)}
+                        className="rounded-full bg-background px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground ring-1 ring-border/70 transition-colors hover:bg-primary/10 hover:text-primary hover:ring-primary/40"
+                        aria-label={`Preview document at page ${pg.page_number}`}
                       >
                         Page {pg.page_number}
                       </button>
@@ -274,20 +253,22 @@ function CitationCard({ group }: { group: CitationGroup }) {
           {group.document_id && (
             <button
               type="button"
-              onClick={() => openDocument()}
-              disabled={opening}
-              className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline disabled:opacity-50"
+              onClick={() => openPreview()}
+              className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
             >
-              {opening ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <ExternalLink className="h-3 w-3" />
-              )}
-              Open document
+              <ExternalLink className="h-3 w-3" />
+              Preview document
             </button>
           )}
         </div>
       )}
+      <DocumentPreviewSheet
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        documentId={group.document_id}
+        documentName={group.document_name}
+        preferredPage={previewPage}
+      />
     </div>
   );
 }

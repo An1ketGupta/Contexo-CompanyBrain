@@ -47,8 +47,10 @@ from app.services.moderation import (
     moderate_input,
 )
 from app.services.rate_limit import enforce_chat_quota
+from app.services.realtime_broadcast import BroadcastBatcher, conversation_topic
 from app.services.summarization import load_conversation_summary
 from app.services.webhooks import trigger_event as trigger_webhook_event
+from app.services import channels as channels_svc
 
 log = get_logger(__name__)
 
@@ -86,6 +88,18 @@ class ChatRequest(BaseModel):
     # its current tag_filters and reuses scoped_tags plumbing. Stored on the
     # conversation row so the chat UI can render "Pinned to <Collection>".
     scoped_collection_id: str | None = Field(default=None, min_length=8, max_length=64)
+    # Production Roadmap 1.5 — Answer Improvement retries. Sent only by the
+    # "Search broader" / "Search deeper" buttons that appear after a
+    # low-confidence answer. The frontend re-sends the same `message` with
+    # the same `client_message_id` (so the user-message row dedupes); the
+    # backend writes the new assistant answer as a NEW branch under the
+    # same parent user message, which the UI surfaces via the branch
+    # navigator. Telemetry on retry_mode reveals how often each retry is
+    # used vs. baseline confidence to tune defaults later.
+    #
+    # broader → drops scope constraints (search across whole knowledge base)
+    # deeper  → 2× search budget + 2 extra tool rounds (capped)
+    retry_mode: Literal["broader", "deeper"] | None = None
 
 
 class UpdateConversationRequest(BaseModel):
@@ -128,6 +142,12 @@ class FeedbackBody(BaseModel):
     # Tri-state: 'positive', 'negative', or null to clear an existing rating.
     # Sent from the thumbs UI; the second click on the same icon nulls it out.
     feedback: Literal["positive", "negative"] | None
+
+
+class CopiedBody(BaseModel):
+    # Which clipboard format the user grabbed. Default markdown preserves
+    # behavior of clients that don't send a body (older proxy builds).
+    format: Literal["markdown", "plain", "html"] = "markdown"
 
 
 class ChatResponse(BaseModel):
@@ -403,9 +423,111 @@ async def chat_stream(
         client_message_id=body.client_message_id,
     )
 
+    # ── Production Roadmap 2.7 — multiplayer chat broadcast ───────────────
+    # If the conversation is a channel, every SSE frame that goes out on the
+    # initiator's HTTP response is also broadcast to the Supabase Realtime
+    # `conversation:{id}` topic so other participants render it live. We also
+    # broadcast the user's just-saved message so other tabs see who said what
+    # without polling. is_channel is queried once; non-channel convos pay
+    # nothing extra.
+    _is_channel = False
+    try:
+        ch_row = await asyncio.to_thread(
+            lambda: client.table("conversations")
+            .select("is_channel")
+            .eq("id", conversation_id)
+            .maybe_single()
+            .execute()
+        )
+        _is_channel = bool(((ch_row.data or {}) if ch_row else {}).get("is_channel"))
+    except Exception:
+        _is_channel = False
+
+    if _is_channel:
+        # Gate posting on membership. RLS on the messages table would refuse
+        # the write anyway, but failing here gives a clean 403 instead of a
+        # confusing Postgres permission error after we've already started the
+        # stream.
+        if not await channels_svc.is_member(
+            conversation_id=conversation_id, user_id=user_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You're not a member of this channel.",
+            )
+
+    _batcher: BroadcastBatcher | None = None
+    if _is_channel:
+        _batcher = BroadcastBatcher(topic=conversation_topic(conversation_id))
+        await _batcher.start()
+        # Broadcast the user's typed message immediately so other participants
+        # don't wait for the AI round-trip to see "Alice said …".
+        _batcher.publish(
+            "user_message",
+            {
+                "type": "user_message",
+                "message_id": user_message_id,
+                "user_id": user_id,
+                "content": body.message,
+                "conversation_id": conversation_id,
+            },
+        )
+        # Multi-user system hint — let the orchestrator know names so the LLM
+        # can address everyone. Best-effort; do not block the request.
+        try:
+            names = await channels_svc.get_participant_display_names(
+                conversation_id=conversation_id
+            )
+            if names:
+                history = [
+                    Message(
+                        role="system",
+                        content=(
+                            "Multiple users are in this conversation: "
+                            + ", ".join(names[:20])
+                            + ". Address answers to the group when relevant."
+                        ),
+                    ),
+                    *(history or []),
+                ]
+        except Exception:
+            pass
+
+    # ── Production Roadmap 1.5 — resolve retry-mode budget overrides ──────
+    # broader → drop scope, keep budget at defaults (more places to search,
+    #           not more searches — the user's complaint was "this scope is
+    #           too narrow," not "the search wasn't thorough").
+    # deeper  → keep scope, double the search budget. The hard ceilings
+    #           (16 searches, 8 tool rounds) bound LLM cost even if the
+    #           defaults are bumped by env at some point.
+    _ignore_scope = False
+    _search_k_override: int | None = None
+    _max_searches_override: int | None = None
+    _max_tool_rounds_override: int | None = None
+    if body.retry_mode == "broader":
+        _ignore_scope = True
+    elif body.retry_mode == "deeper":
+        _s = get_settings()
+        _search_k_override = min(_s.chat_search_k * 2, 16)
+        _max_searches_override = min(_s.chat_max_searches * 2, 16)
+        _max_tool_rounds_override = min(_s.chat_max_tool_rounds + 2, 8)
+
     async def event_stream() -> AsyncIterator[bytes]:
+        # Wraps _sse(...) so every frame is also fanned out to other channel
+        # participants via Supabase Realtime. For non-channel conversations
+        # `_batcher` is None and this collapses to plain `_sse`. The wrapper
+        # is intentionally defensive — a broken broadcast must never break
+        # the initiating user's HTTP stream.
+        def _sse_b(payload: dict) -> bytes:
+            if _batcher is not None:
+                try:
+                    _batcher.publish(payload.get("type", "event"), payload)
+                except Exception:
+                    pass
+            return _sse(payload)
+
         # Tell the client which conversation row this turn attaches to.
-        yield _sse({"type": "start", "conversation_id": conversation_id})
+        yield _sse_b({"type": "start", "conversation_id": conversation_id})
 
         # Heartbeat orchestration: we wrap execute_task() in a queue-and-pump
         # pattern so we can interleave keepalive frames during long tool-call
@@ -425,6 +547,10 @@ async def chat_stream(
                     scoped_document_id=scoped_document_id,
                     scoped_tags=scoped_tags or None,
                     conversation_summary=summary,
+                    search_k_override=_search_k_override,
+                    max_searches_override=_max_searches_override,
+                    max_tool_rounds_override=_max_tool_rounds_override,
+                    ignore_scope=_ignore_scope,
                 ):
                     await events_queue.put(ev)
             finally:
@@ -461,7 +587,7 @@ async def chat_stream(
 
                 payload = _event_to_payload(ev)
                 if payload is not None:
-                    yield _sse(payload)
+                    yield _sse_b(payload)
                     last_emit = time.monotonic()
 
                 if isinstance(ev, FinalEvent):
@@ -485,7 +611,7 @@ async def chat_stream(
                     }
         except Exception as exc:
             log.exception("chat_stream_unhandled", error=str(exc))
-            yield _sse(
+            yield _sse_b(
                 {
                     "type": "error",
                     "code": "internal_error",
@@ -498,11 +624,16 @@ async def chat_stream(
         finally:
             if not producer_task.done():
                 producer_task.cancel()
+            if _batcher is not None:
+                try:
+                    await _batcher.flush_and_close()
+                except Exception:
+                    pass
 
         if had_error and error_payload is not None:
             # We already streamed the user-visible error from the orchestrator;
             # add the request_id so the frontend can quote it.
-            yield _sse(error_payload)
+            yield _sse_b(error_payload)
             return
 
         if final_text:
@@ -569,7 +700,7 @@ async def chat_stream(
                     cost_micros=final_usage.cost_micros if final_usage else 0,
                     retrieved_chunk_ids=list(final_retrieved_chunk_ids),
                 )
-                yield _sse(
+                yield _sse_b(
                     {
                         "type": "done",
                         "message_id": assistant_id,
@@ -578,7 +709,7 @@ async def chat_stream(
                 )
             except Exception as exc:
                 log.exception("assistant_save_failed", error=str(exc))
-                yield _sse(
+                yield _sse_b(
                     {
                         "type": "error",
                         "code": "internal_error",
@@ -588,7 +719,7 @@ async def chat_stream(
                 )
         else:
             # No text, no error — model gave up. Tell the client.
-            yield _sse(
+            yield _sse_b(
                 {
                     "type": "error",
                     "code": "upstream_unavailable",
@@ -1296,6 +1427,7 @@ async def update_message_feedback(
 @router.post("/messages/{message_id}/copied")
 async def record_message_copy(
     message_id: str,
+    body: CopiedBody | None = None,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
     """Fire-and-forget signal from the assistant-message Copy button.
@@ -1313,7 +1445,8 @@ async def record_message_copy(
     if not _is_uuid(message_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid message id.")
 
-    org_id, _user_id, token = _require_org(current_user)
+    copy_format = (body.format if body else "markdown") or "markdown"
+    org_id, user_id, token = _require_org(current_user)
     client = get_user_client(token)
 
     msg_res = await asyncio.to_thread(
@@ -1362,7 +1495,7 @@ async def record_message_copy(
                     trace_id=trace_id,
                     name="output_used",
                     value=1,
-                    comment="User copied the assistant output",
+                    comment=f"User copied the assistant output as {copy_format}",
                     data_type="NUMERIC",
                 )
         except Exception as exc:
@@ -1386,7 +1519,26 @@ async def record_message_copy(
     except Exception as exc:
         log.warning("training_pair_copy_schedule_failed", error=str(exc))
 
-    return {"copy_count": next_count, "org_id": org_id}
+    # Analytics — Phase 1.15. Tracks which clipboard format users prefer so
+    # we can prune low-use formats later. Best-effort; failure does not
+    # block the response.
+    try:
+        from app.services.analytics import track_event
+
+        await track_event(
+            org_id=org_id,
+            user_id=user_id,
+            event_type="chat.message_copied",
+            metadata={
+                "message_id": message_id,
+                "format": copy_format,
+                "copy_count": next_count,
+            },
+        )
+    except Exception as exc:
+        log.debug("copy_analytics_failed", error=str(exc))
+
+    return {"copy_count": next_count, "org_id": org_id, "format": copy_format}
 
 
 # ── Branching (V3 Day 3 #42) ────────────────────────────────────────────────

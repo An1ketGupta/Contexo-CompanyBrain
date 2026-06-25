@@ -2,13 +2,17 @@
 
 import useSWR from "swr";
 
-export type UserPersona =
+export type BuiltInPersona =
   | "hr"
   | "sales"
   | "engineering"
   | "finance"
   | "operations"
   | "executive";
+
+// Feature 1.11 — persona is now an open string. The literal union exists for
+// IDE help on the built-ins; "custom" and `org:<uuid>` are also valid.
+export type UserPersona = BuiltInPersona | "custom" | string;
 
 export interface CurrentUser {
   id: string;
@@ -18,6 +22,8 @@ export interface CurrentUser {
   org_id: string | null;
   activity_private?: boolean;
   persona?: UserPersona | null;
+  custom_persona_name?: string | null;
+  custom_persona_instructions?: string | null;
 }
 
 export interface CurrentOrg {

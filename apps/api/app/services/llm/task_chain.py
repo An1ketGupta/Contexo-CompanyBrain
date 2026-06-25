@@ -268,6 +268,25 @@ async def execute_task(
     scoped_document_id: str | None = None,
     scoped_tags: list[str] | None = None,
     conversation_summary: str | None = None,
+    # ── Production Roadmap 1.5 / 1.9 — per-turn budget overrides ───────────
+    # When set, these win over the per-org / per-settings defaults for THIS
+    # task only. Two callers use them:
+    #   * Quick Answer (1.9): the intent classifier auto-detects bounded
+    #     factual lookups and caps tool rounds + searches for sub-2s latency.
+    #   * Search broader/deeper (1.5): the chat UI exposes two retry buttons
+    #     on low-confidence answers — "broader" drops scope constraints,
+    #     "deeper" doubles the search budget.
+    # Quick-answer auto-bound is SKIPPED when any explicit override is set,
+    # so an explicit "deeper" retry on a quick-answer-classified message
+    # actually goes deeper. None = no override.
+    search_k_override: int | None = None,
+    max_searches_override: int | None = None,
+    max_tool_rounds_override: int | None = None,
+    # Production Roadmap 1.5 — when True, drop scoped_document_id and
+    # scoped_tags so the retry can search across the full knowledge base.
+    # The intent classifier's QUICK_ANSWER detection does NOT toggle this;
+    # only the explicit "Search broader" retry button does.
+    ignore_scope: bool = False,
 ) -> AsyncIterator[OrchestratorEvent]:
     """Run one user task through the LLM+retrieval loop.
 
@@ -280,6 +299,13 @@ async def execute_task(
     """
     settings = get_settings()
     llm = llm_client or get_llm_client()
+
+    # Production Roadmap 1.5 — broader-scope retry strips scope constraints.
+    # We do this BEFORE the scope-resolution / system-prompt-note section so
+    # nothing downstream sees the dropped scope.
+    if ignore_scope:
+        scoped_document_id = None
+        scoped_tags = None
 
     user_message = (user_message or "").strip()
     if not user_message:
@@ -305,6 +331,37 @@ async def execute_task(
     # paint the badge alongside the "Thinking…" indicator.
     intent_result = classify_intent(user_message)
     yield IntentEvent(intent=intent_result.intent.value)
+
+    # ── Per-turn budget resolution ──────────────────────────────────────────
+    # Order of precedence (highest to lowest):
+    #   1. Explicit kwargs (search_k_override, max_searches_override, ...)
+    #      — used by Search broader/deeper retries (1.5).
+    #   2. QUICK_ANSWER auto-bound — only applied when NO explicit override
+    #      is supplied. A "deeper" retry on a quick-answer message correctly
+    #      bypasses the auto-bound and goes full depth (1.9 + 1.5 compose).
+    #   3. settings.* defaults.
+    explicit_budget_override = (
+        search_k_override is not None
+        or max_searches_override is not None
+        or max_tool_rounds_override is not None
+    )
+    quick_answer_mode = (
+        intent_result.intent == QueryIntent.QUICK_ANSWER and not explicit_budget_override
+    )
+    effective_search_k = search_k_override or settings.chat_search_k
+    effective_max_searches = max_searches_override or settings.chat_max_searches
+    effective_max_tool_rounds = max_tool_rounds_override or settings.chat_max_tool_rounds
+    effective_max_context_chunks = settings.chat_max_context_chunks
+    if quick_answer_mode:
+        # Aggressive caps for sub-2s perceived latency on simple lookups.
+        # Tuned to the case "what's our holiday policy" — one search, one
+        # round-trip, the LLM speaks. If the LLM somehow needs more than
+        # this, the answer will simply be best-effort within the budget;
+        # the user can retry with "Search deeper" to escalate (1.5).
+        effective_max_tool_rounds = 1
+        effective_max_searches = 2
+        effective_max_context_chunks = min(effective_max_context_chunks, 8)
+        effective_search_k = min(effective_search_k, 6)
 
     all_hits: list[SearchHit] = []
     seen_queries: set[str] = set()
@@ -390,13 +447,11 @@ async def execute_task(
         f"{org_instructions}\n\n{intent_overlay}" if org_instructions else intent_overlay
     )
 
-    # Agent2 Day 2 #37 — persona overlay. Applies after intent overlay because
-    # persona shapes tone/format/framing while leaving the intent's
-    # mode-specific guidance intact. Scope notes (above) still control which
-    # docs are searched — persona never overrides retrieval bias.
+    # Agent2 Day 2 #37 — persona overlay. Feature 1.11 extends this to
+    # custom (per-user) and org-curated personas. The fetcher returns the
+    # overlay text directly so the dispatch logic stays in one place.
     if user_id:
-        persona = await _fetch_user_persona(db_client, user_id)
-        persona_note = _persona_overlay(persona)
+        persona_note = await _resolve_persona_overlay(db_client, user_id)
         if persona_note:
             org_instructions = (
                 f"{org_instructions}\n\n{persona_note}" if org_instructions else persona_note
@@ -444,9 +499,9 @@ async def execute_task(
             tags=["chat", f"intent:{intent_result.intent.value}"],
         )
 
-        for round_idx in range(settings.chat_max_tool_rounds + 1):
+        for round_idx in range(effective_max_tool_rounds + 1):
             # Last round: force no more tools, just final text.
-            tools_for_this_round = (SEARCH_TOOL,) if round_idx < settings.chat_max_tool_rounds else ()
+            tools_for_this_round = (SEARCH_TOOL,) if round_idx < effective_max_tool_rounds else ()
 
             try:
                 response: LLMResponse = await llm.complete(
@@ -476,7 +531,7 @@ async def execute_task(
             # Filter out unknown / duplicate / over-budget calls.
             valid_calls: list[ToolCall] = []
             for tc in response.tool_calls:
-                if searches_done + len(valid_calls) >= settings.chat_max_searches:
+                if searches_done + len(valid_calls) >= effective_max_searches:
                     break
                 if tc.name != SEARCH_TOOL_NAME:
                     log.warning("Unknown tool from LLM: %r — skipping", tc.name)
@@ -507,7 +562,7 @@ async def execute_task(
                         tc.args["query"],
                         org_id,
                         db_client,
-                        settings.chat_search_k,
+                        effective_search_k,
                         document_id=scoped_document_id,
                         document_ids=scoped_document_ids,
                     )
@@ -542,7 +597,7 @@ async def execute_task(
 
         # End of tool loop — emit sources first, then either final text (non-stream)
         # or stream the final generation if requested.
-        sources = _dedupe_sources(all_hits, limit=settings.chat_max_context_chunks)
+        sources = _dedupe_sources(all_hits, limit=effective_max_context_chunks)
         await _attach_review_due(sources, org_id=org_id, db_client=db_client)
         yield SourcesEvent(sources=sources)
 
@@ -732,25 +787,47 @@ async def _fetch_pinned_context(client: Client, conversation_id: str) -> str | N
     return str(val).strip()
 
 
-async def _fetch_user_persona(client: Client, user_id: str) -> str | None:
-    """Agent2 Day 2 #37 — read users.persona.
+async def _fetch_user_persona_row(
+    client: Client, user_id: str
+) -> dict[str, Any] | None:
+    """Feature 1.11 — read the persona triple from users in one round-trip.
 
-    Returns None when unset. Persona values are constrained by the DB CHECK
-    constraint (hr/sales/engineering/finance/operations/executive) so any
-    non-None value here is safe to feed straight into _persona_overlay.
+    Returns the row's {persona, custom_persona_name, custom_persona_instructions}
+    or None on any failure. Soft failures are silent because persona is an
+    optimization, not a correctness requirement — chat should still answer.
     """
     try:
         result = await asyncio.to_thread(
             lambda: client.table("users")
-            .select("persona")
+            .select("persona, custom_persona_name, custom_persona_instructions")
             .eq("id", user_id)
             .maybe_single()
             .execute()
         )
     except Exception:
         return None
-    val = (getattr(result, "data", None) or {}).get("persona") if result else None
-    return str(val).strip() if val else None
+    return (getattr(result, "data", None) or None) if result else None
+
+
+async def _fetch_org_persona(
+    client: Client, persona_id: str
+) -> dict[str, Any] | None:
+    """Feature 1.11 — load an org_personas row by id. Returns None if the
+    persona has been archived, deleted, or RLS denies access."""
+    try:
+        result = await asyncio.to_thread(
+            lambda: client.table("org_personas")
+            .select("id, name, instructions, is_archived")
+            .eq("id", persona_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception:
+        return None
+    row = (getattr(result, "data", None) or None) if result else None
+    if not row or row.get("is_archived"):
+        return None
+    return row
 
 
 # Persona overlays — kept here so the prompt-engineering surface for chat
@@ -789,12 +866,75 @@ _PERSONA_OVERLAYS: dict[str, str] = {
 }
 
 
+_ORG_PERSONA_PREFIX = "org:"
+_CUSTOM_INSTRUCTION_CAP = 2000  # matches users + org_personas CHECK
+
+
+def _format_custom_overlay(name: str | None, instructions: str) -> str:
+    """Wrap user-supplied instructions in the same `USER ROLE: …` framing the
+    built-ins use so retrieval bias hints land in a predictable slot. Caller
+    is responsible for upper-bounding `instructions` length."""
+    body = instructions.strip()
+    if not body:
+        return ""
+    label = (name or "Custom").strip() or "Custom"
+    return f"USER ROLE: {label}. {body}"
+
+
 def _persona_overlay(persona: str | None) -> str | None:
-    """Resolve a persona string to its system-prompt overlay. None if unset
-    or unrecognised (CHECK constraint should make the latter impossible)."""
+    """Resolve a BUILT-IN persona string to its system-prompt overlay.
+
+    Kept for tests + callers that only need the static map. Custom/org
+    personas go through `_resolve_persona_overlay` which makes I/O.
+    """
     if not persona:
         return None
     return _PERSONA_OVERLAYS.get(persona)
+
+
+async def _resolve_persona_overlay(client: Client, user_id: str) -> str | None:
+    """Feature 1.11 — full persona resolution.
+
+    Dispatch:
+      * NULL           — no overlay.
+      * Built-in key   — return _PERSONA_OVERLAYS[key].
+      * 'custom'       — return formatted users.custom_persona_instructions.
+      * 'org:<uuid>'   — load org_personas row, return its instructions.
+
+    Falls back to None on any data anomaly (e.g. persona='custom' but
+    instructions are NULL) so chat still works without a stale overlay.
+    """
+    row = await _fetch_user_persona_row(client, user_id)
+    if not row:
+        return None
+    persona = row.get("persona")
+    persona_str = str(persona).strip() if persona else None
+    if not persona_str:
+        return None
+
+    if persona_str == "custom":
+        instr = row.get("custom_persona_instructions")
+        if not instr or not str(instr).strip():
+            return None
+        text = str(instr)[:_CUSTOM_INSTRUCTION_CAP]
+        formatted = _format_custom_overlay(
+            row.get("custom_persona_name"), text
+        )
+        return formatted or None
+
+    if persona_str.startswith(_ORG_PERSONA_PREFIX):
+        persona_id = persona_str[len(_ORG_PERSONA_PREFIX):]
+        org_persona = await _fetch_org_persona(client, persona_id)
+        if not org_persona:
+            return None
+        instr = org_persona.get("instructions")
+        if not instr or not str(instr).strip():
+            return None
+        text = str(instr)[:_CUSTOM_INSTRUCTION_CAP]
+        formatted = _format_custom_overlay(org_persona.get("name"), text)
+        return formatted or None
+
+    return _PERSONA_OVERLAYS.get(persona_str)
 
 
 async def _scope_system_note(client: Client, document_id: str) -> str | None:
