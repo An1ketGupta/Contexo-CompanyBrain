@@ -240,8 +240,15 @@ async def _draft_emails_with_llm(
         messages=[Message(role="user", content=user_prompt)],
         system_extra=system,
         temperature=0.5,
+        replace_system_prompt=True,
     )
     text = (response.text or "").strip()
+    if not text:
+        raise RuntimeError(
+            "sequence_llm_empty_response: "
+            f"finish_reason={response.finish_reason!r} "
+            f"tool_calls={len(response.tool_calls)}"
+        )
     parsed = _parse_steps_json(text, expected=len(step_offsets_days))
     return parsed
 

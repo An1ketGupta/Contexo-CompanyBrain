@@ -34,7 +34,7 @@ export function MobileHeader() {
               Company Brain
             </span>
           </Link>
-          <div className="flex-1 overflow-y-auto py-2">
+          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto py-2">
             <SidebarNav onNavigate={() => setOpen(false)} />
           </div>
           {/* `pb-safe-2` keeps the user menu clear of the iOS home indicator

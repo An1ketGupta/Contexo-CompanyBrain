@@ -839,16 +839,17 @@ async def archived_count(
 ) -> dict[str, int]:
     """Cheap COUNT(*) for the "Archived (N)" sidebar link.
 
-    Returning HEAD-only would be more idiomatic in REST, but PostgREST's
-    HEAD count + RLS combo can't share the user JWT cleanly via the Python
-    client, so we just return a tiny JSON instead.
+    `head=True` would be more idiomatic, but postgrest-py blows up parsing
+    the empty body it returns. `limit(1)` keeps the payload to a single id
+    while `count="exact"` still threads the total through Content-Range.
     """
     _, _, token = _require_org(current_user)
     client = get_user_client(token)
     result = await asyncio.to_thread(
         lambda: client.table("conversations")
-        .select("id", count="exact", head=True)
+        .select("id", count="exact")
         .eq("is_archived", True)
+        .limit(1)
         .execute()
     )
     return {"count": int(result.count or 0)}

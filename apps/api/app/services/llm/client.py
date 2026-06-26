@@ -88,6 +88,7 @@ class LLMClient(Protocol):
         temperature: float | None = None,
         timeout: float | None = None,
         system_extra: str | None = None,
+        replace_system_prompt: bool = False,
     ) -> LLMResponse: ...
 
     async def stream(
@@ -98,6 +99,7 @@ class LLMClient(Protocol):
         temperature: float | None = None,
         timeout: float | None = None,
         system_extra: str | None = None,
+        replace_system_prompt: bool = False,
     ) -> AsyncIterator[StreamChunk]: ...
 
 
@@ -134,9 +136,12 @@ class GeminiClient:
         temperature: float | None = None,
         timeout: float | None = None,
         system_extra: str | None = None,
+        replace_system_prompt: bool = False,
     ) -> LLMResponse:
         contents = _to_genai_contents(messages)
-        config = self._build_config(tools, temperature, system_extra)
+        config = self._build_config(
+            tools, temperature, system_extra, replace_system_prompt
+        )
 
         try:
             response = await asyncio.wait_for(
@@ -168,9 +173,12 @@ class GeminiClient:
         temperature: float | None = None,
         timeout: float | None = None,
         system_extra: str | None = None,
+        replace_system_prompt: bool = False,
     ) -> AsyncIterator[StreamChunk]:
         contents = _to_genai_contents(messages)
-        config = self._build_config(tools, temperature, system_extra)
+        config = self._build_config(
+            tools, temperature, system_extra, replace_system_prompt
+        )
         time_budget = timeout or self._default_timeout
 
         # genai's stream is a sync generator — bridge it to an async one via a
@@ -235,17 +243,26 @@ class GeminiClient:
         tools: tuple[Any, ...],
         temperature: float | None,
         system_extra: str | None = None,
+        replace_system_prompt: bool = False,
     ) -> gt.GenerateContentConfig:
         # Org-level instructions sit ABOVE our hardcoded SYSTEM_PROMPT so the
         # base rules ("only use retrieved context", "no fabrication") still
         # bind. Admins customize tone/scope — they cannot override the rails.
-        system = SYSTEM_PROMPT
+        #
+        # Non-chat one-shot flows (sequences, briefings, etc.) opt out via
+        # replace_system_prompt=True: SYSTEM_PROMPT's "always call the search
+        # tool" rule would otherwise make Gemini emit a function_call into
+        # nowhere and return empty text.
         extra = (system_extra or "").strip()
-        if extra:
+        if replace_system_prompt:
+            system = extra or SYSTEM_PROMPT
+        elif extra:
             system = (
                 f"# Organization context\n\n{extra}\n\n"
                 f"---\n\n{SYSTEM_PROMPT}"
             )
+        else:
+            system = SYSTEM_PROMPT
         kwargs: dict[str, Any] = {
             "system_instruction": system,
             "temperature": temperature if temperature is not None else self._default_temperature,

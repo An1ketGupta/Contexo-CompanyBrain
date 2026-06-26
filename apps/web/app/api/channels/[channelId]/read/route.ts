@@ -8,5 +8,5 @@ export async function POST(
   ctx: { params: Promise<{ channelId: string }> },
 ): Promise<Response> {
   const { channelId } = await ctx.params;
-  return proxyJson(req, `/channels/${channelId}/read`);
+  return proxyJson(req, `/channels/${channelId}/read`, { method: "POST" });
 }

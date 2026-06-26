@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { proxyJson } from "@/lib/api-proxy";
+import { proxyJson, proxyPostJson } from "@/lib/api-proxy";
 
 export const dynamic = "force-dynamic";
 
@@ -8,5 +8,5 @@ export async function GET(req: NextRequest): Promise<Response> {
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
-  return proxyJson(req, "/channels");
+  return proxyPostJson(req, "/channels");
 }

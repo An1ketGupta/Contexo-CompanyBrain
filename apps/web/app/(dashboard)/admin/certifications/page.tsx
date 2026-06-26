@@ -106,7 +106,7 @@ export default function AdminCertificationsPage() {
   }
 
   return (
-    <div className="container max-w-5xl py-8 space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
       <div>
         <h1 className="text-2xl font-semibold">Knowledge certifications</h1>
         <p className="text-sm text-muted-foreground mt-1">

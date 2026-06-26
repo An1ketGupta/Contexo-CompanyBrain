@@ -28,7 +28,10 @@ export function Sidebar() {
         <CommandPaletteTrigger />
       </div>
 
-      <div className="flex-1 overflow-y-auto py-2">
+      <div
+        className="scrollbar-thin min-h-0 flex-1 overflow-y-auto py-2"
+        style={{ scrollbarGutter: "stable" }}
+      >
         <SidebarNav />
       </div>
 

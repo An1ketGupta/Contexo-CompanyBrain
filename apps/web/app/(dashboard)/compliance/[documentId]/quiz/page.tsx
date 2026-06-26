@@ -97,14 +97,14 @@ export default function QuizPage() {
 
   if (loading) {
     return (
-      <div className="container max-w-2xl py-8 text-center text-muted-foreground">
+      <div className="mx-auto max-w-2xl p-6 md:p-8 text-center text-muted-foreground">
         <Loader2 className="size-6 animate-spin mx-auto" />
       </div>
     );
   }
   if (!quiz) {
     return (
-      <div className="container max-w-2xl py-8 text-center text-muted-foreground">
+      <div className="mx-auto max-w-2xl p-6 md:p-8 text-center text-muted-foreground">
         No quiz available.
       </div>
     );
@@ -112,7 +112,7 @@ export default function QuizPage() {
 
   if (result) {
     return (
-      <div className="container max-w-2xl py-8 space-y-4">
+      <div className="mx-auto max-w-2xl p-6 md:p-8 space-y-4">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -159,7 +159,7 @@ export default function QuizPage() {
   }
 
   return (
-    <div className="container max-w-2xl py-8 space-y-4">
+    <div className="mx-auto max-w-2xl p-6 md:p-8 space-y-4">
       <Link
         href="/compliance/pending"
         className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-1"

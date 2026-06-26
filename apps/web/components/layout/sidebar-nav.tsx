@@ -44,152 +44,100 @@ interface NavItem {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
-  /** Admin-only items hide for member roles. */
   adminOnly?: boolean;
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { href: "/chat", label: "Chat", icon: MessageSquare },
-  { href: "/channels", label: "Channels", icon: Hash },
-  { href: "/history", label: "History", icon: History },
-  { href: "/chat/meeting-prep", label: "Meeting prep", icon: CalendarDays },
-  { href: "/meetings", label: "Meetings", icon: CalendarDays },
-  { href: "/settings/templates", label: "Templates", icon: LayoutTemplate },
-  { href: "/documents", label: "Documents", icon: FileText },
-  { href: "/activity", label: "Team activity", icon: Users },
-  { href: "/approvals", label: "Approvals", icon: CheckCircle2 },
-  { href: "/sequences", label: "Sequences", icon: Mail },
-  { href: "/sales/precall-brief", label: "Pre-call brief", icon: Phone },
-  { href: "/sales/rfp", label: "RFP responses", icon: ClipboardCheck },
-  { href: "/recruiting", label: "Recruiting", icon: Briefcase },
-  { href: "/executive/briefing", label: "Exec briefing", icon: Presentation },
-  { href: "/calendar", label: "Upcoming meetings", icon: CalendarDays },
-  { href: "/action-items", label: "Action items", icon: ListChecks },
-  { href: "/briefings", label: "Briefings", icon: Sparkles },
-  { href: "/insights", label: "Insights", icon: LineChart, adminOnly: true },
+interface NavSection {
+  /** undefined = no header (top-level items above the first section). */
+  label?: string;
+  adminOnly?: boolean;
+  items: NavItem[];
+}
+
+const NAV_SECTIONS: NavSection[] = [
   {
-    href: "/admin/analytics",
-    label: "Analytics",
-    icon: BarChart3,
-    adminOnly: true,
+    items: [
+      { href: "/chat", label: "Chat", icon: MessageSquare },
+      { href: "/channels", label: "Channels", icon: Hash },
+      { href: "/history", label: "History", icon: History },
+    ],
   },
   {
-    href: "/admin/health",
-    label: "KB health",
-    icon: HeartPulse,
-    adminOnly: true,
+    label: "Workspace",
+    items: [
+      { href: "/documents", label: "Documents", icon: FileText },
+      { href: "/settings/templates", label: "Templates", icon: LayoutTemplate },
+      { href: "/activity", label: "Team activity", icon: Users },
+      { href: "/approvals", label: "Approvals", icon: CheckCircle2 },
+    ],
   },
   {
-    href: "/admin/coverage",
-    label: "Coverage",
-    icon: PieChart,
-    adminOnly: true,
+    label: "Meetings",
+    items: [
+      { href: "/chat/meeting-prep", label: "Meeting prep", icon: CalendarDays },
+      { href: "/meetings", label: "Meetings", icon: CalendarDays },
+      { href: "/calendar", label: "Upcoming", icon: CalendarDays },
+      { href: "/action-items", label: "Action items", icon: ListChecks },
+      { href: "/briefings", label: "Briefings", icon: Sparkles },
+    ],
   },
   {
-    href: "/admin/moderation",
-    label: "Moderation",
-    icon: Shield,
-    adminOnly: true,
+    label: "Sales",
+    items: [
+      { href: "/sequences", label: "Sequences", icon: Mail },
+      { href: "/sales/precall-brief", label: "Pre-call brief", icon: Phone },
+      { href: "/sales/rfp", label: "RFP responses", icon: ClipboardCheck },
+    ],
   },
   {
-    href: "/admin/knowledge-gaps",
-    label: "Knowledge gaps",
-    icon: FileQuestion,
-    adminOnly: true,
+    label: "Talent & Exec",
+    items: [
+      { href: "/recruiting", label: "Recruiting", icon: Briefcase },
+      { href: "/executive/briefing", label: "Exec briefing", icon: Presentation },
+    ],
   },
   {
-    href: "/admin/knowledge-health",
-    label: "Knowledge health",
-    icon: Sparkles,
+    label: "Insights",
     adminOnly: true,
+    items: [
+      { href: "/insights", label: "Insights", icon: LineChart, adminOnly: true },
+      { href: "/admin/analytics", label: "Analytics", icon: BarChart3, adminOnly: true },
+      { href: "/admin/health", label: "KB health", icon: HeartPulse, adminOnly: true },
+      { href: "/admin/coverage", label: "Coverage", icon: PieChart, adminOnly: true },
+      { href: "/admin/knowledge-gaps", label: "Knowledge gaps", icon: FileQuestion, adminOnly: true },
+      { href: "/admin/knowledge-health", label: "Knowledge health", icon: Sparkles, adminOnly: true },
+      { href: "/admin/knowledge-graph", label: "Knowledge map", icon: Brain, adminOnly: true },
+      { href: "/admin/quality", label: "Output quality", icon: Target, adminOnly: true },
+    ],
   },
   {
-    href: "/admin/announcements",
-    label: "Announcements",
-    icon: Megaphone,
+    label: "Admin",
     adminOnly: true,
+    items: [
+      { href: "/admin/moderation", label: "Moderation", icon: Shield, adminOnly: true },
+      { href: "/admin/announcements", label: "Announcements", icon: Megaphone, adminOnly: true },
+      { href: "/admin/feedback", label: "Flagged feedback", icon: ThumbsDown, adminOnly: true },
+      { href: "/admin/confidence", label: "Confidence", icon: Gauge, adminOnly: true },
+      { href: "/admin/support", label: "Support inbox", icon: Inbox, adminOnly: true },
+      { href: "/admin/agent-runs", label: "Agent runs", icon: Activity, adminOnly: true },
+      { href: "/admin/compliance", label: "Compliance", icon: ShieldCheck, adminOnly: true },
+      { href: "/admin/certifications", label: "Certifications", icon: ClipboardCheck, adminOnly: true },
+      { href: "/admin/competitor-mentions", label: "Competitors", icon: ShieldAlert, adminOnly: true },
+      { href: "/admin/rate-limits", label: "Rate limits", icon: Gauge, adminOnly: true },
+      { href: "/admin/embeddings", label: "Embeddings", icon: Brain, adminOnly: true },
+      { href: "/admin/autoflows", label: "Autoflows", icon: Workflow, adminOnly: true },
+      { href: "/admin/personas", label: "Shared personas", icon: Users, adminOnly: true },
+    ],
   },
   {
-    href: "/admin/feedback",
-    label: "Flagged feedback",
-    icon: ThumbsDown,
-    adminOnly: true,
+    items: [
+      { href: "/settings", label: "Settings", icon: Settings },
+      { href: "/help", label: "Help", icon: HelpCircle },
+    ],
   },
-  {
-    href: "/admin/confidence",
-    label: "Confidence",
-    icon: Gauge,
-    adminOnly: true,
-  },
-  {
-    href: "/admin/support",
-    label: "Support inbox",
-    icon: Inbox,
-    adminOnly: true,
-  },
-  {
-    href: "/admin/agent-runs",
-    label: "Agent runs",
-    icon: Activity,
-    adminOnly: true,
-  },
-  {
-    href: "/admin/compliance",
-    label: "Compliance",
-    icon: ShieldCheck,
-    adminOnly: true,
-  },
-  {
-    href: "/admin/certifications",
-    label: "Certifications",
-    icon: ClipboardCheck,
-    adminOnly: true,
-  },
-  {
-    href: "/admin/competitor-mentions",
-    label: "Competitors",
-    icon: ShieldAlert,
-    adminOnly: true,
-  },
-  {
-    href: "/admin/rate-limits",
-    label: "Rate limits",
-    icon: Gauge,
-    adminOnly: true,
-  },
-  {
-    href: "/admin/embeddings",
-    label: "Embeddings",
-    icon: Brain,
-    adminOnly: true,
-  },
-  {
-    href: "/admin/quality",
-    label: "Output quality",
-    icon: Target,
-    adminOnly: true,
-  },
-  {
-    href: "/admin/autoflows",
-    label: "Autoflows",
-    icon: Workflow,
-    adminOnly: true,
-  },
-  {
-    href: "/admin/personas",
-    label: "Shared personas",
-    icon: Users,
-    adminOnly: true,
-  },
-  {
-    href: "/admin/knowledge-graph",
-    label: "Knowledge map",
-    icon: Brain,
-    adminOnly: true,
-  },
-  { href: "/settings", label: "Settings", icon: Settings },
-  { href: "/help", label: "Help", icon: HelpCircle },
 ];
+
+const ALL_ITEMS: NavItem[] = NAV_SECTIONS.flatMap((s) => s.items);
 
 interface SidebarNavProps {
   onNavigate?: () => void;
@@ -201,39 +149,53 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
   const isAdmin = user?.role === "admin";
 
   return (
-    <nav className="flex flex-col gap-1 px-3 py-2">
-      {NAV_ITEMS.map((item) => {
-        if (item.adminOnly && !isAdmin) return null;
-        // Exact match OR prefix match — but only if no other sibling item is
-        // a *more* specific prefix of the current path. Without this, /chat
-        // lights up while the user is on /chat/meeting-prep.
-        const moreSpecificMatch = NAV_ITEMS.some(
-          (other) =>
-            other !== item &&
-            other.href !== item.href &&
-            other.href.startsWith(`${item.href}/`) &&
-            (pathname === other.href ||
-              pathname.startsWith(`${other.href}/`)),
+    <nav className="flex flex-col gap-3 px-3 py-1">
+      {NAV_SECTIONS.map((section, sectionIdx) => {
+        if (section.adminOnly && !isAdmin) return null;
+        const visibleItems = section.items.filter(
+          (it) => !it.adminOnly || isAdmin,
         );
-        const isActive =
-          !moreSpecificMatch &&
-          (pathname === item.href || pathname.startsWith(`${item.href}/`));
-        const Icon = item.icon;
+        if (visibleItems.length === 0) return null;
+
         return (
-          <Link
-            key={item.href}
-            href={item.href}
-            onClick={onNavigate}
-            className={cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-              isActive
-                ? "bg-accent text-accent-foreground"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+          <div key={sectionIdx} className="flex flex-col gap-0.5">
+            {section.label && (
+              <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                {section.label}
+              </div>
             )}
-          >
-            <Icon className="h-4 w-4 shrink-0" />
-            {item.label}
-          </Link>
+            {visibleItems.map((item) => {
+              // Prevent /chat from lighting up while on /chat/meeting-prep, etc.
+              const moreSpecificMatch = ALL_ITEMS.some(
+                (other) =>
+                  other.href !== item.href &&
+                  other.href.startsWith(`${item.href}/`) &&
+                  (pathname === other.href ||
+                    pathname.startsWith(`${other.href}/`)),
+              );
+              const isActive =
+                !moreSpecificMatch &&
+                (pathname === item.href ||
+                  pathname.startsWith(`${item.href}/`));
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={onNavigate}
+                  className={cn(
+                    "flex items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    isActive
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
         );
       })}
     </nav>

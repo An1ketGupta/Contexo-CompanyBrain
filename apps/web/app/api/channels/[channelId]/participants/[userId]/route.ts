@@ -8,5 +8,7 @@ export async function DELETE(
   ctx: { params: Promise<{ channelId: string; userId: string }> },
 ): Promise<Response> {
   const { channelId, userId } = await ctx.params;
-  return proxyJson(req, `/channels/${channelId}/participants/${userId}`);
+  return proxyJson(req, `/channels/${channelId}/participants/${userId}`, {
+    method: "DELETE",
+  });
 }
