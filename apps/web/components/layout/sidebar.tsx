@@ -13,7 +13,7 @@ export function Sidebar() {
   const { user, organization } = useCurrentUser();
 
   return (
-    <aside className="hidden h-screen w-60 shrink-0 flex-col border-r border-border bg-background md:flex">
+    <aside className="hidden h-dvh w-60 shrink-0 flex-col border-r border-border bg-background md:flex">
       <div className="flex h-14 items-center justify-between border-b border-border px-3">
         <Link href="/chat" className="flex items-center gap-2 px-2">
           <Brain className="h-5 w-5 text-primary" />

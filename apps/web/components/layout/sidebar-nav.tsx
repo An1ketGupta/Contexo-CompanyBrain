@@ -102,6 +102,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/insights", label: "Insights", icon: LineChart, adminOnly: true },
       { href: "/admin/analytics", label: "Analytics", icon: BarChart3, adminOnly: true },
+      { href: "/admin/recruiting", label: "Recruiting", icon: Briefcase, adminOnly: true },
       { href: "/admin/health", label: "KB health", icon: HeartPulse, adminOnly: true },
       { href: "/admin/coverage", label: "Coverage", icon: PieChart, adminOnly: true },
       { href: "/admin/knowledge-gaps", label: "Knowledge gaps", icon: FileQuestion, adminOnly: true },

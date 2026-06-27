@@ -115,6 +115,12 @@ from app.routers import (
     recruiting as recruiting_router,
 )
 from app.routers import (
+    ats_integrations as ats_integrations_router,
+)
+from app.routers import (
+    admin_recruiting as admin_recruiting_router,
+)
+from app.routers import (
     sales_enablement as sales_enablement_router,
 )
 from app.routers import (
@@ -156,6 +162,17 @@ def create_app() -> FastAPI:
     # Bootstrap logging + Sentry before any other module-level work that might
     # try to log. Idempotent: safe to call from tests' app factories.
     init_observability(settings)
+
+    # Loud banner when ATS mock is on so we don't ship a build with this
+    # accidentally enabled in prod (validate_production_config covers actual
+    # secrets; this is a UX nudge for developers).
+    if settings.use_mock_ats:
+        import logging as _stdlogging
+        _stdlogging.getLogger("uvicorn.error").warning(
+            "USE_MOCK_ATS=true — Greenhouse/Lever/Ashby calls go to %s "
+            "(start the mock with: cd apps/api && uv run python -m tools.mock_ats_server)",
+            settings.mock_ats_url,
+        )
 
     # Touch the Langfuse module so it initializes the singleton at app boot
     # rather than on the first chat request (lazy init would block the request
@@ -256,6 +273,8 @@ app.include_router(knowledge_health_router.router)
 app.include_router(sequences_router.router)
 app.include_router(internal_announcements_router.router)
 app.include_router(recruiting_router.router)
+app.include_router(ats_integrations_router.router)
+app.include_router(admin_recruiting_router.router)
 app.include_router(sales_enablement_router.router)
 app.include_router(executive_assistant_router.router)
 app.include_router(calendar_meetings_router.router)

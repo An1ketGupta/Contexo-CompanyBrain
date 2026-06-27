@@ -92,6 +92,11 @@ import {
   weeklyBriefingSubject,
   type WeeklyBriefingEmailProps,
 } from "@/emails/weekly-briefing";
+import {
+  RecruitingPublishedEmail,
+  recruitingPublishedSubject,
+  type RecruitingPublishedEmailProps,
+} from "@/emails/recruiting-published";
 
 /**
  * Server-to-server email rendering. The FastAPI Inngest worker calls this
@@ -182,6 +187,10 @@ const TEMPLATES = {
     Component: WeeklyBriefingEmail,
     subject: weeklyBriefingSubject,
   } satisfies Template<WeeklyBriefingEmailProps>,
+  recruiting_published: {
+    Component: RecruitingPublishedEmail,
+    subject: recruitingPublishedSubject,
+  } satisfies Template<RecruitingPublishedEmailProps>,
 };
 
 type TemplateName = keyof typeof TEMPLATES;

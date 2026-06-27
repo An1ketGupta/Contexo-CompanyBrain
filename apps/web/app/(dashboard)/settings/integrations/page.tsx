@@ -42,6 +42,10 @@ import {
   OneDriveCard,
   type OneDriveStatus,
 } from "@/components/integrations/v2-cards";
+import {
+  AtsCard,
+  type AtsStatusResponse,
+} from "@/components/integrations/ats-cards";
 
 interface DriveStatus {
   available: boolean;
@@ -110,6 +114,10 @@ export default function IntegrationsPage() {
     "/api/integrations/status",
     fetcher,
   );
+  const { data: atsData, mutate: mutateAts } = useSWR<AtsStatusResponse>(
+    "/api/integrations/ats/status",
+    fetcher,
+  );
 
   useEffect(() => {
     const connected = search.get("connected");
@@ -148,6 +156,27 @@ export default function IntegrationsPage() {
           <DropboxCard status={data.dropbox} onChanged={mutate} />
           <EmailCard status={data.email} onChanged={mutate} />
           <SlackCard status={data.slack} onChanged={mutate} />
+
+          <div className="pt-2">
+            <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+              Applicant tracking
+            </div>
+          </div>
+          <AtsCard
+            provider="greenhouse"
+            status={atsData?.greenhouse}
+            onChanged={() => mutateAts()}
+          />
+          <AtsCard
+            provider="lever"
+            status={atsData?.lever}
+            onChanged={() => mutateAts()}
+          />
+          <AtsCard
+            provider="ashby"
+            status={atsData?.ashby}
+            onChanged={() => mutateAts()}
+          />
         </div>
       )}
     </div>

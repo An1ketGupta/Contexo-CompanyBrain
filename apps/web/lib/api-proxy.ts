@@ -65,12 +65,19 @@ export async function proxyJson(
 
   const { method = "GET", body, signal } = options;
 
+  // Forward the Idempotency-Key when the browser provides one. Endpoints
+  // that opt-in (recruiting publish, future payment writes) rely on it being
+  // threaded through to FastAPI verbatim.
+  const idempotencyKey =
+    request.headers.get("idempotency-key") ?? request.headers.get("Idempotency-Key");
+
   const upstream = await fetch(`${API_URL}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${token}`,
       [REQUEST_ID_HEADER]: requestId,
       ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal,

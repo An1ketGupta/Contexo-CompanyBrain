@@ -7,3 +7,14 @@ export async function GET(req: NextRequest, { params }: RouteCtx): Promise<Respo
   const { id } = await params;
   return proxyJson(req, `/recruiting/requisitions/${id}`);
 }
+
+export async function PATCH(req: NextRequest, { params }: RouteCtx): Promise<Response> {
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  return proxyJson(req, `/recruiting/requisitions/${id}`, { method: "PATCH", body });
+}
+
+export async function DELETE(req: NextRequest, { params }: RouteCtx): Promise<Response> {
+  const { id } = await params;
+  return proxyJson(req, `/recruiting/requisitions/${id}`, { method: "DELETE" });
+}

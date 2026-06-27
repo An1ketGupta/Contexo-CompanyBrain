@@ -24,11 +24,24 @@ from typing import Any
 
 import httpx
 
+from app.config import get_settings
 from app.database import get_service_client
 
 log = logging.getLogger(__name__)
 
-_API = "https://harvest.greenhouse.io/v1"
+
+def _api() -> str:
+    """Base URL for the Greenhouse Harvest API.
+
+    Resolution order:
+      1. USE_MOCK_ATS=true       → MOCK_ATS_URL + "/greenhouse/v1"
+      2. GREENHOUSE_API_URL set  → that value
+      3. default                  → real harvest.greenhouse.io
+    """
+    s = get_settings()
+    if s.use_mock_ats:
+        return f"{s.mock_ats_url.rstrip('/')}/greenhouse/v1"
+    return s.greenhouse_api_url.rstrip("/")
 
 
 async def _get_credentials(org_id: str) -> tuple[str, str | None] | None:
@@ -81,11 +94,9 @@ async def publish_job(
         "notes": content,  # plain-text body; preserves line breaks for JD review
         "requisition_id": (metadata or {}).get("requisition_id"),
     }
-    if location:
-        body["office_ids"] = (metadata or {}).get("office_ids") or []
-        # Greenhouse takes office IDs, not strings. We keep `location` text
-        # available so the recruiter can paste it into the job's location
-        # field manually if no office mapping exists yet.
+    office_ids = (metadata or {}).get("office_ids")
+    if office_ids:
+        body["office_ids"] = office_ids
     if department:
         body["department_id"] = (metadata or {}).get("department_id")
 
@@ -97,7 +108,7 @@ async def publish_job(
         headers["On-Behalf-Of"] = on_behalf
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-        resp = await client.post(f"{_API}/jobs", json=body, headers=headers)
+        resp = await client.post(f"{_api()}/jobs", json=body, headers=headers)
 
     if resp.status_code == 401:
         raise PermissionError("greenhouse_unauthorized")
@@ -142,7 +153,7 @@ async def list_users(*, org_id: str) -> list[dict[str, Any]]:
     api_key, _ = creds
     async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
         resp = await client.get(
-            f"{_API}/users",
+            f"{_api()}/users",
             headers={"Authorization": _auth_header(api_key)},
         )
     if resp.status_code >= 400:
@@ -154,8 +165,64 @@ async def test_connection(*, api_key: str) -> bool:
     """Sanity-check an API key by hitting /v1/users with limit=1."""
     async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
         resp = await client.get(
-            f"{_API}/users",
+            f"{_api()}/users",
             params={"per_page": 1},
             headers={"Authorization": _auth_header(api_key)},
         )
     return resp.status_code == 200
+
+
+# ── Taxonomy fetchers used by the mapping resolver ──────────────────────────
+
+
+async def _paginated_get(
+    api_key: str, path: str, *, per_page: int = 100, max_pages: int = 5
+) -> list[dict[str, Any]]:
+    """Greenhouse paginates with ?page=N&per_page=M. We cap at max_pages so a
+    customer with 5000 offices doesn't blow the timeout — 500 is plenty for
+    the mapping cache."""
+    out: list[dict[str, Any]] = []
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        for page in range(1, max_pages + 1):
+            resp = await client.get(
+                f"{_api()}{path}",
+                params={"page": page, "per_page": per_page},
+                headers={"Authorization": _auth_header(api_key)},
+            )
+            if resp.status_code != 200:
+                break
+            batch = resp.json() or []
+            if not batch:
+                break
+            out.extend(batch)
+            if len(batch) < per_page:
+                break
+    return out
+
+
+async def list_offices(*, api_key: str) -> list[dict[str, Any]]:
+    """GET /v1/offices. Returns [{id, name, location}]."""
+    raw = await _paginated_get(api_key, "/offices")
+    return [
+        {
+            "id": str(item.get("id")),
+            "name": item.get("name") or "",
+            "location": (item.get("location") or {}).get("name"),
+        }
+        for item in raw
+        if item.get("id") is not None
+    ]
+
+
+async def list_departments(*, api_key: str) -> list[dict[str, Any]]:
+    """GET /v1/departments. Returns [{id, name, parent_id}]."""
+    raw = await _paginated_get(api_key, "/departments")
+    return [
+        {
+            "id": str(item.get("id")),
+            "name": item.get("name") or "",
+            "parent_id": str(item.get("parent_id")) if item.get("parent_id") else None,
+        }
+        for item in raw
+        if item.get("id") is not None
+    ]

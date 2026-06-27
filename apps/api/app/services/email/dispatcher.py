@@ -33,6 +33,7 @@ EventType = Literal[
     "scheduled_knowledge_health",
     "internal_announcement",
     "weekly_briefing",
+    "recruiting_published",
 ]
 
 

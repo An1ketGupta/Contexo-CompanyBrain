@@ -256,6 +256,19 @@ class Settings(BaseSettings):
     lever_webhook_secret: str = ""
     ashby_webhook_secret: str = ""
 
+    # ATS API base URLs. Production defaults point at the real provider hosts.
+    # For local dev set USE_MOCK_ATS=true and start tools/mock_ats_server.py —
+    # one flag flips all three adapters to the mock at MOCK_ATS_URL (default
+    # http://localhost:8001), no need to set each *_API_URL individually.
+    #
+    # For granular overrides (e.g. mock Greenhouse but real Lever), set the
+    # per-provider *_API_URL env vars directly and leave USE_MOCK_ATS unset.
+    use_mock_ats: bool = False
+    mock_ats_url: str = "http://localhost:8001"
+    greenhouse_api_url: str = "https://harvest.greenhouse.io/v1"
+    lever_api_url: str = "https://api.lever.co/v1"
+    ashby_api_url: str = "https://api.ashbyhq.com"
+
     # ── Agent2 Day 6: Asana + Linear OAuth (#44) ──────────────────────────
     asana_client_id: str = ""
     asana_client_secret: str = ""

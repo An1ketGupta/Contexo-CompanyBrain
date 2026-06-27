@@ -19,11 +19,24 @@ from typing import Any
 
 import httpx
 
+from app.config import get_settings
 from app.database import get_service_client
 
 log = logging.getLogger(__name__)
 
-_API = "https://api.ashbyhq.com"
+
+def _api() -> str:
+    """Base URL for the Ashby Public API.
+
+    Resolution order:
+      1. USE_MOCK_ATS=true → MOCK_ATS_URL + "/ashby"
+      2. ASHBY_API_URL set → that value
+      3. default            → real api.ashbyhq.com
+    """
+    s = get_settings()
+    if s.use_mock_ats:
+        return f"{s.mock_ats_url.rstrip('/')}/ashby"
+    return s.ashby_api_url.rstrip("/")
 
 
 async def _get_credentials(org_id: str) -> tuple[str, str | None] | None:
@@ -71,8 +84,9 @@ async def publish_job(
         "title": title[:255],
         "description": content,
     }
-    if location:
-        body["locationIds"] = (metadata or {}).get("locationIds") or []
+    location_ids = (metadata or {}).get("locationIds")
+    if location_ids:
+        body["locationIds"] = location_ids
     if department:
         body["departmentId"] = (metadata or {}).get("departmentId")
     if owner_id:
@@ -85,7 +99,7 @@ async def publish_job(
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
         resp = await client.post(
-            f"{_API}/jobOpening.create",
+            f"{_api()}/jobOpening.create",
             json=body,
             headers={
                 "Authorization": _auth_header(api_key),
@@ -121,7 +135,7 @@ async def publish_job(
 async def test_connection(*, api_key: str) -> bool:
     async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
         resp = await client.post(
-            f"{_API}/user.list",
+            f"{_api()}/user.list",
             headers={
                 "Authorization": _auth_header(api_key),
                 "Content-Type": "application/json",
@@ -129,3 +143,70 @@ async def test_connection(*, api_key: str) -> bool:
             json={},
         )
     return resp.status_code == 200 and (resp.json() or {}).get("success", False)
+
+
+# ── Taxonomy fetchers ────────────────────────────────────────────────────────
+
+
+async def _post_list(api_key: str, endpoint: str) -> list[dict[str, Any]]:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        resp = await client.post(
+            f"{_api()}/{endpoint}",
+            headers={
+                "Authorization": _auth_header(api_key),
+                "Content-Type": "application/json",
+            },
+            json={},
+        )
+    if resp.status_code != 200:
+        return []
+    envelope = resp.json() or {}
+    if not envelope.get("success"):
+        return []
+    results = envelope.get("results")
+    if isinstance(results, list):
+        return results
+    if isinstance(results, dict):
+        # Some Ashby endpoints wrap the list in {data:[...], moreDataAvailable}.
+        return results.get("data") or []
+    return []
+
+
+async def list_locations(*, api_key: str) -> list[dict[str, Any]]:
+    """POST /location.list → [{id, name}]."""
+    raw = await _post_list(api_key, "location.list")
+    return [
+        {"id": item.get("id"), "name": item.get("name") or ""}
+        for item in raw
+        if item.get("id")
+    ]
+
+
+async def list_departments(*, api_key: str) -> list[dict[str, Any]]:
+    """POST /department.list → [{id, name}]."""
+    raw = await _post_list(api_key, "department.list")
+    return [
+        {"id": item.get("id"), "name": item.get("name") or ""}
+        for item in raw
+        if item.get("id")
+    ]
+
+
+async def list_teams(*, api_key: str) -> list[dict[str, Any]]:
+    """POST /team.list → [{id, name}]."""
+    raw = await _post_list(api_key, "team.list")
+    return [
+        {"id": item.get("id"), "name": item.get("name") or ""}
+        for item in raw
+        if item.get("id")
+    ]
+
+
+async def list_job_templates(*, api_key: str) -> list[dict[str, Any]]:
+    """POST /jobTemplate.list → [{id, name}]. Required for jobOpening.create."""
+    raw = await _post_list(api_key, "jobTemplate.list")
+    return [
+        {"id": item.get("id"), "name": item.get("name") or ""}
+        for item in raw
+        if item.get("id")
+    ]

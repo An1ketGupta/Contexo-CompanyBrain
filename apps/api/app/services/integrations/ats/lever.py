@@ -21,11 +21,24 @@ from typing import Any
 
 import httpx
 
+from app.config import get_settings
 from app.database import get_service_client
 
 log = logging.getLogger(__name__)
 
-_API = "https://api.lever.co/v1"
+
+def _api() -> str:
+    """Base URL for the Lever Postings API.
+
+    Resolution order:
+      1. USE_MOCK_ATS=true → MOCK_ATS_URL + "/lever/v1"
+      2. LEVER_API_URL set → that value
+      3. default            → real api.lever.co
+    """
+    s = get_settings()
+    if s.use_mock_ats:
+        return f"{s.mock_ats_url.rstrip('/')}/lever/v1"
+    return s.lever_api_url.rstrip("/")
 
 
 async def _get_credentials(org_id: str) -> tuple[str, str | None] | None:
@@ -101,7 +114,7 @@ async def publish_job(
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
         resp = await client.post(
-            f"{_API}/postings",
+            f"{_api()}/postings",
             json=body,
             headers=headers,
             # `perform_as` query param required when API key is account-wide
@@ -134,7 +147,7 @@ async def list_users(*, org_id: str) -> list[dict[str, Any]]:
     api_key, _ = creds
     async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
         resp = await client.get(
-            f"{_API}/users",
+            f"{_api()}/users",
             headers={"Authorization": _auth_header(api_key)},
             params={"limit": 100},
         )
@@ -146,8 +159,47 @@ async def list_users(*, org_id: str) -> list[dict[str, Any]]:
 async def test_connection(*, api_key: str) -> bool:
     async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
         resp = await client.get(
-            f"{_API}/users",
+            f"{_api()}/users",
             params={"limit": 1},
             headers={"Authorization": _auth_header(api_key)},
         )
     return resp.status_code == 200
+
+
+# ── Taxonomy fetchers ────────────────────────────────────────────────────────
+# Lever doesn't expose dedicated location/department endpoints — both are
+# free-text strings on postings. The "taxonomy" we cache is the distinct set
+# of categories.location and categories.team values seen across recent
+# postings, so the resolver can still suggest deterministic matches.
+
+
+async def list_locations(*, api_key: str) -> list[dict[str, Any]]:
+    """Distinct categories.location from the last 200 postings."""
+    return await _distinct_category(api_key, key="location")
+
+
+async def list_teams(*, api_key: str) -> list[dict[str, Any]]:
+    """Distinct categories.team from the last 200 postings — Lever calls
+    departments "teams"."""
+    return await _distinct_category(api_key, key="team")
+
+
+async def _distinct_category(api_key: str, *, key: str) -> list[dict[str, Any]]:
+    values: dict[str, int] = {}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        resp = await client.get(
+            f"{_api()}/postings",
+            params={"limit": 100, "include": "categories"},
+            headers={"Authorization": _auth_header(api_key)},
+        )
+        if resp.status_code != 200:
+            return []
+        for posting in (resp.json() or {}).get("data") or []:
+            val = ((posting.get("categories") or {}).get(key) or "").strip()
+            if val:
+                values[val] = values.get(val, 0) + 1
+    # Sort by frequency so the most-used values surface first in pickers.
+    return [
+        {"id": v, "name": v, "count": c}
+        for v, c in sorted(values.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]

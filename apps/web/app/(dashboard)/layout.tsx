@@ -21,11 +21,13 @@ export default function DashboardLayout({
     <ShortcutsPanelProvider>
       <CommandPaletteProvider>
         <UploadProvider>
-          {/* `h-dvh` (dynamic viewport height) handles the iOS Safari
-              address-bar collapse that `h-screen` (= 100vh) can't. The
-              `min-h-` variant is a fallback for the rare browser without
-              dvh support — flexbox children still get the correct height. */}
-          <div className="flex h-dvh min-h-dvh flex-col md:flex-row">
+          {/* Pinned to the viewport with `fixed inset-0` so the body can never
+              grow taller than the screen — that's what was producing a second
+              body-level scrollbar next to the inner content scroll. The inner
+              `flex-1 overflow-y-auto` div is the only scroll container on the
+              page. `h-dvh` is kept as a fallback for browsers/devtools that
+              measure `inset-0` against `vh` instead of `dvh`. */}
+          <div className="fixed inset-0 flex h-dvh flex-col overflow-hidden md:flex-row">
             <GlobalDocumentToaster />
             <Sidebar />
             <MobileHeader />

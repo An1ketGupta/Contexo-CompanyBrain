@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode
@@ -348,14 +349,193 @@ def _text_to_blocks(text: str) -> list[dict[str, Any]]:
     return out
 
 
+# Inline markdown: **bold**, *italic*/_italic_, `code`, [text](url). Anchored
+# so we can run findall() once and assemble rich_text runs in order.
+_MD_INLINE_RE = re.compile(
+    r"(\*\*(?P<bold>[^*]+)\*\*)"
+    r"|(`(?P<code>[^`]+)`)"
+    r"|(\[(?P<linktext>[^\]]+)\]\((?P<linkurl>[^)]+)\))"
+    r"|(\*(?P<itala>[^*\s][^*]*?)\*)"
+    r"|(_(?P<italu>[^_\s][^_]*?)_)"
+)
+
+
+def _md_inline_runs(text: str) -> list[dict[str, Any]]:
+    """Parse one line of inline markdown into Notion rich_text runs."""
+    runs: list[dict[str, Any]] = []
+    cursor = 0
+    for m in _MD_INLINE_RE.finditer(text):
+        if m.start() > cursor:
+            plain = text[cursor : m.start()]
+            if plain:
+                runs.append({"type": "text", "text": {"content": plain}})
+        if m.group("bold") is not None:
+            runs.append(
+                {
+                    "type": "text",
+                    "text": {"content": m.group("bold")},
+                    "annotations": {"bold": True},
+                }
+            )
+        elif m.group("code") is not None:
+            runs.append(
+                {
+                    "type": "text",
+                    "text": {"content": m.group("code")},
+                    "annotations": {"code": True},
+                }
+            )
+        elif m.group("linktext") is not None:
+            runs.append(
+                {
+                    "type": "text",
+                    "text": {
+                        "content": m.group("linktext"),
+                        "link": {"url": m.group("linkurl")},
+                    },
+                }
+            )
+        else:
+            italic = m.group("itala") or m.group("italu")
+            runs.append(
+                {
+                    "type": "text",
+                    "text": {"content": italic},
+                    "annotations": {"italic": True},
+                }
+            )
+        cursor = m.end()
+    if cursor < len(text):
+        tail = text[cursor:]
+        if tail:
+            runs.append({"type": "text", "text": {"content": tail}})
+    return runs or [{"type": "text", "text": {"content": text}}]
+
+
+def _markdown_to_blocks(text: str) -> list[dict[str, Any]]:
+    """Convert a small subset of markdown → Notion blocks.
+
+    Supported: H1/H2/H3, bulleted lists (`-`/`*`), to-do lists (`- [ ]`,
+    `- [x]`), paragraphs (blank-line separated), and inline **bold**,
+    *italic*/_italic_, `code`, and [text](url). Anything fancier (tables,
+    nested lists, blockquotes) falls through as a plain paragraph — Notion
+    will still render it readably, just without the structure.
+    """
+    blocks: list[dict[str, Any]] = []
+    paragraph_buf: list[str] = []
+
+    def flush_paragraph() -> None:
+        if not paragraph_buf:
+            return
+        joined = " ".join(paragraph_buf).strip()
+        paragraph_buf.clear()
+        if not joined:
+            return
+        blocks.append(
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": _md_inline_runs(joined)},
+            }
+        )
+
+    for raw in (text or "").splitlines():
+        line = raw.rstrip()
+        stripped = line.lstrip()
+        if not stripped:
+            flush_paragraph()
+            continue
+
+        if stripped.startswith("### "):
+            flush_paragraph()
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "heading_3",
+                    "heading_3": {"rich_text": _md_inline_runs(stripped[4:])},
+                }
+            )
+            continue
+        if stripped.startswith("## "):
+            flush_paragraph()
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "heading_2",
+                    "heading_2": {"rich_text": _md_inline_runs(stripped[3:])},
+                }
+            )
+            continue
+        if stripped.startswith("# "):
+            flush_paragraph()
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "heading_1",
+                    "heading_1": {"rich_text": _md_inline_runs(stripped[2:])},
+                }
+            )
+            continue
+
+        todo_match = re.match(r"^[-*]\s+\[([ xX])\]\s+(.*)$", stripped)
+        if todo_match:
+            flush_paragraph()
+            checked = todo_match.group(1).lower() == "x"
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "to_do",
+                    "to_do": {
+                        "rich_text": _md_inline_runs(todo_match.group(2)),
+                        "checked": checked,
+                    },
+                }
+            )
+            continue
+
+        bullet_match = re.match(r"^[-*]\s+(.*)$", stripped)
+        if bullet_match:
+            flush_paragraph()
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {
+                        "rich_text": _md_inline_runs(bullet_match.group(1))
+                    },
+                }
+            )
+            continue
+
+        paragraph_buf.append(stripped)
+
+    flush_paragraph()
+
+    if not blocks:
+        return [
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": []},
+            }
+        ]
+    return blocks
+
+
 async def create_page(
     *,
     org_id: str,
     parent_page_id: str,
     title: str,
     content: str,
+    is_markdown: bool = False,
 ) -> dict[str, Any]:
     """Create a Notion page under `parent_page_id` with the given content.
+
+    `is_markdown=True` parses headings, bullets, to-dos, and inline emphasis
+    via `_markdown_to_blocks`. Default (False) is the legacy plain-text
+    converter that dumps each blank-line paragraph as one paragraph block —
+    keep that for chat output where literal markdown isn't intended.
 
     The bot needs to have been shared on the parent page in Notion — Notion
     doesn't let an integration write to a page it can't see. If that's not
@@ -366,7 +546,7 @@ async def create_page(
     if not token:
         raise PermissionError("notion_not_connected")
 
-    blocks = _text_to_blocks(content)
+    blocks = _markdown_to_blocks(content) if is_markdown else _text_to_blocks(content)
     payload: dict[str, Any] = {
         "parent": {"page_id": parent_page_id},
         "properties": {
@@ -414,3 +594,35 @@ async def list_write_targets(*, org_id: str, query: str | None = None) -> list[d
     not the doc-selection list for the sync flow.
     """
     return await list_accessible_pages(org_id=org_id, query=query)
+
+
+async def retrieve_page(*, org_id: str, page_id: str) -> dict[str, Any]:
+    """Fetch a single page's metadata. Used to validate a chosen parent.
+
+    Raises:
+        PermissionError("notion_not_connected") — org has no Notion token.
+        PermissionError("notion_parent_not_shared") — bot can't see this
+            page (Notion returns 404 / object_not_found in that case).
+        RuntimeError — any other non-200 response.
+    """
+    token = await _access_token(org_id)
+    if not token:
+        raise PermissionError("notion_not_connected")
+    # Strip dashes — Notion accepts either form, but we normalise to bare hex
+    # so the URL doesn't reject UUID-style input.
+    clean_id = page_id.replace("-", "")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+        resp = await client.get(
+            f"{_NOTION_API}/pages/{clean_id}",
+            headers=_headers(token),
+        )
+    if resp.status_code == 404:
+        raise PermissionError("notion_parent_not_shared")
+    if resp.status_code != 200:
+        raise RuntimeError(f"notion_retrieve_failed: {resp.status_code} {resp.text[:200]}")
+    data = resp.json()
+    return {
+        "id": data.get("id") or clean_id,
+        "title": _page_title(data),
+        "url": data.get("url"),
+    }
