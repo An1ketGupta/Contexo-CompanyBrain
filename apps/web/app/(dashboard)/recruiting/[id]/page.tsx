@@ -5,17 +5,26 @@ import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import {
+  Banknote,
+  Briefcase,
+  Building2,
   Check,
+  Clock,
   Copy,
   ExternalLink,
+  FileText,
+  GraduationCap,
   Loader2,
+  MapPin,
   Pencil,
+  RefreshCw,
+  Search,
   Trash2,
+  Users,
 } from "lucide-react";
 
 import { Markdown } from "@/components/chat/markdown";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,6 +38,7 @@ import {
 } from "@/components/ui/tooltip";
 import { NotionParentPicker } from "@/components/recruiting/notion-parent-picker";
 import { SlackChannelPicker } from "@/components/recruiting/slack-channel-picker";
+import { StartOnboardingDialog } from "@/components/onboarding/start-onboarding-dialog";
 
 interface JdVariant {
   tone: string;
@@ -508,47 +518,28 @@ export default function RequisitionDetailPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
-      <header>
+      <header className="space-y-4">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-2xl font-semibold tracking-tight">
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="flex items-center gap-3">
+              <StatusPill status={data.status} />
+              <div className="flex flex-wrap gap-1.5">
+                {(data.ats_postings.length > 0
+                  ? data.ats_postings.map((p) => p.platform)
+                  : data.ats_platform
+                    ? [data.ats_platform]
+                    : []
+                ).map((p) => (
+                  <PlatformChip key={p} platform={p} />
+                ))}
+              </div>
+            </div>
+            <h1 className="text-2xl font-semibold leading-tight tracking-tight">
               {data.role_request}
             </h1>
-            <div className="mt-2 flex items-center gap-2">
-              <Badge
-                className={
-                  data.status === "published"
-                    ? "bg-emerald-100 text-emerald-700"
-                    : data.status === "failed"
-                      ? "bg-red-100 text-red-700"
-                      : "bg-zinc-100 text-zinc-700"
-                }
-              >
-                {data.status}
-              </Badge>
-              {(data.ats_postings.length > 0
-                ? data.ats_postings.map((p) => p.platform)
-                : data.ats_platform
-                  ? [data.ats_platform]
-                  : []
-              ).map((p) => (
-                <Badge key={p} variant="outline">
-                  {p}
-                </Badge>
-              ))}
-              {data.location && (
-                <Badge variant="outline">{data.location}</Badge>
-              )}
-              {data.department && (
-                <Badge variant="outline">{data.department}</Badge>
-              )}
-              {data.stack && (
-                <Badge variant="outline">{data.stack}</Badge>
-              )}
-            </div>
           </div>
           {canEdit && (
-            <div className="flex gap-2">
+            <div className="flex shrink-0 gap-1">
               <Button
                 size="sm"
                 variant="outline"
@@ -562,17 +553,47 @@ export default function RequisitionDetailPage() {
                 variant="ghost"
                 onClick={handleDelete}
                 disabled={deleting}
+                className="text-muted-foreground hover:text-red-600"
               >
                 {deleting ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
                   <Trash2 className="h-3.5 w-3.5" />
                 )}
-                Delete
               </Button>
             </div>
           )}
         </div>
+
+        {(data.location ||
+          data.department ||
+          data.seniority_level ||
+          data.disclosed_compensation ||
+          data.working_hours ||
+          data.stack) && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+            {data.location && (
+              <MetaItem icon={MapPin}>{data.location}</MetaItem>
+            )}
+            {data.department && (
+              <MetaItem icon={Building2}>{data.department}</MetaItem>
+            )}
+            {data.seniority_level && (
+              <MetaItem icon={GraduationCap}>
+                <span className="capitalize">{data.seniority_level}</span>
+              </MetaItem>
+            )}
+            {data.disclosed_compensation && (
+              <MetaItem icon={Banknote}>{data.disclosed_compensation}</MetaItem>
+            )}
+            {data.working_hours && (
+              <MetaItem icon={Clock}>{data.working_hours}</MetaItem>
+            )}
+            {data.stack && (
+              <MetaItem icon={Briefcase}>{data.stack}</MetaItem>
+            )}
+          </div>
+        )}
 
         {data.error_message && (
           <div className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -602,36 +623,39 @@ export default function RequisitionDetailPage() {
         />
       )}
 
-      {/* Variant tabs */}
       <section>
-        <h2 className="mb-2 text-sm font-medium text-muted-foreground">
-          {isPublished ? "Published JD" : "Pick a variant"}
-        </h2>
-        <div className="flex flex-wrap gap-2">
-          {data.jd_variants.map((v, i) => {
-            const idx = isPublished ? (data.selected_variant_index ?? 0) : selectedIdx;
-            const isActive = i === idx;
-            return (
-              <button
-                key={i}
-                type="button"
-                disabled={isPublished}
-                onClick={() => setSelectedIdx(i)}
-                className={`rounded border px-3 py-1 text-xs font-medium transition ${
-                  isActive
-                    ? "border-zinc-900 bg-zinc-900 text-white"
-                    : "border-zinc-300 bg-white text-zinc-700 hover:border-zinc-400"
-                } ${isPublished ? "cursor-not-allowed opacity-60" : ""}`}
-              >
-                {v.tone}
-              </button>
-            );
-          })}
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-sm font-medium text-muted-foreground">
+            {isPublished ? "Published JD" : "Pick a variant"}
+          </h2>
+          <div className="inline-flex rounded-md border border-border bg-muted/40 p-0.5">
+            {data.jd_variants.map((v, i) => {
+              const idx = isPublished ? (data.selected_variant_index ?? 0) : selectedIdx;
+              const isActive = i === idx;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  disabled={isPublished}
+                  onClick={() => setSelectedIdx(i)}
+                  className={`rounded px-3 py-1 text-xs font-medium transition ${
+                    isActive
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  } ${isPublished ? "cursor-not-allowed" : ""}`}
+                >
+                  {v.tone}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {activeVariant && (
-          <div className="mt-4 rounded border border-border bg-card p-6">
-            <Markdown>{activeVariant.text}</Markdown>
+          <div className="rounded-lg border border-border bg-card p-6 sm:p-8">
+            <div className="prose prose-sm dark:prose-invert mx-auto max-w-3xl">
+              <Markdown>{activeVariant.text}</Markdown>
+            </div>
           </div>
         )}
       </section>
@@ -1035,146 +1059,153 @@ export default function RequisitionDetailPage() {
         </section>
       )}
 
-      {/* Published outputs */}
       {isPublished && (
-        <section className="space-y-4">
-          {(data.ats_postings.length > 0
-            ? data.ats_postings
-            : data.ats_url
-              ? [
-                  {
-                    platform: data.ats_platform as AtsPlatform,
-                    job_id: data.ats_job_id,
-                    url: data.ats_url,
-                    error: null,
-                  },
-                ]
-              : []
-          ).map((p) =>
-            p.url ? (
-              <a
-                key={p.platform}
-                href={p.url}
-                target="_blank"
-                rel="noreferrer"
-                className="block rounded border border-border bg-card p-4 transition hover:bg-accent/40"
-              >
-                <div className="text-xs text-muted-foreground">
-                  {p.platform.charAt(0).toUpperCase() + p.platform.slice(1)} posting
-                </div>
-                <div className="mt-1 font-medium">{p.url}</div>
-              </a>
-            ) : (
-              <div
-                key={p.platform}
-                className="rounded border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/40"
-              >
-                <div className="text-xs text-red-700 dark:text-red-300">
-                  {p.platform.charAt(0).toUpperCase() + p.platform.slice(1)} —
-                  publish failed
-                </div>
-                <div className="mt-1 break-all text-sm text-red-800 dark:text-red-200">
-                  {p.error}
-                </div>
-              </div>
-            ),
-          )}
-          {data.notion_tracker_url && (
-            <a
-              href={data.notion_tracker_url}
-              target="_blank"
-              rel="noreferrer"
-              className="block rounded border border-border bg-card p-4 transition hover:bg-accent/40"
-            >
-              <div className="text-xs text-muted-foreground">Notion hiring tracker</div>
-              <div className="mt-1 font-medium">{data.notion_tracker_url}</div>
-            </a>
-          )}
-
-          {isPublished && (
-            <div className="rounded border border-border bg-card p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <div className="text-xs text-muted-foreground">
-                    Candidate sync
+        <>
+          <section className="space-y-3">
+            <SectionHeading icon={ExternalLink}>Live postings</SectionHeading>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(data.ats_postings.length > 0
+                ? data.ats_postings
+                : data.ats_url
+                  ? [
+                      {
+                        platform: data.ats_platform as AtsPlatform,
+                        job_id: data.ats_job_id,
+                        url: data.ats_url,
+                        error: null,
+                      },
+                    ]
+                  : []
+              ).map((p) =>
+                p.url ? (
+                  <PostingCard
+                    key={p.platform}
+                    platform={p.platform}
+                    label={`${platformLabel(p.platform)} posting`}
+                    url={p.url}
+                  />
+                ) : (
+                  <div
+                    key={p.platform}
+                    className="rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-950/40"
+                  >
+                    <div className="flex items-center gap-2">
+                      <PlatformIcon platform={p.platform} />
+                      <span className="text-xs font-medium text-red-700 dark:text-red-300">
+                        {platformLabel(p.platform)} — publish failed
+                      </span>
+                    </div>
+                    <div className="mt-2 break-all text-sm text-red-800 dark:text-red-200">
+                      {p.error}
+                    </div>
                   </div>
-                  <div className="mt-1 text-sm">
+                ),
+              )}
+              {data.notion_tracker_url && (
+                <PostingCard
+                  platform="notion"
+                  label="Notion hiring tracker"
+                  url={data.notion_tracker_url}
+                />
+              )}
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <SectionHeading icon={Users}>Candidate sync</SectionHeading>
+            <div className="rounded-lg border border-border bg-card p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-foreground">
                     {data.candidates_last_synced_at
                       ? `Last synced ${new Date(data.candidates_last_synced_at).toLocaleString()}`
-                      : "Pulls candidates from every connected ATS into the Notion tracker."}
-                  </div>
+                      : "Pull candidates from every connected ATS into the Notion tracker."}
+                  </p>
                 </div>
-                <Button
-                  size="sm"
-                  onClick={handleSyncCandidates}
-                  disabled={syncing || !data.notion_candidates_db_id}
-                  title={
-                    data.notion_candidates_db_id
-                      ? "Pull the latest candidates from every connected ATS"
-                      : "Re-publish this requisition to set up the candidate tracker"
-                  }
-                >
-                  {syncing ? (
-                    <>
-                      <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                      Syncing…
-                    </>
-                  ) : (
-                    "Sync candidates"
-                  )}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <StartOnboardingDialog
+                    defaultRoleTitle={data.role_request}
+                    requisitionId={data.id}
+                  />
+                  <Button
+                    size="sm"
+                    onClick={handleSyncCandidates}
+                    disabled={syncing || !data.notion_candidates_db_id}
+                    title={
+                      data.notion_candidates_db_id
+                        ? "Pull the latest candidates from every connected ATS"
+                        : "Re-publish this requisition to set up the candidate tracker"
+                    }
+                  >
+                    {syncing ? (
+                      <>
+                        <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                        Syncing…
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="mr-2 h-3 w-3" />
+                        Sync candidates
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
 
               {!data.notion_candidates_db_id && (
-                <div className="mt-2 text-xs text-amber-700 dark:text-amber-300">
-                  This requisition was published before candidate sync was
+                <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+                  This requisition was Published before candidate sync was
                   available. Republish to add a Notion candidate database.
                 </div>
               )}
 
               {syncSummary && (
-                <div className="mt-3 space-y-1 text-xs text-muted-foreground">
-                  <div>
-                    <span className="font-medium text-foreground">
-                      {syncSummary.total}
-                    </span>{" "}
-                    candidates synced ·{" "}
-                    <span className="font-medium text-foreground">
-                      {syncSummary.new}
-                    </span>{" "}
-                    new ·{" "}
-                    <span className="font-medium text-foreground">
-                      {syncSummary.updated}
-                    </span>{" "}
-                    updated
+                <div className="mt-4 space-y-3">
+                  <div className="grid grid-cols-3 gap-3">
+                    <StatTile label="Total" value={syncSummary.total} />
+                    <StatTile label="New" value={syncSummary.new} accent="emerald" />
+                    <StatTile label="Updated" value={syncSummary.updated} accent="blue" />
                   </div>
-                  {Object.entries(syncSummary.per_platform).map(
-                    ([platform, info]) => (
-                      <div key={platform}>
-                        <span className="capitalize">{platform}</span>:{" "}
-                        {info.error ? (
-                          <span className="text-red-600 dark:text-red-300">
-                            {info.error}
-                          </span>
-                        ) : (
-                          `${info.count} candidate${info.count === 1 ? "" : "s"}`
-                        )}
-                      </div>
-                    ),
+                  {Object.keys(syncSummary.per_platform).length > 0 && (
+                    <div className="space-y-1 border-t border-border/60 pt-3 text-xs">
+                      {Object.entries(syncSummary.per_platform).map(
+                        ([platform, info]) => (
+                          <div
+                            key={platform}
+                            className="flex items-center justify-between"
+                          >
+                            <span className="flex items-center gap-1.5 capitalize text-muted-foreground">
+                              <PlatformIcon platform={platform as AtsPlatform} />
+                              {platform}
+                            </span>
+                            {info.error ? (
+                              <span className="text-red-600 dark:text-red-300">
+                                {info.error}
+                              </span>
+                            ) : (
+                              <span className="font-medium text-foreground">
+                                {info.count} candidate
+                                {info.count === 1 ? "" : "s"}
+                              </span>
+                            )}
+                          </div>
+                        ),
+                      )}
+                    </div>
                   )}
                 </div>
               )}
 
               {data.candidates_last_sync_error && !syncSummary && (
-                <div className="mt-2 break-words text-xs text-red-700 dark:text-red-300">
+                <div className="mt-3 break-words rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
                   Last sync had errors: {data.candidates_last_sync_error}
                 </div>
               )}
             </div>
-          )}
+          </section>
 
           {data.slack_post_error && (
-            <div className="rounded border border-amber-300 bg-amber-50 p-4 dark:border-amber-500/40 dark:bg-amber-500/10">
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-500/40 dark:bg-amber-500/10">
               <div className="text-xs font-medium text-amber-900 dark:text-amber-200">
                 Slack announcement didn&apos;t post
               </div>
@@ -1192,55 +1223,60 @@ export default function RequisitionDetailPage() {
           )}
 
           {data.linkedin_search_urls?.length > 0 && (
-            <div className="rounded border border-border bg-card p-4">
-              <div className="text-xs text-muted-foreground">
+            <section className="space-y-3">
+              <SectionHeading icon={Search}>
                 LinkedIn search shortcuts
+              </SectionHeading>
+              <div className="rounded-lg border border-border bg-card p-4">
+                <TooltipProvider delayDuration={150}>
+                  <ul className="space-y-1 text-sm">
+                    {data.linkedin_search_urls.map((s, i) => (
+                      <LinkedinSearchRow key={i} search={s} />
+                    ))}
+                  </ul>
+                </TooltipProvider>
               </div>
-              <TooltipProvider delayDuration={150}>
-                <ul className="mt-3 space-y-2 text-sm">
-                  {data.linkedin_search_urls.map((s, i) => (
-                    <LinkedinSearchRow key={i} search={s} />
-                  ))}
-                </ul>
-              </TooltipProvider>
-            </div>
+            </section>
           )}
 
           {data.naukri_search_urls?.length > 0 && (
-            <div className="rounded border border-border bg-card p-4">
+            <section className="space-y-3">
               <div className="flex items-center justify-between">
-                <div className="text-xs text-muted-foreground">
+                <SectionHeading icon={Search}>
                   Naukri Resdex search shortcuts
-                </div>
+                </SectionHeading>
                 <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
                   India · Resdex
                 </span>
               </div>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Pre-filtered candidate-search URLs tuned for the Indian
-                market. Click to land in Resdex with the filters applied —
-                you'll need an active Resdex subscription to browse results.
-              </p>
-              <TooltipProvider delayDuration={150}>
-                <ul className="mt-3 space-y-2 text-sm">
-                  {data.naukri_search_urls.map((s, i) => (
-                    <NaukriSearchRow key={i} search={s} />
-                  ))}
-                </ul>
-              </TooltipProvider>
-            </div>
+              <div className="rounded-lg border border-border bg-card p-4">
+                <p className="mb-3 text-[11px] text-muted-foreground">
+                  Pre-filtered candidate-search URLs tuned for the Indian
+                  market. Click to land in Resdex with the filters applied —
+                  you&apos;ll need an active Resdex subscription to browse
+                  results.
+                </p>
+                <TooltipProvider delayDuration={150}>
+                  <ul className="space-y-1 text-sm">
+                    {data.naukri_search_urls.map((s, i) => (
+                      <NaukriSearchRow key={i} search={s} />
+                    ))}
+                  </ul>
+                </TooltipProvider>
+              </div>
+            </section>
           )}
 
           {data.sourcing_templates?.length > 0 && (
-            <div className="rounded border border-border bg-card p-4">
-              <div className="text-xs text-muted-foreground">
-                Sourcing drafts (copy-paste into LinkedIn)
-              </div>
-              <ul className="mt-3 space-y-3 text-sm">
+            <section className="space-y-3">
+              <SectionHeading icon={FileText}>
+                Sourcing drafts <span className="text-muted-foreground/70">· copy into LinkedIn</span>
+              </SectionHeading>
+              <ul className="space-y-3 text-sm">
                 {data.sourcing_templates.map((t, i) => (
                   <li
                     key={i}
-                    className="rounded border border-border/60 bg-muted/40 p-3 text-foreground"
+                    className="rounded-lg border border-border bg-card p-4 text-foreground"
                   >
                     {t.subject && (
                       <div className="text-xs font-medium text-foreground">
@@ -1256,9 +1292,9 @@ export default function RequisitionDetailPage() {
                   </li>
                 ))}
               </ul>
-            </div>
+            </section>
           )}
-        </section>
+        </>
       )}
     </div>
   );
@@ -1284,14 +1320,11 @@ function LinkedinSearchRow({ search }: { search: LinkedinSearch }) {
           href={search.url}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-1 font-medium text-blue-600 hover:underline"
+          className="inline-flex items-center gap-1.5 text-sm font-semibold text-foreground hover:text-blue-600 hover:underline"
         >
           {search.label}
-          <ExternalLink className="h-3 w-3" />
+          <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
         </a>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {search.description}
-        </p>
       </div>
       <Tooltip>
         <TooltipTrigger asChild>
@@ -1373,6 +1406,181 @@ function NaukriSearchRow({ search }: { search: NaukriSearch }) {
         <TooltipContent>{copied ? "Copied" : "Copy URL"}</TooltipContent>
       </Tooltip>
     </li>
+  );
+}
+
+type PlatformKey = AtsPlatform | "notion";
+
+const PLATFORM_STYLE: Record<
+  PlatformKey,
+  { label: string; bg: string; text: string }
+> = {
+  greenhouse: { label: "Greenhouse", bg: "bg-emerald-100 dark:bg-emerald-500/20", text: "text-emerald-700 dark:text-emerald-300" },
+  lever: { label: "Lever", bg: "bg-violet-100 dark:bg-violet-500/20", text: "text-violet-700 dark:text-violet-300" },
+  ashby: { label: "Ashby", bg: "bg-orange-100 dark:bg-orange-500/20", text: "text-orange-700 dark:text-orange-300" },
+  naukri: { label: "Naukri", bg: "bg-blue-100 dark:bg-blue-500/20", text: "text-blue-700 dark:text-blue-300" },
+  notion: { label: "Notion", bg: "bg-zinc-200 dark:bg-zinc-700", text: "text-zinc-700 dark:text-zinc-200" },
+};
+
+function platformLabel(p: PlatformKey): string {
+  return PLATFORM_STYLE[p]?.label ?? p;
+}
+
+function PlatformIcon({ platform }: { platform: PlatformKey }) {
+  const style = PLATFORM_STYLE[platform];
+  return (
+    <span
+      className={`flex h-5 w-5 items-center justify-center rounded text-[10px] font-semibold ${style.bg} ${style.text}`}
+      aria-hidden
+    >
+      {style.label.charAt(0)}
+    </span>
+  );
+}
+
+function PlatformChip({ platform }: { platform: AtsPlatform }) {
+  const style = PLATFORM_STYLE[platform];
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${style.bg} ${style.text}`}
+    >
+      <PlatformIcon platform={platform} />
+      {style.label}
+    </span>
+  );
+}
+
+function StatusPill({ status }: { status: "draft" | "published" | "failed" }) {
+  const map = {
+    published: { dot: "bg-emerald-500", label: "Published", text: "text-emerald-700 dark:text-emerald-300", bg: "bg-emerald-50 dark:bg-emerald-500/10" },
+    failed: { dot: "bg-red-500", label: "Failed", text: "text-red-700 dark:text-red-300", bg: "bg-red-50 dark:bg-red-500/10" },
+    draft: { dot: "bg-zinc-400", label: "Draft", text: "text-zinc-700 dark:text-zinc-300", bg: "bg-zinc-100 dark:bg-zinc-800" },
+  } as const;
+  // Tolerate any unexpected status (e.g. legacy 'Published' rows from before
+  // migration 072) by folding case and falling back to the draft style.
+  const key = (typeof status === "string"
+    ? status.toLowerCase()
+    : "draft") as keyof typeof map;
+  const s = map[key] ?? map.draft;
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${s.bg} ${s.text}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
+      {s.label}
+    </span>
+  );
+}
+
+function MetaItem({
+  icon: Icon,
+  children,
+}: {
+  icon: typeof MapPin;
+  children: React.ReactNode;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Icon className="h-3.5 w-3.5 shrink-0" />
+      <span className="text-foreground">{children}</span>
+    </span>
+  );
+}
+
+function SectionHeading({
+  icon: Icon,
+  children,
+}: {
+  icon: typeof MapPin;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+      <Icon className="h-3.5 w-3.5" />
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function PostingCard({
+  platform,
+  label,
+  url,
+}: {
+  platform: PlatformKey;
+  label: string;
+  url: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Couldn't copy URL");
+    }
+  };
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="group flex items-center gap-3 rounded-lg border border-border bg-card p-4 transition hover:border-foreground/30 hover:bg-accent/30"
+    >
+      <PlatformIcon platform={platform} />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium text-foreground" title={url}>
+          {label}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100"
+          onClick={copy}
+          aria-label="Copy URL"
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5 text-emerald-600" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+        </Button>
+        <ExternalLink className="h-3.5 w-3.5 text-muted-foreground transition group-hover:text-foreground" />
+      </div>
+    </a>
+  );
+}
+
+function StatTile({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: number;
+  accent?: "emerald" | "blue";
+}) {
+  const tone =
+    accent === "emerald"
+      ? "text-emerald-700 dark:text-emerald-300"
+      : accent === "blue"
+        ? "text-blue-700 dark:text-blue-300"
+        : "text-foreground";
+  return (
+    <div className="rounded-md border border-border bg-muted/30 px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-0.5 text-lg font-semibold ${tone}`}>{value}</div>
+    </div>
   );
 }
 

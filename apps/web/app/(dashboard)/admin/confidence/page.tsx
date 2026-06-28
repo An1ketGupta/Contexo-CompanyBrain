@@ -175,7 +175,7 @@ function ThresholdEditor({
             <h2 className="text-sm font-medium">Outbound write block</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Below this confidence score, AI-generated content cannot be
-              published to external destinations (Slack, Gmail, Notion, Google
+              Published to external destinations (Slack, Gmail, Notion, Google
               Docs). Set to 0 to disable. The badge stays the same — only the
               publish actions are gated.
             </p>

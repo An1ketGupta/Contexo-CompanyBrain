@@ -743,7 +743,7 @@ CREATE TABLE job_requisitions (
   ats_job_id TEXT,
   ats_url TEXT,
   notion_tracker_url TEXT,
-  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'Published')),
   created_by UUID NOT NULL REFERENCES users(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

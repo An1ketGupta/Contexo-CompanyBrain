@@ -93,6 +93,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Talent & Exec",
     items: [
       { href: "/recruiting", label: "Recruiting", icon: Briefcase },
+      { href: "/onboarding", label: "Onboarding", icon: ShieldCheck },
       { href: "/executive/briefing", label: "Exec briefing", icon: Presentation },
     ],
   },

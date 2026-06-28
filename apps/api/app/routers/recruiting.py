@@ -120,6 +120,17 @@ def _coerce_naukri_taxonomy(raw: Any) -> dict[str, Any] | None:
         return None
 
 
+def _normalise_status(raw: str | None) -> str:
+    # Status was originally stored as 'Published' (capital P) before
+    # migration 072 folded the enum to lowercase. Coerce both casings on
+    # read so a DB that hasn't been migrated yet still validates.
+    if not raw:
+        return "draft"
+    if raw.lower() == "published":
+        return "published"
+    return raw
+
+
 def _to_read(row: dict[str, Any]) -> dict[str, Any]:
     """Coerce a DB row into the shape RequisitionRead expects."""
     return {
@@ -157,7 +168,7 @@ def _to_read(row: dict[str, Any]) -> dict[str, Any]:
         "hiring_manager_email": row.get("hiring_manager_email"),
         "slack_channel": row.get("slack_channel"),
         "slack_post_error": row.get("slack_post_error"),
-        "status": row.get("status") or "draft",
+        "status": _normalise_status(row.get("status")),
         "error_message": row.get("error_message"),
         "created_at": row["created_at"],
         "published_at": row.get("published_at"),
@@ -326,7 +337,7 @@ async def sync_candidates(
     row = await asyncio.to_thread(_fetch)
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Requisition not found.")
-    if row.get("status") != "published":
+    if _normalise_status(row.get("status")) != "published":
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Publish the requisition before syncing candidates.",
@@ -381,7 +392,7 @@ async def update_requisition(
         role = await _user_role(token, user_id)
         if role != "admin":
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Not your requisition.")
-    if row.get("status") == "published":
+    if _normalise_status(row.get("status")) == "published":
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Published requisitions can't be edited. Update the JD in your ATS instead.",
@@ -496,7 +507,7 @@ async def delete_requisition(
         role = await _user_role(token, user_id)
         if role != "admin":
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Not your requisition.")
-    if row.get("status") == "published":
+    if _normalise_status(row.get("status")) == "published":
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Published requisitions can't be deleted (audit trail).",

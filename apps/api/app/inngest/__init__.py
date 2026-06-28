@@ -27,6 +27,7 @@ from .knowledge_graph_functions import FUNCTIONS as _KNOWLEDGE_GRAPH_FUNCTIONS
 from .briefing_functions import FUNCTIONS as _BRIEFING_FUNCTIONS
 from .meeting_functions import FUNCTIONS as _MEETING_FUNCTIONS
 from .onboarding_functions import FUNCTIONS as _ONBOARDING_FUNCTIONS
+from .onboarding_v2_functions import FUNCTIONS as _ONBOARDING_V2_FUNCTIONS
 from .policy_functions import FUNCTIONS as _POLICY_FUNCTIONS
 from .query_log_retention import FUNCTIONS as _QUERY_LOG_RETENTION_FUNCTIONS
 from .report_functions import FUNCTIONS as _REPORT_FUNCTIONS
@@ -50,6 +51,7 @@ FUNCTIONS = [
     *_BRIEFING_FUNCTIONS,
     *_APPROVAL_FUNCTIONS,
     *_ONBOARDING_FUNCTIONS,
+    *_ONBOARDING_V2_FUNCTIONS,
     *_POLICY_FUNCTIONS,
     *_COMPLIANCE_FUNCTIONS,
     *_SUPPORT_FUNCTIONS,

@@ -301,6 +301,20 @@ class Settings(BaseSettings):
         "http://localhost:8000/integrations/jira/callback"
     )
 
+    # ── Onboarding v2 — PDF generation sidecar ──────────────────────────────
+    # The Onboarding v2 agent (LOI / Appointment Letter / NDA) fills customer-
+    # uploaded DOCX templates via docxtpl, then converts to PDF by POSTing to
+    # Gotenberg's /forms/libreoffice/convert. Run gotenberg as a sidecar on
+    # Railway (gotenberg/gotenberg:8 image) and set this to the internal URL.
+    # Empty here disables PDF generation — the agent surfaces a clean
+    # "PDF service not configured" error instead of 500-ing.
+    gotenberg_url: str = ""
+
+    # Public-facing base URL the BGV reference receives in their email.
+    # Defaults to app_url; override only if the reference form is hosted on a
+    # different domain (e.g. a subdomain for unauthenticated public flows).
+    bgv_public_url: str = ""
+
 
 class ProductionConfigError(RuntimeError):
     """Raised at startup when production env vars are missing.

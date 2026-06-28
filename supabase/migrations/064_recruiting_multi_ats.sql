@@ -1,6 +1,6 @@
 -- Recruiting: multi-ATS publish.
 --
--- A requisition can now be published to multiple ATS platforms in a single
+-- A requisition can now be Published to multiple ATS platforms in a single
 -- click. We keep the legacy single-platform columns populated with the first
 -- successful posting for back-compat (existing detail pages, audit log
 -- filters, integrations dashboards) and store the full set in `ats_postings`.

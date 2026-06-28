@@ -767,7 +767,7 @@ async def publish_requisition(
     row = await asyncio.to_thread(_fetch)
     if not row:
         raise LookupError("requisition_not_found")
-    if row.get("status") == "published":
+    if (row.get("status") or "").lower() == "published":
         raise RuntimeError("requisition_already_published")
 
     # If the publish request didn't supply a Notion parent, fall back to the
@@ -1004,19 +1004,28 @@ async def publish_requisition(
 
 
 def _extract_title(role_request: str, jd_text: str) -> str:
-    """First H1/H2 line of the JD if present, else fall back to role_request.
+    """Recruiter-supplied role_request (first line) is the source of truth.
 
-    Empirically Gemini opens every JD with `# Senior Product Designer` or
-    similar. If the model deviated we use the user's original input — better
-    a generic title than the model's first paragraph as the job name.
+    The JD body's heading structure isn't stable — the generator may emit
+    `## Interview process` or `## Working hours` as the first heading with
+    no H1 at all, which previously hijacked the title. role_request is what
+    the recruiter actually typed as the role (e.g. "Senior Product
+    Designer"), so use it directly. Fall back to the JD's first H1 / H2
+    only when role_request is empty.
     """
+    first_line = (role_request or "").strip().splitlines()[0:1]
+    if first_line and first_line[0].strip():
+        return first_line[0].strip()[:120]
+    first_h2: str | None = None
     for line in (jd_text or "").splitlines():
         line = line.strip()
         if line.startswith("# "):
-            return line[2:].strip()[:200]
-        if line.startswith("## "):
-            return line[3:].strip()[:200]
-    return role_request[:200]
+            return line[2:].strip()[:120]
+        if first_h2 is None and line.startswith("## "):
+            first_h2 = line[3:].strip()[:120]
+    if first_h2:
+        return first_h2
+    return (role_request or "")[:120]
 
 
 async def _mark_failed(requisition_id: str, org_id: str, msg: str) -> None:
@@ -1718,7 +1727,7 @@ async def _notify_hiring_manager_audited(
             request_summary={"recipient": recipient, "extra_links": len(extra_urls or [])},
         ) as ctx:
             await send_email_event(
-                event_type="recruiting_published",  # type: ignore[arg-type]
+                event_type="recruiting_published",
                 to=recipient,
                 user_id=None,
                 org_id=org_id,

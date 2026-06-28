@@ -23,7 +23,7 @@ export function RecruitingPublishedEmail({
     >
       <Text style={p}>
         You&apos;ve been listed as the hiring manager on{" "}
-        <strong>{role_title}</strong>. The job is published in your ATS and the
+        <strong>{role_title}</strong>. The job is live in your ATS and the
         sourcing kit is queued.
       </Text>
 

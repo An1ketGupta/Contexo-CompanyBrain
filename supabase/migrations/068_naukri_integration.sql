@@ -85,7 +85,7 @@ ALTER TABLE job_requisitions
 
 -- ── 3. Naukri Resdex search URLs (parallel to linkedin_search_urls) ─────────
 -- JSONB array of {label, url, description, query_summary}. Empty until the
--- requisition is published.
+-- requisition is Published.
 ALTER TABLE job_requisitions
   ADD COLUMN IF NOT EXISTS naukri_search_urls JSONB NOT NULL DEFAULT '[]'::jsonb;
 
@@ -105,7 +105,7 @@ ALTER TABLE job_requisitions
   ADD COLUMN IF NOT EXISTS naukri_taxonomy JSONB;
 
 
--- ── 5. Optional index for Naukri-published requisitions ─────────────────────
+-- ── 5. Optional index for Naukri-Published requisitions ─────────────────────
 -- Most tracker queries filter by org_id+status, but a recruiter may want to
 -- list "all requisitions posted to Naukri last month" without a sequential
 -- scan over ats_postings. A simple expression index covers it.

@@ -97,7 +97,9 @@ async def get_recruiting_analytics(
     publish_durations: list[int] = []
 
     for r in rows:
-        s = r.get("status") or "draft"
+        # Normalise legacy 'Published' rows that pre-date migration 072.
+        raw_status = (r.get("status") or "draft")
+        s = "published" if raw_status.lower() == "published" else raw_status
         by_status[s] = by_status.get(s, 0) + 1
         if r.get("ats_platform"):
             by_ats[r["ats_platform"]] = by_ats.get(r["ats_platform"], 0) + 1

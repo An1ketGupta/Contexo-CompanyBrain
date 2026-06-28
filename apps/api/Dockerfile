@@ -5,8 +5,17 @@ COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /uvx /bin/
 
 # Minimal OS hygiene + curl for HEALTHCHECK. python:3.12-slim already has
 # libc/ssl needed by httpx; keep the layer thin.
+#
+# WeasyPrint (Onboarding v2 induction-PDF generator) requires Pango, Cairo,
+# GDK-PixBuf, and HarfBuzz shared libs — system libraries, not Python
+# packages, so they have to land here at apt time. fonts-noto + fonts-noto-cjk
+# give us the glyph coverage for ₹ and Devanagari that Indian HR docs need.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && apt-get install -y --no-install-recommends \
+        curl ca-certificates \
+        libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 \
+        libharfbuzz0b shared-mime-info \
+        fonts-noto fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

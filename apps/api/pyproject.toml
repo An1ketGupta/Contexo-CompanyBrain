@@ -23,6 +23,11 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.20",
     "python-pptx>=1.0.2",
+    # Onboarding v2 — PDF generation. WeasyPrint for HTML→PDF (induction doc);
+    # docxtpl for customer-uploaded LOI/AL/NDA templates (Gotenberg sidecar
+    # handles the DOCX→PDF step over HTTP — no Python lib needed there).
+    "weasyprint>=63.0",
+    "docxtpl>=0.19.0",
     "sentry-sdk[fastapi]>=2.20.0",
     "stripe>=11.4.0",
     "structlog>=24.4.0",

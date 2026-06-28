@@ -56,10 +56,10 @@ CREATE TABLE IF NOT EXISTS job_requisitions (
   hiring_manager_email   TEXT,
   slack_channel          TEXT,
   status                 TEXT NOT NULL DEFAULT 'draft'
-    CHECK (status IN ('draft', 'published', 'failed')),
+    CHECK (status IN ('draft', 'Published', 'failed')),
   error_message          TEXT,
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
-  published_at           TIMESTAMPTZ
+  Published_at           TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_job_requisitions_org_created

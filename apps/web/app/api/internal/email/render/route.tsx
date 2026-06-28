@@ -97,6 +97,46 @@ import {
   recruitingPublishedSubject,
   type RecruitingPublishedEmailProps,
 } from "@/emails/recruiting-published";
+import {
+  OnboardingLoiReadyEmail,
+  onboardingLoiReadySubject,
+  type OnboardingLoiReadyEmailProps,
+} from "@/emails/onboarding-loi-ready";
+import {
+  OnboardingLoiToCandidateEmail,
+  onboardingLoiToCandidateSubject,
+  type OnboardingLoiToCandidateEmailProps,
+} from "@/emails/onboarding-loi-to-candidate";
+import {
+  OnboardingBgvRequestEmail,
+  onboardingBgvRequestSubject,
+  type OnboardingBgvRequestEmailProps,
+} from "@/emails/onboarding-bgv-request";
+import {
+  OnboardingBgvReminderEmail,
+  onboardingBgvReminderSubject,
+  type OnboardingBgvReminderEmailProps,
+} from "@/emails/onboarding-bgv-reminder";
+import {
+  OnboardingOfferBundleReadyEmail,
+  onboardingOfferBundleReadySubject,
+  type OnboardingOfferBundleReadyEmailProps,
+} from "@/emails/onboarding-offer-bundle-ready";
+import {
+  OnboardingOfferToCandidateEmail,
+  onboardingOfferToCandidateSubject,
+  type OnboardingOfferToCandidateEmailProps,
+} from "@/emails/onboarding-offer-to-candidate";
+import {
+  OnboardingPoliciesPendingEmail,
+  onboardingPoliciesPendingSubject,
+  type OnboardingPoliciesPendingEmailProps,
+} from "@/emails/onboarding-policies-pending";
+import {
+  OnboardingInductionReadyEmail,
+  onboardingInductionReadySubject,
+  type OnboardingInductionReadyEmailProps,
+} from "@/emails/onboarding-induction-ready";
 
 /**
  * Server-to-server email rendering. The FastAPI Inngest worker calls this
@@ -191,6 +231,38 @@ const TEMPLATES = {
     Component: RecruitingPublishedEmail,
     subject: recruitingPublishedSubject,
   } satisfies Template<RecruitingPublishedEmailProps>,
+  onboarding_loi_ready: {
+    Component: OnboardingLoiReadyEmail,
+    subject: onboardingLoiReadySubject,
+  } satisfies Template<OnboardingLoiReadyEmailProps>,
+  onboarding_loi_to_candidate: {
+    Component: OnboardingLoiToCandidateEmail,
+    subject: onboardingLoiToCandidateSubject,
+  } satisfies Template<OnboardingLoiToCandidateEmailProps>,
+  onboarding_bgv_request: {
+    Component: OnboardingBgvRequestEmail,
+    subject: onboardingBgvRequestSubject,
+  } satisfies Template<OnboardingBgvRequestEmailProps>,
+  onboarding_bgv_reminder: {
+    Component: OnboardingBgvReminderEmail,
+    subject: onboardingBgvReminderSubject,
+  } satisfies Template<OnboardingBgvReminderEmailProps>,
+  onboarding_offer_bundle_ready: {
+    Component: OnboardingOfferBundleReadyEmail,
+    subject: onboardingOfferBundleReadySubject,
+  } satisfies Template<OnboardingOfferBundleReadyEmailProps>,
+  onboarding_offer_to_candidate: {
+    Component: OnboardingOfferToCandidateEmail,
+    subject: onboardingOfferToCandidateSubject,
+  } satisfies Template<OnboardingOfferToCandidateEmailProps>,
+  onboarding_policies_pending: {
+    Component: OnboardingPoliciesPendingEmail,
+    subject: onboardingPoliciesPendingSubject,
+  } satisfies Template<OnboardingPoliciesPendingEmailProps>,
+  onboarding_induction_ready: {
+    Component: OnboardingInductionReadyEmail,
+    subject: onboardingInductionReadySubject,
+  } satisfies Template<OnboardingInductionReadyEmailProps>,
 };
 
 type TemplateName = keyof typeof TEMPLATES;

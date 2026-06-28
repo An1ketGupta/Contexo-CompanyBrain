@@ -203,6 +203,44 @@ async def acknowledge_document(
             error=str(exc),
         )
 
+    # Onboarding v2 hook: if this user is going through pre-join onboarding
+    # (status policies_assigned), kick the agent so it can advance to induction
+    # once all policies are acknowledged.
+    try:
+        svc = get_service_client()
+        user_row = await asyncio.to_thread(
+            lambda: svc.table("users")
+            .select("email")
+            .eq("id", user_id)
+            .maybe_single()
+            .execute()
+        )
+        user_email = (user_row.data or {}).get("email") if user_row else None
+        if user_email:
+            ob_run = await asyncio.to_thread(
+                lambda: svc.table("onboarding_runs")
+                .select("id, status")
+                .eq("org_id", org_id)
+                .eq("status", "policies_assigned")
+                .ilike("candidate_email", user_email)
+                .limit(1)
+                .execute()
+            )
+            ob_rows = ob_run.data or []
+            if ob_rows:
+                inngest_client = get_inngest_client()
+                await inngest_client.send(
+                    inngest.Event(
+                        name="onboarding_v2/policy_ack_changed",
+                        data={
+                            "onboarding_run_id": ob_rows[0]["id"],
+                            "org_id": org_id,
+                        },
+                    )
+                )
+    except Exception as exc:
+        log.warning("onboarding_v2_ack_hook_failed user_id=%s err=%s", user_id, exc)
+
     return {"acknowledged": True, "rows": affected}
 
 
