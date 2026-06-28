@@ -416,6 +416,12 @@ async def get_run(
 
     refs, docs, events = await asyncio.to_thread(_fetch_related)
 
+    # Re-mint signed URLs at request time so the page never serves a stale
+    # link. Storage-stored signed_url is treated as a hint, not source of
+    # truth — see services/agents/onboarding_v2/storage.py for the TTL
+    # rationale (1h refresh vs 7d stored).
+    fresh_urls = await ob_storage.refresh_signed_urls_for_run(run_id)
+
     detail = _run_to_read(row)
     detail["references"] = [
         {
@@ -442,11 +448,22 @@ async def get_run(
             "id": d["id"],
             "kind": d["kind"],
             "storage_path": d["storage_path"],
-            "signed_url": d.get("signed_url"),
+            # Prefer the freshly-minted URL; only fall back to the stored
+            # value if Supabase Storage was unreachable at refresh time.
+            "signed_url": (
+                fresh_urls.get(d["signed_pdf_path"])
+                or fresh_urls.get(d["storage_path"])
+                or d.get("signed_url")
+            ),
             "sign_status": d.get("sign_status") or "draft",
             "signed_pdf_path": d.get("signed_pdf_path"),
             "signed_uploaded_at": d.get("signed_uploaded_at"),
             "file_bytes": d.get("file_bytes"),
+            "docusign_envelope_id": d.get("docusign_envelope_id"),
+            "docusign_status": d.get("docusign_status"),
+            "docusign_signing_url": d.get("docusign_signing_url"),
+            "docusign_completed_at": d.get("docusign_completed_at"),
+            "used_default_template": d.get("used_default_template") or False,
             "created_at": d["created_at"],
             "updated_at": d["updated_at"],
         }
@@ -504,6 +521,48 @@ async def upload_signed_loi(
             status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "PDF too large (>25MB)."
         )
 
+    # Soft sanity checks: page count + "did HR actually sign it?" heuristic.
+    # We don't reject on these — they're advisory warnings returned in the
+    # response so the UI can show a "Looks like you forgot to sign" prompt.
+    warnings: list[str] = []
+    try:
+        import pymupdf  # type: ignore[import-not-found]
+        with pymupdf.open(stream=body, filetype="pdf") as pdf:
+            if pdf.page_count < 1:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, "PDF has no pages."
+                )
+            if pdf.page_count > 50:
+                warnings.append(
+                    f"PDF has {pdf.page_count} pages — that's unusually long for an LOI."
+                )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log.warning("onboarding_v2.pdf_inspect_failed run=%s err=%s", run_id, exc)
+
+    # Byte-identical-to-draft check: if HR uploads the exact bytes we
+    # generated, they almost certainly forgot to sign + scan it.
+    try:
+        existing_doc = await asyncio.to_thread(
+            lambda: svc.table("onboarding_documents")
+            .select("storage_path, file_bytes")
+            .eq("run_id", run_id).eq("kind", "loi").maybe_single().execute()
+        )
+        if existing_doc and existing_doc.data:
+            draft_path = existing_doc.data.get("storage_path")
+            if draft_path:
+                def _dl() -> bytes:
+                    return svc.storage.from_(ob_storage.STORAGE_BUCKET).download(draft_path)
+                draft_bytes = await asyncio.to_thread(_dl)
+                if draft_bytes and draft_bytes == body:
+                    warnings.append(
+                        "This file is byte-identical to the unsigned draft — did "
+                        "you forget to sign and scan it?"
+                    )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("onboarding_v2.draft_compare_failed run=%s err=%s", run_id, exc)
+
     storage_path = f"orgs/{org_id}/onboarding/{run_id}/loi_signed.pdf"
 
     def _upload() -> None:
@@ -553,7 +612,7 @@ async def upload_signed_loi(
             data={"onboarding_run_id": run_id, "org_id": org_id},
         )
     )
-    return {"status": "loi_signed_uploaded"}
+    return {"status": "loi_signed_uploaded", "warnings": warnings}
 
 
 # ── Approve AL+NDA bundle ───────────────────────────────────────────────────
@@ -596,42 +655,125 @@ async def approve_offer_bundle(
             "Offer bundle incomplete — both AL and NDA must exist before approval.",
         )
 
-    def _signed_url(path: str) -> str | None:
-        try:
-            res = svc.storage.from_(ob_storage.STORAGE_BUCKET).create_signed_url(
-                path=path, expires_in=ob_storage.SIGNED_URL_TTL_SECONDS
-            )
-            return res.get("signedURL") or res.get("signed_url")
-        except Exception:
-            return None
-
-    appointment_url: str | None = None
-    nda_url: str | None = None
-    for d in docs.data:
-        url = await asyncio.to_thread(lambda p=d["storage_path"]: _signed_url(p))
-        if d["kind"] == "appointment_letter":
-            appointment_url = url
-        elif d["kind"] == "nda":
-            nda_url = url
-
-    from app.services.email import send_email_event
     from app.config import get_settings
+    from app.services.email import send_email_event
     settings = get_settings()
 
-    await send_email_event(
-        event_type="onboarding_offer_to_candidate",
-        to=run.data["candidate_email"],
-        user_id=None,
-        org_id=org_id,
-        dedupe_key=f"offer-{run_id}",
-        data={
-            "candidate_name": run.data["candidate_name"],
-            "role_title": run.data["role_title"],
-            "appointment_letter_url": appointment_url,
-            "nda_url": nda_url,
-            "app_url": settings.app_url.rstrip("/"),
-        },
-    )
+    docusign_envelope_id: str | None = None
+    docusign_signing_url: str | None = None
+
+    # Prefer DocuSign embedded signing when configured; fall back to plain
+    # email with signed-link PDFs. The fallback path is what the customer
+    # uses on their first day before they wire DocuSign credentials.
+    use_docusign = bool(getattr(settings, "docusign_integration_key", ""))
+
+    if use_docusign:
+        try:
+            from app.services.integrations.docusign import create_signing_envelope
+
+            # Download the latest PDFs from Storage so we send the freshest
+            # bytes — HR may have re-generated after a tweak.
+            pdfs: list[dict[str, Any]] = []
+            for d in docs.data:
+                def _dl(path: str = d["storage_path"]) -> bytes:
+                    return svc.storage.from_(ob_storage.STORAGE_BUCKET).download(path)
+                pdf_bytes = await asyncio.to_thread(_dl)
+                pdfs.append({
+                    "kind": d["kind"],
+                    "pdf_bytes": pdf_bytes,
+                    "name": f"{d['kind']}.pdf",
+                })
+
+            envelope = await create_signing_envelope(
+                org_id=org_id,
+                run_id=run_id,
+                recipient_email=run.data["candidate_email"],
+                recipient_name=run.data["candidate_name"],
+                documents=pdfs,
+                email_subject=(
+                    f"Offer documents from {run.data.get('candidate_name', 'us')}: "
+                    f"Appointment Letter + NDA"
+                ),
+                email_body=(
+                    "Please review and sign your appointment letter and NDA. "
+                    "Click the link to open them in DocuSign."
+                ),
+                return_url=(
+                    f"{settings.app_url.rstrip('/')}/candidate/done?run={run_id}"
+                    if settings.app_url else "https://nirnayaiq.com/candidate/done"
+                ),
+            )
+            docusign_envelope_id = envelope["envelope_id"]
+            docusign_signing_url = envelope["signing_url"]
+
+            await asyncio.to_thread(
+                lambda: svc.table("onboarding_documents")
+                .update(
+                    {
+                        "docusign_envelope_id": docusign_envelope_id,
+                        "docusign_status": "sent",
+                        "docusign_signing_url": docusign_signing_url,
+                    }
+                )
+                .eq("run_id", run_id)
+                .in_("kind", ["appointment_letter", "nda"])
+                .execute()
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "onboarding_v2.docusign_failed run=%s err=%s — falling back to email",
+                run_id, exc,
+            )
+            use_docusign = False
+
+    if not use_docusign:
+        def _signed_url(path: str) -> str | None:
+            try:
+                res = svc.storage.from_(ob_storage.STORAGE_BUCKET).create_signed_url(
+                    path=path, expires_in=ob_storage.SIGNED_URL_TTL_SECONDS
+                )
+                return res.get("signedURL") or res.get("signed_url")
+            except Exception:
+                return None
+
+        appointment_url: str | None = None
+        nda_url: str | None = None
+        for d in docs.data:
+            url = await asyncio.to_thread(lambda p=d["storage_path"]: _signed_url(p))
+            if d["kind"] == "appointment_letter":
+                appointment_url = url
+            elif d["kind"] == "nda":
+                nda_url = url
+
+        await send_email_event(
+            event_type="onboarding_offer_to_candidate",
+            to=run.data["candidate_email"],
+            user_id=None,
+            org_id=org_id,
+            dedupe_key=f"offer-{run_id}",
+            data={
+                "candidate_name": run.data["candidate_name"],
+                "role_title": run.data["role_title"],
+                "appointment_letter_url": appointment_url,
+                "nda_url": nda_url,
+                "app_url": settings.app_url.rstrip("/"),
+            },
+        )
+    else:
+        # Email the DocuSign one-click signing link.
+        await send_email_event(
+            event_type="onboarding_offer_to_candidate",
+            to=run.data["candidate_email"],
+            user_id=None,
+            org_id=org_id,
+            dedupe_key=f"offer-{run_id}",
+            data={
+                "candidate_name": run.data["candidate_name"],
+                "role_title": run.data["role_title"],
+                "docusign_signing_url": docusign_signing_url,
+                "app_url": settings.app_url.rstrip("/"),
+            },
+        )
 
     now = datetime.now(UTC).isoformat()
     await asyncio.to_thread(
@@ -680,17 +822,61 @@ async def cancel_run(
     run_id: str,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
+    """Cancel an active onboarding run.
+
+    Side effects (in addition to flipping the run status):
+      * All non-submitted BGV reference tokens are expired so a leaked link
+        can't be used after we've told the candidate the offer is off the
+        table.
+      * Any open DocuSign envelope is voided. We do this best-effort — if
+        the DocuSign API call fails (network, deauth) we still flip the
+        local row and log the failure; HR can void in DocuSign manually.
+    """
     user_id, org_id, _ = _require_user(current_user)
     svc = get_service_client()
+    now = datetime.now(UTC).isoformat()
+
     res = await asyncio.to_thread(
         lambda: svc.table("onboarding_runs")
-        .update({"status": "cancelled"})
+        .update(
+            {
+                "status": "cancelled",
+                "cancelled_at": now,
+                "cancelled_by_user_id": user_id,
+            }
+        )
         .eq("id", run_id)
         .eq("org_id", org_id)
+        .not_.in_("status", ["completed", "cancelled"])
         .execute()
     )
     if not res.data:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found.")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found or already terminal.")
+
+    # Expire BGV tokens so an in-the-wild link no longer works. We don't
+    # expire ones that already submitted — we want to keep the response.
+    expired_ref_count = await asyncio.to_thread(
+        lambda: len(
+            (
+                svc.table("onboarding_bgv_references")
+                .update({"status": "expired"})
+                .eq("run_id", run_id)
+                .in_("status", ["pending", "sent", "opened"])
+                .execute()
+            ).data or []
+        )
+    )
+
+    # Best-effort: void any open DocuSign envelopes.
+    try:
+        from app.services.integrations.docusign import void_envelopes_for_run
+        voided = await void_envelopes_for_run(
+            org_id=org_id, run_id=run_id, reason="Onboarding run cancelled by HR.",
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("onboarding_v2.cancel_void_envelopes_failed run=%s err=%s", run_id, exc)
+        voided = 0
+
     await ob_storage.log_onboarding_event(
         org_id=org_id,
         run_id=run_id,
@@ -698,8 +884,16 @@ async def cancel_run(
         event_type="run_cancelled",
         message="HR cancelled the onboarding.",
         actor_user_id=user_id,
+        metadata={
+            "expired_references": expired_ref_count,
+            "voided_envelopes": voided,
+        },
     )
-    return {"status": "cancelled"}
+    return {
+        "status": "cancelled",
+        "expired_references": expired_ref_count,
+        "voided_envelopes": voided,
+    }
 
 
 @router.post("/runs/{run_id}/resume")
@@ -745,6 +939,117 @@ async def template_status(
         "loi": by_kind.get("loi"),
         "appointment_letter": by_kind.get("appointment_letter"),
         "nda": by_kind.get("nda"),
+    }
+
+
+# Sample data used when previewing a template. Mirrors the structure of
+# `OnboardingV2Agent._build_render_context` but with synthetic values so
+# HR can see what their template renders like without starting a real run.
+_PREVIEW_SAMPLE_CONTEXT: dict[str, Any] = {
+    "candidate_name": "Asha Iyer",
+    "candidate_email": "asha.iyer@example.com",
+    "candidate_phone": "+91 98765 43210",
+    "role_title": "Senior Product Manager",
+    "designation": "Senior PM, Growth",
+    "ctc": "INR 28,00,000.00",
+    "ctc_amount": 2800000.0,
+    "ctc_currency": "INR",
+    "ctc_breakdown": {"base": 2200000, "variable": 600000},
+    "start_date": "2026-08-01",
+    "work_location": "Bengaluru, KA",
+    "probation_period_months": 3,
+    "reporting_manager_name": "Lakshmi Krishnan",
+    "reporting_manager_email": "lakshmi@example.com",
+    "company_name": "Acme Corp",
+    "company_legal_name": "Acme Technologies Pvt Ltd",
+    "company_address": "91 MG Road, Bengaluru 560001",
+    "today_date": "2026-06-28",
+    "jurisdiction": "India",
+}
+
+
+@router.post("/templates/{document_id}/preview")
+async def preview_template(
+    document_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Render the template with sample candidate data so HR can verify
+    layout + placeholder coverage before triggering a real onboarding.
+
+    Returns a freshly-minted signed URL (1h TTL) to the rendered PDF.
+    Storage path is `onboarding/_previews/<doc_id>.pdf` — overwritten on
+    every preview call, never associated with a real run.
+    """
+    _, org_id, _ = _require_user(current_user)
+    svc = get_service_client()
+
+    doc = await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .select("id, name, storage_path, template_kind")
+        .eq("id", document_id)
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not doc or not doc.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Template not found.")
+    if not doc.data.get("template_kind"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Tag this document with a template_kind before previewing.",
+        )
+    if not doc.data.get("storage_path"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Template has no storage path — re-upload the DOCX.",
+        )
+
+    def _download() -> bytes:
+        return svc.storage.from_(ob_storage.STORAGE_BUCKET).download(
+            doc.data["storage_path"]
+        )
+
+    docx_bytes = await asyncio.to_thread(_download)
+
+    from app.services.pdf import (
+        TemplateVariableError,
+        render_docx_template_to_pdf,
+    )
+
+    try:
+        filled_docx, pdf_bytes = await render_docx_template_to_pdf(
+            template_bytes=docx_bytes,
+            context=_PREVIEW_SAMPLE_CONTEXT,
+            strict=True,
+            template_kind=doc.data.get("template_kind"),
+        )
+    except TemplateVariableError as exc:
+        # Surface the exact missing variable so HR can fix the DOCX.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "template_variable_undefined",
+                "variable": exc.variable_name,
+                "message": str(exc),
+            },
+        )
+
+    preview_path = f"orgs/{org_id}/onboarding/_previews/{document_id}.pdf"
+
+    def _upload() -> None:
+        svc.storage.from_(ob_storage.STORAGE_BUCKET).upload(
+            path=preview_path,
+            file=pdf_bytes,
+            file_options={"content-type": "application/pdf", "upsert": "true"},
+        )
+
+    await asyncio.to_thread(_upload)
+    signed_url = await ob_storage.mint_signed_url(preview_path)
+    return {
+        "status": "ok",
+        "template_kind": doc.data.get("template_kind"),
+        "preview_url": signed_url,
+        "file_bytes": len(pdf_bytes),
     }
 
 

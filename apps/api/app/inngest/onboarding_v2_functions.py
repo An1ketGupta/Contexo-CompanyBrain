@@ -153,6 +153,26 @@ async def onboarding_v2_template_uploaded(ctx: inngest.Context) -> dict[str, Any
 
 
 @_inngest_client.create_function(
+    fn_id="onboarding-v2-docusign-signed",
+    trigger=inngest.TriggerEvent(event="onboarding_v2/docusign_signed"),
+    retries=2,
+    concurrency=[
+        inngest.Concurrency(limit=1, key="event.data.onboarding_run_id", scope="fn"),
+    ],
+)
+async def onboarding_v2_docusign_signed(ctx: inngest.Context) -> dict[str, Any]:
+    """The candidate completed the AL+NDA DocuSign envelope. Kick the agent
+    so it transitions to the policies step. The webhook handler already
+    updated onboarding_documents.sign_status to signed_by_candidate."""
+    data = ctx.event.data
+    run_id = data.get("onboarding_run_id")
+    org_id = data.get("org_id")
+    if not run_id or not org_id:
+        return {"status": "skipped"}
+    return await _drive_agent(run_id=run_id, org_id=org_id)
+
+
+@_inngest_client.create_function(
     fn_id="onboarding-v2-resume",
     trigger=inngest.TriggerEvent(event="onboarding_v2/resume"),
     retries=2,
@@ -258,6 +278,7 @@ FUNCTIONS = [
     onboarding_v2_bgv_response,
     onboarding_v2_policy_ack,
     onboarding_v2_template_uploaded,
+    onboarding_v2_docusign_signed,
     onboarding_v2_resume,
     onboarding_v2_bgv_reminders,
 ]

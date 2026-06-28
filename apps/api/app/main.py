@@ -153,6 +153,9 @@ from app.routers import (
 from app.routers import (
     onboarding_public as onboarding_public_router,
 )
+from app.routers import (
+    docusign_webhook as docusign_webhook_router,
+)
 from app.mcp import router as mcp_router
 
 
@@ -292,6 +295,7 @@ app.include_router(channels_router.router)
 app.include_router(certifications_router.router)
 app.include_router(onboarding_v2_router.router)
 app.include_router(onboarding_public_router.router)
+app.include_router(docusign_webhook_router.router)
 app.include_router(mcp_router)
 
 # Inngest serve endpoint — webhook the Inngest server hits to invoke our functions.

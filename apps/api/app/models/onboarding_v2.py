@@ -62,6 +62,11 @@ class OnboardingDocumentRead(BaseModel):
     signed_pdf_path: str | None = None
     signed_uploaded_at: datetime | None = None
     file_bytes: int | None = None
+    docusign_envelope_id: str | None = None
+    docusign_status: str | None = None
+    docusign_signing_url: str | None = None
+    docusign_completed_at: datetime | None = None
+    used_default_template: bool = False
     created_at: datetime
     updated_at: datetime
 

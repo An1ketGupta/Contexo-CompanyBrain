@@ -6,6 +6,8 @@ import useSWR from "swr";
 import {
   ArrowLeft,
   CheckCircle2,
+  ExternalLink,
+  Eye,
   FileText,
   Loader2,
   XCircle,
@@ -101,6 +103,43 @@ export default function OnboardingTemplatesPage() {
     }
   }
 
+  async function previewDoc(docId: string) {
+    setBusy(`preview-${docId}`);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/onboarding/templates/${docId}/preview`,
+        { method: "POST" },
+      );
+      const body = (await res.json().catch(() => ({}))) as {
+        preview_url?: string;
+        detail?: { error?: string; variable?: string; message?: string } | string;
+        message?: string;
+      };
+      if (!res.ok) {
+        // The 422 case: a specific missing variable. Surface the name.
+        if (typeof body.detail === "object" && body.detail?.variable) {
+          setError(
+            `Template references unknown variable: {{ ${body.detail.variable} }}. ` +
+              "Remove the placeholder from your DOCX or supply the value.",
+          );
+        } else {
+          const msg =
+            typeof body.detail === "string"
+              ? body.detail
+              : body.detail?.message || body.message;
+          setError(msg || "Couldn't preview the template.");
+        }
+        return;
+      }
+      if (body.preview_url) {
+        window.open(body.preview_url, "_blank", "noopener,noreferrer");
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
       <Link
@@ -166,6 +205,32 @@ export default function OnboardingTemplatesPage() {
               busy={busy}
               onSelect={(docId) => tagDoc(docId, kind)}
             />
+
+            {current ? (
+              <div className="mt-3 flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => previewDoc(current.id)}
+                  disabled={busy === `preview-${current.id}`}
+                >
+                  {busy === `preview-${current.id}` ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Eye className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  Preview with sample data
+                </Button>
+                <a
+                  href="https://github.com/nirnayaiq/docs/blob/main/onboarding-template-vars.md"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Variable reference <ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+            ) : null}
           </section>
         );
       })}

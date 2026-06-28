@@ -54,6 +54,24 @@ class PdfRenderUnavailable(RuntimeError):
     so the operator can fix the deployment before retrying."""
 
 
+class TemplateVariableError(PdfRenderError):
+    """The customer's template references a placeholder that isn't in the
+    render context (typo, stale template). We surface the missing name so HR
+    knows exactly which `{{ ... }}` to fix in their DOCX."""
+
+    def __init__(self, variable_name: str, *, template_kind: str | None = None):
+        self.variable_name = variable_name
+        self.template_kind = template_kind
+        detail = (
+            f"Template references undefined variable: '{variable_name}'."
+            " Either remove the placeholder from your DOCX template or supply"
+            " the value when triggering onboarding."
+        )
+        if template_kind:
+            detail = f"[{template_kind}] " + detail
+        super().__init__(detail)
+
+
 # ── HTML → PDF (WeasyPrint) ────────────────────────────────────────────────
 
 async def render_html_to_pdf(
@@ -99,6 +117,8 @@ async def fill_docx_template(
     *,
     template_bytes: bytes,
     context: dict[str, Any],
+    strict: bool = True,
+    template_kind: str | None = None,
 ) -> bytes:
     """Render a customer-uploaded .docx template with Jinja2-style
     {{ placeholders }} via docxtpl. Returns the filled .docx bytes.
@@ -106,9 +126,18 @@ async def fill_docx_template(
     Kept separate from the PDF conversion so callers can store the filled
     .docx alongside the PDF (handy for later edits + an audit trail of
     exactly what got sent).
+
+    `strict=True` (default) uses Jinja2 StrictUndefined so missing variables
+    raise instead of silently leaving `{{ unknown_var }}` in the output —
+    a misspelled placeholder must never reach a legally-binding PDF.
+
+    `template_kind` is purely informational and only used to enrich the
+    TemplateVariableError surfaced to HR.
     """
     try:
         from docxtpl import DocxTemplate  # type: ignore[import-not-found]
+        from jinja2 import Environment, StrictUndefined
+        from jinja2.exceptions import UndefinedError
     except ImportError as exc:
         raise PdfRenderUnavailable(
             "docxtpl not installed. Add `docxtpl` to pyproject.toml."
@@ -117,10 +146,29 @@ async def fill_docx_template(
     def _fill() -> bytes:
         try:
             tpl = DocxTemplate(io.BytesIO(template_bytes))
-            tpl.render(context)
+            if strict:
+                # Pass a Jinja env with StrictUndefined so a typo in the
+                # customer's DOCX raises rather than rendering silently.
+                env = Environment(undefined=StrictUndefined)
+                tpl.render(context, jinja_env=env)
+            else:
+                tpl.render(context)
             out = io.BytesIO()
             tpl.save(out)
             return out.getvalue()
+        except UndefinedError as exc:
+            # Message looks like: "'unknown_var' is undefined"
+            msg = str(exc)
+            # Heuristic extraction of the variable name. Jinja always wraps
+            # the name in single quotes; fall back to the full message if
+            # the format ever changes.
+            name = "<unknown>"
+            if "'" in msg:
+                try:
+                    name = msg.split("'", 2)[1]
+                except IndexError:
+                    pass
+            raise TemplateVariableError(name, template_kind=template_kind) from exc
         except Exception as exc:  # noqa: BLE001
             raise PdfRenderError(f"docxtpl fill failed: {exc}") from exc
 
@@ -175,6 +223,8 @@ async def render_docx_template_to_pdf(
     *,
     template_bytes: bytes,
     context: dict[str, Any],
+    strict: bool = True,
+    template_kind: str | None = None,
 ) -> tuple[bytes, bytes]:
     """End-to-end render: fill the .docx template with `context`, then
     convert to PDF via Gotenberg.
@@ -184,7 +234,10 @@ async def render_docx_template_to_pdf(
     HR wants to tweak wording before sending.
     """
     filled_docx = await fill_docx_template(
-        template_bytes=template_bytes, context=context
+        template_bytes=template_bytes,
+        context=context,
+        strict=strict,
+        template_kind=template_kind,
     )
     pdf_bytes = await convert_docx_to_pdf(filled_docx)
     return filled_docx, pdf_bytes

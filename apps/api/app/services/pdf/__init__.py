@@ -2,6 +2,8 @@
 from app.services.pdf.renderer import (
     PdfRenderError,
     PdfRenderUnavailable,
+    TemplateVariableError,
+    fill_docx_template,
     render_docx_template_to_pdf,
     render_html_to_pdf,
 )
@@ -9,6 +11,8 @@ from app.services.pdf.renderer import (
 __all__ = [
     "render_html_to_pdf",
     "render_docx_template_to_pdf",
+    "fill_docx_template",
     "PdfRenderError",
     "PdfRenderUnavailable",
+    "TemplateVariableError",
 ]

@@ -315,6 +315,24 @@ class Settings(BaseSettings):
     # different domain (e.g. a subdomain for unauthenticated public flows).
     bgv_public_url: str = ""
 
+    # ── DocuSign (candidate signing for AL + NDA bundle) ────────────────────
+    # When all five are set the Onboarding v2 agent uses DocuSign embedded
+    # signing instead of plain email-with-PDF. Missing keys disable the
+    # integration cleanly — the agent falls back to email + Settings UI
+    # shows "Configure DocuSign" to enable.
+    #
+    # See https://developers.docusign.com/platform/auth/jwt/ for the JWT
+    # grant flow this client uses. RSA key is the contents of the .pem file
+    # downloaded from the DocuSign admin app; paste as a multi-line env var
+    # (Railway accepts \n in values). DO NOT commit the key.
+    docusign_integration_key: str = ""
+    docusign_user_id: str = ""
+    docusign_account_id: str = ""
+    docusign_base_url: str = ""  # e.g. https://demo.docusign.net/restapi
+    docusign_rsa_private_key: str = ""
+    docusign_webhook_hmac_key: str = ""
+    docusign_auth_server: str = "account-d.docusign.com"  # account.docusign.com in prod
+
 
 class ProductionConfigError(RuntimeError):
     """Raised at startup when production env vars are missing.

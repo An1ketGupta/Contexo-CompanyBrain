@@ -50,6 +50,11 @@ interface DocumentRow {
   signed_pdf_path: string | null;
   signed_uploaded_at: string | null;
   file_bytes: number | null;
+  docusign_envelope_id: string | null;
+  docusign_status: string | null;
+  docusign_signing_url: string | null;
+  docusign_completed_at: string | null;
+  used_default_template: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -709,7 +714,17 @@ function DocCard({
         <>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             {doc.sign_status.replace(/_/g, " ")}
+            {doc.docusign_status ? (
+              <span className="ml-1 rounded bg-blue-100 px-1 py-0.5 text-[10px] uppercase tracking-wide text-blue-700 dark:bg-blue-500/20 dark:text-blue-300">
+                DocuSign: {doc.docusign_status}
+              </span>
+            ) : null}
           </p>
+          {doc.used_default_template ? (
+            <p className="mt-1 text-[10px] italic text-amber-700 dark:text-amber-300">
+              Using NirnayaIQ default template — upload your own to customise.
+            </p>
+          ) : null}
           {doc.signed_url ? (
             <a
               href={doc.signed_url}
@@ -718,6 +733,16 @@ function DocCard({
               className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-foreground underline hover:no-underline"
             >
               Open PDF <ExternalLink className="h-3 w-3" />
+            </a>
+          ) : null}
+          {doc.docusign_signing_url && doc.docusign_status !== "completed" ? (
+            <a
+              href={doc.docusign_signing_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-2 mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-blue-700 underline hover:no-underline dark:text-blue-300"
+            >
+              Open in DocuSign <ExternalLink className="h-3 w-3" />
             </a>
           ) : null}
         </>

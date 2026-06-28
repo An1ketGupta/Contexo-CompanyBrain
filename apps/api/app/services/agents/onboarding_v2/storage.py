@@ -28,10 +28,70 @@ log = logging.getLogger(__name__)
 
 STORAGE_BUCKET = "document"
 
-# Signed URLs in the HR dashboard live a week; the agent re-mints them
-# whenever it re-stamps an onboarding_documents row, so a stale link auto-
-# refreshes on the next dashboard load.
+# Stored signed URL TTL on `onboarding_documents.signed_url` — long enough
+# that a webhook callback minutes/hours later can still resolve it.
 SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60
+
+# Per-request refresh TTL — every GET on a run re-mints with this shorter
+# window so a URL leaked in a screenshot or browser-history dump becomes
+# unusable quickly. 1h is long enough to survive a HR tab refresh + a
+# download click but short enough to be cheap to invalidate.
+REFRESH_SIGNED_URL_TTL_SECONDS = 60 * 60
+
+
+async def mint_signed_url(storage_path: str, *, ttl_seconds: int | None = None) -> str | None:
+    """Mint a fresh signed URL for an arbitrary storage path. Returns None
+    on any error — callers fall back to "Download unavailable" UI rather
+    than blocking the whole page load. This is the canonical refresh entry
+    point used by the GET handlers."""
+    svc = get_service_client()
+    ttl = ttl_seconds or REFRESH_SIGNED_URL_TTL_SECONDS
+
+    def _mint() -> str | None:
+        try:
+            res = svc.storage.from_(STORAGE_BUCKET).create_signed_url(
+                path=storage_path, expires_in=ttl
+            )
+            return res.get("signedURL") or res.get("signed_url")
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "onboarding_v2.signed_url_refresh_failed path=%s err=%s",
+                storage_path,
+                exc,
+            )
+            return None
+
+    return await asyncio.to_thread(_mint)
+
+
+async def refresh_signed_urls_for_run(run_id: str) -> dict[str, str]:
+    """Mint fresh signed URLs for every onboarding_documents row in a run.
+    Returns a {storage_path: signed_url} mapping the caller can splice into
+    its response. Doesn't write back to the DB — the URL is per-request."""
+    svc = get_service_client()
+
+    def _fetch() -> list[dict[str, Any]]:
+        res = (
+            svc.table("onboarding_documents")
+            .select("storage_path, signed_pdf_path")
+            .eq("run_id", run_id)
+            .execute()
+        )
+        return res.data or []
+
+    rows = await asyncio.to_thread(_fetch)
+    paths: list[str] = []
+    for r in rows:
+        if r.get("storage_path"):
+            paths.append(r["storage_path"])
+        if r.get("signed_pdf_path"):
+            paths.append(r["signed_pdf_path"])
+
+    # Fan out — bound parallelism to avoid hammering Supabase if a run has
+    # many artifacts. asyncio.gather is fine here; mint_signed_url already
+    # threads internally.
+    urls = await asyncio.gather(*(mint_signed_url(p) for p in paths))
+    return {p: u for p, u in zip(paths, urls) if u}
 
 
 async def fetch_template_docx(
@@ -42,9 +102,13 @@ async def fetch_template_docx(
     """Find the KB document tagged `template_kind=<kind>` for the org and
     return its raw DOCX bytes + the document row.
 
-    Returns None when no template is tagged — the agent uses that signal to
-    transition the run into `blocked_missing_template` so HR knows exactly
-    what to upload.
+    Resolution order:
+      1. Customer-uploaded DOCX tagged with `template_kind=<kind>` (preferred).
+      2. Ship-with-product default (only NDA — see `default_templates.py`).
+      3. None (agent blocks the run with a clear missing-template error).
+
+    The doc-row dict carries a special `is_default` flag in step 2 so the
+    agent can stamp `onboarding_documents.used_default_template=true`.
     """
     svc = get_service_client()
 
@@ -61,24 +125,30 @@ async def fetch_template_docx(
         return (res.data or [None])[0]
 
     doc = await asyncio.to_thread(_fetch_doc)
-    if not doc:
-        return None
-
-    storage_path = doc.get("storage_path")
-    if not storage_path:
+    if doc:
+        storage_path = doc.get("storage_path")
+        if storage_path:
+            def _download() -> bytes:
+                return svc.storage.from_(STORAGE_BUCKET).download(storage_path)
+            raw = await asyncio.to_thread(_download)
+            return raw, doc
         log.warning(
             "onboarding_v2.template_missing_storage_path org=%s kind=%s doc=%s",
-            org_id,
-            template_kind,
-            doc.get("id"),
+            org_id, template_kind, doc.get("id"),
         )
-        return None
 
-    def _download() -> bytes:
-        return svc.storage.from_(STORAGE_BUCKET).download(storage_path)
-
-    raw = await asyncio.to_thread(_download)
-    return raw, doc
+    # Fall back to the shipped default if we have one for this kind.
+    from app.services.agents.onboarding_v2.default_templates import (
+        get_default_template_docx,
+    )
+    default_bytes = await get_default_template_docx(template_kind)
+    if default_bytes:
+        return default_bytes, {
+            "id": None,
+            "name": f"NirnayaIQ default {template_kind}",
+            "is_default": True,
+        }
+    return None
 
 
 async def upload_onboarding_artifact(
@@ -154,6 +224,7 @@ async def upsert_onboarding_document(
     source_template_id: str | None,
     render_context: dict[str, Any] | None,
     sign_status: str = "draft",
+    used_default_template: bool = False,
 ) -> str:
     """Insert or update the onboarding_documents row for this (run, kind).
     Returns the row id."""
@@ -183,6 +254,7 @@ async def upsert_onboarding_document(
         "file_bytes": storage.get("file_bytes"),
         "render_context": render_context,
         "sign_status": sign_status,
+        "used_default_template": used_default_template,
     }
 
     if existing:

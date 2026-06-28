@@ -142,6 +142,11 @@ async def submit_bgv(token: str, body: BgvFormSubmit) -> dict[str, Any]:
     if row.get("status") == "submitted":
         # Friendly idempotent: just acknowledge again.
         return {"status": "already_submitted"}
+    if row.get("status") == "expired":
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            detail="This reference check has been cancelled by the hiring company.",
+        )
 
     expires_at_iso = row.get("token_expires_at")
     if expires_at_iso:
@@ -153,6 +158,24 @@ async def submit_bgv(token: str, body: BgvFormSubmit) -> dict[str, Any]:
                 raise HTTPException(status.HTTP_410_GONE, detail="Link expired.")
         except ValueError:
             pass
+
+    # Hard-check the run isn't cancelled — defensive: even if the token
+    # status row wasn't flipped (e.g. crash mid-cancel), don't accept a
+    # response for a terminated run.
+    svc = get_service_client()
+    run_status_row = await asyncio.to_thread(
+        lambda: svc.table("onboarding_runs")
+        .select("status")
+        .eq("id", row["run_id"])
+        .maybe_single()
+        .execute()
+    )
+    run_status = (run_status_row.data or {}).get("status") if run_status_row else None
+    if run_status in ("cancelled", "failed"):
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            detail="This reference check has been cancelled by the hiring company.",
+        )
 
     svc = get_service_client()
     now = datetime.now(UTC).isoformat()

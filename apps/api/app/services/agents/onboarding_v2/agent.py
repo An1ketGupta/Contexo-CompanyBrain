@@ -55,12 +55,12 @@ current status hint so it can resume cleanly from any checkpoint.
 from __future__ import annotations
 
 import asyncio
-import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from app.config import get_settings
 from app.database import get_service_client
+from app.observability import get_logger
 from app.services.agents.base_agent import BaseAgent
 from app.services.agents.kb_synthesis import (
     build_context_block,
@@ -72,15 +72,20 @@ from app.services.agents.onboarding_v2 import storage as ob_storage
 from app.services.agents.onboarding_v2.induction_template import (
     render_induction_html,
 )
+from app.services.agents.onboarding_v2.pre_join import (
+    ensure_pre_join_user,
+    send_magic_link,
+)
 from app.services.email import send_email_event
 from app.services.pdf import (
     PdfRenderError,
     PdfRenderUnavailable,
+    TemplateVariableError,
     render_docx_template_to_pdf,
     render_html_to_pdf,
 )
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 # Mapping from `kind` to the documents.template_kind value we look up.
@@ -114,6 +119,12 @@ class OnboardingV2Agent(BaseAgent):
         self.onboarding_run_id = run_id
         self.resume_from = resume_from
         self._run_row: dict[str, Any] | None = None
+        # Bound logger — every emit carries run/org context without per-call boilerplate.
+        self.log = log.bind(
+            onboarding_run_id=run_id,
+            org_id=org_id,
+            agent="onboarding_v2",
+        )
 
     # ── State helpers ──────────────────────────────────────────────────────
 
@@ -190,14 +201,57 @@ class OnboardingV2Agent(BaseAgent):
         )
         return (row.data or {}).get("name") or "your company"
 
+    async def _resolve_org_branding(self) -> dict[str, Any]:
+        """Pull org name, legal name, jurisdiction, logo for templates +
+        induction PDF. Returns sane defaults if a column isn't populated."""
+        svc = get_service_client()
+        row = await asyncio.to_thread(
+            lambda: svc.table("organizations")
+            .select("name, legal_name, jurisdiction, logo_url, registered_address")
+            .eq("id", self.org_id)
+            .maybe_single()
+            .execute()
+        )
+        data = (row.data if row else {}) or {}
+        return {
+            "name": data.get("name") or "your company",
+            "legal_name": data.get("legal_name") or data.get("name") or "your company",
+            "jurisdiction": data.get("jurisdiction") or "India",
+            "logo_url": data.get("logo_url"),
+            "registered_address": data.get("registered_address") or "",
+        }
+
+    async def _fetch_logo_data_url(self, logo_url: str | None) -> str | None:
+        """Download the org logo and inline as a data: URL for WeasyPrint.
+        Best-effort — a failure returns None so the induction renders
+        without a logo rather than erroring out."""
+        if not logo_url:
+            return None
+        try:
+            import base64
+
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(logo_url)
+            if resp.status_code != 200 or not resp.content:
+                return None
+            mime = resp.headers.get("content-type", "image/png").split(";", 1)[0].strip()
+            if not mime.startswith("image/"):
+                return None
+            b64 = base64.b64encode(resp.content).decode("ascii")
+            return f"data:{mime};base64,{b64}"
+        except Exception as exc:  # noqa: BLE001
+            log.warning("onboarding_v2.logo_fetch_failed url=%s err=%s", logo_url, exc)
+            return None
+
     # ── Render context ────────────────────────────────────────────────────
 
     async def _build_render_context(self) -> dict[str, Any]:
         """The dict handed to docxtpl for placeholder substitution. Tracks
         the variables a customer template can reference. Documented in
-        apps/api/tools/ONBOARDING_TEMPLATE_VARS.md (to be added)."""
+        apps/api/tools/ONBOARDING_TEMPLATE_VARS.md."""
         run = await self._load_run()
-        org_name = await self._resolve_org_name()
+        branding = await self._resolve_org_branding()
         ctc_amount = run.get("ctc_amount")
         ctc_currency = run.get("ctc_currency") or "INR"
         ctc_formatted = (
@@ -219,9 +273,11 @@ class OnboardingV2Agent(BaseAgent):
             "probation_period_months": run.get("probation_period_months") or 0,
             "reporting_manager_name": run.get("reporting_manager_name") or "",
             "reporting_manager_email": run.get("reporting_manager_email") or "",
-            "company_name": org_name,
+            "company_name": branding["name"],
+            "company_legal_name": branding["legal_name"],
+            "company_address": branding["registered_address"],
             "today_date": today,
-            "jurisdiction": "India",
+            "jurisdiction": branding["jurisdiction"],
         }
 
     # ── Main dispatcher ────────────────────────────────────────────────────
@@ -241,6 +297,12 @@ class OnboardingV2Agent(BaseAgent):
             "started",
             {"current_status": current, "resume_from": self.resume_from},
         )
+
+        # Terminal states: never re-drive. A late Inngest event (e.g. a BGV
+        # response that came in after HR cancelled) must not resurrect the
+        # run or trigger any external side effect.
+        if current in ("cancelled", "completed", "failed"):
+            return {"status": current, "terminal": True}
 
         if current in ("draft", "loi_generating"):
             return await self._step_generate_loi()
@@ -293,12 +355,41 @@ class OnboardingV2Agent(BaseAgent):
 
         try:
             filled_docx, pdf_bytes = await render_docx_template_to_pdf(
-                template_bytes=docx_bytes, context=ctx
+                template_bytes=docx_bytes,
+                context=ctx,
+                strict=True,
+                template_kind="loi",
             )
         except PdfRenderUnavailable as exc:
             await self.log_step("generate_loi", "failed", error=str(exc))
             await self._set_status("failed", extra={"blocked_reason": str(exc)})
             raise
+        except TemplateVariableError as exc:
+            # The customer's DOCX references an unknown {{ variable }}.
+            # Block the run with an actionable message instead of failing
+            # silently — HR sees "Template references undefined variable
+            # 'manager_phone' — remove the placeholder or supply the value".
+            await self.log_step(
+                "generate_loi", "failed",
+                error=str(exc),
+                metadata={"missing_variable": exc.variable_name},
+            )
+            await self._set_status(
+                "blocked_missing_template",
+                extra={
+                    "blocked_reason": str(exc),
+                    "blocked_template_kind": "loi",
+                },
+            )
+            await ob_storage.log_onboarding_event(
+                org_id=self.org_id,
+                run_id=self.onboarding_run_id,
+                actor_kind="agent",
+                event_type="template_variable_error",
+                message=str(exc),
+                metadata={"template_kind": "loi", "variable": exc.variable_name},
+            )
+            return {"status": "blocked_missing_template", "variable": exc.variable_name}
         except PdfRenderError as exc:
             await self.log_step("generate_loi", "failed", error=str(exc))
             await self._set_status("failed", extra={"blocked_reason": str(exc)})
@@ -460,6 +551,41 @@ class OnboardingV2Agent(BaseAgent):
             event_type="loi_sent_to_candidate",
             message=f"Signed LOI emailed to {run['candidate_email']}.",
         )
+
+        # Provision the pre-join users row + send the candidate's magic link
+        # so the policy step (further down the pipeline) has a user_id to
+        # attach acknowledgements to. Best-effort — failures here don't
+        # block the run; the policy step will retry.
+        try:
+            user_id = await ensure_pre_join_user(
+                org_id=self.org_id,
+                run_id=self.onboarding_run_id,
+                candidate_email=run["candidate_email"],
+                candidate_name=run["candidate_name"],
+            )
+            settings = get_settings()
+            await send_magic_link(
+                email=run["candidate_email"],
+                redirect_to=(
+                    f"{settings.app_url.rstrip('/')}/compliance"
+                    if settings.app_url else None
+                ),
+            )
+            await ob_storage.log_onboarding_event(
+                org_id=self.org_id,
+                run_id=self.onboarding_run_id,
+                actor_kind="agent",
+                event_type="pre_join_user_provisioned",
+                message="Pre-join user account created and magic-link sent.",
+                metadata={"user_id": user_id},
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "onboarding_v2.pre_join_provision_failed run=%s err=%s",
+                self.onboarding_run_id,
+                exc,
+            )
+
         # Auto-advance to BGV — no human gate here.
         return await self._step_kick_off_bgv()
 
@@ -597,8 +723,33 @@ class OnboardingV2Agent(BaseAgent):
             docx_bytes, doc_row = fetched
             try:
                 filled_docx, pdf_bytes = await render_docx_template_to_pdf(
-                    template_bytes=docx_bytes, context=ctx
+                    template_bytes=docx_bytes,
+                    context=ctx,
+                    strict=True,
+                    template_kind=kind,
                 )
+            except TemplateVariableError as exc:
+                await self.log_step(
+                    "generate_offer_bundle", "failed",
+                    error=f"{kind}: {exc}",
+                    metadata={"missing_variable": exc.variable_name, "kind": kind},
+                )
+                await self._set_status(
+                    "blocked_missing_template",
+                    extra={
+                        "blocked_reason": str(exc),
+                        "blocked_template_kind": kind,
+                    },
+                )
+                await ob_storage.log_onboarding_event(
+                    org_id=self.org_id,
+                    run_id=self.onboarding_run_id,
+                    actor_kind="agent",
+                    event_type="template_variable_error",
+                    message=str(exc),
+                    metadata={"template_kind": kind, "variable": exc.variable_name},
+                )
+                return {"status": "blocked_missing_template", "variable": exc.variable_name}
             except (PdfRenderError, PdfRenderUnavailable) as exc:
                 await self.log_step(
                     "generate_offer_bundle", "failed", error=f"{kind}: {exc}"
@@ -613,6 +764,7 @@ class OnboardingV2Agent(BaseAgent):
                 pdf_bytes=pdf_bytes,
                 docx_bytes=filled_docx,
             )
+            is_default = bool(doc_row.get("is_default"))
             await ob_storage.upsert_onboarding_document(
                 org_id=self.org_id,
                 run_id=self.onboarding_run_id,
@@ -621,13 +773,20 @@ class OnboardingV2Agent(BaseAgent):
                 source_template_id=doc_row.get("id"),
                 render_context=ctx,
                 sign_status="sent_to_hr",
+                used_default_template=is_default,
             )
             await ob_storage.log_onboarding_event(
                 org_id=self.org_id,
                 run_id=self.onboarding_run_id,
                 actor_kind="agent",
                 event_type=f"{kind}_generated",
-                message=f"{label} generated.",
+                message=(
+                    f"{label} generated using the NirnayaIQ default template "
+                    f"(upload your own to customise)."
+                    if is_default
+                    else f"{label} generated."
+                ),
+                metadata={"used_default_template": is_default},
             )
 
         await self._set_status("appointment_pending_hr_review")
@@ -675,37 +834,37 @@ class OnboardingV2Agent(BaseAgent):
         rows for the candidate. Reuses the compliance system from migration
         031 — the dashboard ack UI works as-is.
 
-        Note: the candidate isn't a `users` row yet (they haven't accepted an
-        invite). We surface this as a soft-fail and let HR send the invite
-        from the onboarding detail page; the agent gets re-kicked once the
-        user_id exists.
+        The candidate's pre_join users row was provisioned at LOI-sent time
+        (see `_step_send_loi_to_candidate` → `ensure_pre_join_user`). If
+        provisioning had failed back then, retry it now — we'd rather slow
+        the run by one round-trip than block on it.
         """
         await self.log_step("assign_policies", "started")
         svc = get_service_client()
         run = await self._load_run()
 
-        # Look up users-row by candidate_email — created when HR sends the
-        # employee invite. If no row exists, surface a soft block.
-        user_row = await asyncio.to_thread(
-            lambda: svc.table("users")
-            .select("id")
-            .eq("org_id", self.org_id)
-            .ilike("email", run["candidate_email"])
-            .maybe_single()
-            .execute()
-        )
-        if not user_row or not user_row.data:
-            await self.log_step(
-                "assign_policies",
-                "skipped",
-                {"reason": "candidate_user_row_missing"},
-            )
-            # Don't move forward — we'll be re-kicked when the invite is sent.
-            return {
-                "status": "appointment_sent_to_candidate",
-                "waiting_for": "candidate_user_row",
-            }
-        user_id = user_row.data["id"]
+        user_id = run.get("pre_join_user_id")
+        if not user_id:
+            # Provisioning didn't run at LOI sign time (e.g. failed); retry
+            # now. If it fails again, we surface a clean failure rather than
+            # silently stalling.
+            try:
+                user_id = await ensure_pre_join_user(
+                    org_id=self.org_id,
+                    run_id=self.onboarding_run_id,
+                    candidate_email=run["candidate_email"],
+                    candidate_name=run["candidate_name"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                await self.log_step(
+                    "assign_policies", "failed",
+                    error=f"pre_join_provisioning_failed: {exc}",
+                )
+                await self._set_status(
+                    "failed",
+                    extra={"blocked_reason": f"pre_join_provisioning_failed: {exc}"},
+                )
+                raise
 
         # Find policy docs: any with template_kind not set AND tag/flag-based
         # selection. The simplest reliable signal in this codebase is
@@ -798,17 +957,9 @@ class OnboardingV2Agent(BaseAgent):
         svc = get_service_client()
         run = await self._load_run()
 
-        user_row = await asyncio.to_thread(
-            lambda: svc.table("users")
-            .select("id")
-            .eq("org_id", self.org_id)
-            .ilike("email", run["candidate_email"])
-            .maybe_single()
-            .execute()
-        )
-        if not user_row or not user_row.data:
+        user_id = run.get("pre_join_user_id")
+        if not user_id:
             return {"status": "policies_assigned", "waiting_for": "user_row"}
-        user_id = user_row.data["id"]
 
         pending = await asyncio.to_thread(
             lambda: svc.table("acknowledgements")
@@ -918,6 +1069,10 @@ class OnboardingV2Agent(BaseAgent):
             else (llm_out if isinstance(llm_out, list) else [])
         )
 
+        # Logo for branded header — best-effort; renders without if missing.
+        branding = await self._resolve_org_branding()
+        logo_data_url = await self._fetch_logo_data_url(branding.get("logo_url"))
+
         html = render_induction_html(
             candidate_name=ctx["candidate_name"],
             role_title=ctx["role_title"],
@@ -925,6 +1080,7 @@ class OnboardingV2Agent(BaseAgent):
             start_date=ctx["start_date"],
             sections=sections,
             sources=sources,
+            logo_data_url=logo_data_url,
         )
 
         try:
