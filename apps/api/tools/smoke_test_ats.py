@@ -160,6 +160,72 @@ async def smoke_ashby() -> None:
         print(f"  ashby: created opening id={opening['id']}")
 
 
+# ── Naukri ───────────────────────────────────────────────────────────────────
+
+
+async def smoke_naukri() -> None:
+    """Naukri uses Auth-Key (not Basic) — different auth shape, exercise it
+    explicitly so the adapter's header builder doesn't regress to Basic."""
+    base = f"{MOCK_URL}/naukri/v1"
+    headers = {"Auth-Key": TEST_API_KEY, "Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        # 1. Connectivity / auth probe
+        r = await client.get(f"{base}/ping", headers=headers)
+        assert r.status_code == 200, f"ping: {r.status_code} {r.text}"
+        assert r.json().get("ok") is True
+
+        # 2. All three taxonomy endpoints return non-empty seeded data
+        fa = (
+            await client.get(f"{base}/taxonomy/functionalAreas", headers=headers)
+        ).json()
+        rc = (
+            await client.get(f"{base}/taxonomy/roleCategories", headers=headers)
+        ).json()
+        ind = (
+            await client.get(f"{base}/taxonomy/industries", headers=headers)
+        ).json()
+        assert fa.get("data") and rc.get("data") and ind.get("data"), (
+            "expected seeded Naukri taxonomy"
+        )
+
+        # 3. Create a HotVacancy
+        body = {
+            "jobTitle": "Smoke Test — Senior Backend Engineer",
+            "jobDescription": "# JD\n\nfrom smoke test (Naukri)",
+            "jobLocation": "Bengaluru, India",
+            "department": "Engineering",
+            "functionalAreaId": fa["data"][0]["id"],
+            "roleCategoryId": rc["data"][0]["id"],
+            "industryTypeId": ind["data"][0]["id"],
+            "minExperience": 4,
+            "maxExperience": 8,
+            "keySkills": ["python", "fastapi", "postgres"],
+            "hideSalary": True,
+        }
+        r = await client.post(f"{base}/jobposting", json=body, headers=headers)
+        assert r.status_code == 200, f"create posting: {r.status_code} {r.text}"
+        data = r.json()
+        assert data.get("jobId") and data.get("postingUrl"), data
+        print(f"  naukri: created posting jobId={data['jobId']}")
+
+        # 4. Naukri validates experience band on the server side
+        bad = await client.post(
+            f"{base}/jobposting",
+            json={**body, "minExperience": 10, "maxExperience": 5},
+            headers=headers,
+        )
+        assert bad.status_code == 400, f"expected 400 invalid_experience_band, got {bad.status_code}"
+        print("  naukri: invalid experience band rejected as documented")
+
+        # 5. Auth-Key missing → 401
+        no_auth = await client.get(f"{base}/ping")
+        assert no_auth.status_code == 401, (
+            f"expected 401 missing auth, got {no_auth.status_code}"
+        )
+        print("  naukri: missing Auth-Key surfaces 401")
+
+
 # ── Adapter-level integration ────────────────────────────────────────────────
 
 
@@ -170,6 +236,7 @@ async def smoke_via_adapter() -> None:
     os.environ["GREENHOUSE_API_URL"] = f"{MOCK_URL}/greenhouse/v1"
     os.environ["LEVER_API_URL"] = f"{MOCK_URL}/lever/v1"
     os.environ["ASHBY_API_URL"] = f"{MOCK_URL}/ashby"
+    os.environ["NAUKRI_API_URL"] = f"{MOCK_URL}/naukri/v1"
 
     # Force a fresh settings cache.
     from app.config import get_settings  # noqa: PLC0415
@@ -177,13 +244,16 @@ async def smoke_via_adapter() -> None:
     get_settings.cache_clear()  # type: ignore[attr-defined]
 
     from app.services.integrations.ats import ashby, greenhouse, lever  # noqa: PLC0415
+    from app.services.integrations.job_boards import naukri  # noqa: PLC0415
 
     ok_g = await greenhouse.test_connection(api_key=TEST_API_KEY)
     ok_l = await lever.test_connection(api_key=TEST_API_KEY)
     ok_a = await ashby.test_connection(api_key=TEST_API_KEY)
-    assert ok_g and ok_l and ok_a, (ok_g, ok_l, ok_a)
+    ok_n = await naukri.test_connection(api_key=TEST_API_KEY)
+    assert ok_g and ok_l and ok_a and ok_n, (ok_g, ok_l, ok_a, ok_n)
     print(
-        f"  adapter test_connection: greenhouse={ok_g}, lever={ok_l}, ashby={ok_a}"
+        f"  adapter test_connection: greenhouse={ok_g}, lever={ok_l}, "
+        f"ashby={ok_a}, naukri={ok_n}"
     )
 
     offices = await greenhouse.list_offices(api_key=TEST_API_KEY)
@@ -196,6 +266,13 @@ async def smoke_via_adapter() -> None:
     tmpls = await ashby.list_job_templates(api_key=TEST_API_KEY)
     print(
         f"  adapter ashby list_locations={len(locs)} list_job_templates={len(tmpls)}"
+    )
+
+    fas = await naukri.list_functional_areas(api_key=TEST_API_KEY)
+    rcs = await naukri.list_role_categories(api_key=TEST_API_KEY)
+    inds = await naukri.list_industries(api_key=TEST_API_KEY)
+    print(
+        f"  adapter naukri functional_areas={len(fas)} role_categories={len(rcs)} industries={len(inds)}"
     )
 
 
@@ -221,6 +298,7 @@ async def main() -> int:
         ("greenhouse wire", smoke_greenhouse),
         ("lever wire", smoke_lever),
         ("ashby wire", smoke_ashby),
+        ("naukri wire", smoke_naukri),
         ("via adapter", smoke_via_adapter),
     ):
         try:

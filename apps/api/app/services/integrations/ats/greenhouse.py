@@ -145,6 +145,79 @@ async def _get_account_metadata(org_id: str) -> dict[str, Any] | None:
     return (row.data or {}).get("metadata") if (row and row.data) else None
 
 
+async def fetch_candidates(*, org_id: str, job_id: str) -> list[dict[str, Any]]:
+    """GET /v1/candidates?job_id=… → normalised CandidateRecord dicts.
+
+    Greenhouse's candidate object embeds applications (with current_stage)
+    and the contact arrays, so one paginated request is enough — no N+1
+    against /v1/applications. We cap at 500 candidates per job; anything
+    beyond that is a pipeline that needs its own export, not a sync.
+    """
+    creds = await _get_credentials(org_id)
+    if not creds:
+        raise PermissionError("greenhouse_not_connected")
+    api_key, _ = creds
+
+    raw = await _paginated_get(
+        api_key, f"/candidates?job_id={job_id}", per_page=100, max_pages=5
+    )
+    out: list[dict[str, Any]] = []
+    for c in raw:
+        candidate_id = c.get("id")
+        if candidate_id is None:
+            continue
+        first = (c.get("first_name") or "").strip()
+        last = (c.get("last_name") or "").strip()
+        full_name = (f"{first} {last}".strip()) or None
+
+        emails = c.get("email_addresses") or []
+        email = emails[0].get("value") if emails else None
+        phones = c.get("phone_numbers") or []
+        phone = phones[0].get("value") if phones else None
+
+        # The applications array is filtered by Greenhouse to those on this
+        # job. We surface the FIRST application's stage — typical case is
+        # one application per (candidate, job) anyway.
+        applications = c.get("applications") or []
+        primary_app = applications[0] if applications else {}
+        stage_obj = primary_app.get("current_stage") or {}
+        stage = stage_obj.get("name")
+        applied_at = primary_app.get("applied_at")
+
+        attachments = c.get("attachments") or []
+        resume_url = next(
+            (
+                a.get("url")
+                for a in attachments
+                if (a.get("type") or "").lower() == "resume"
+            ),
+            None,
+        )
+
+        # Greenhouse candidate URLs aren't returned in the payload; we
+        # construct them from the account subdomain captured at connect time.
+        meta = await _get_account_metadata(org_id)
+        subdomain = (meta or {}).get("board_subdomain") or "app"
+        candidate_url = f"https://{subdomain}.greenhouse.io/people/{candidate_id}"
+
+        out.append(
+            {
+                "ats_platform": "greenhouse",
+                "external_id": str(candidate_id),
+                "full_name": full_name,
+                "email": email,
+                "phone": phone,
+                "current_company": c.get("company") or None,
+                "current_title": c.get("title") or None,
+                "stage": stage,
+                "resume_url": resume_url,
+                "candidate_url": candidate_url,
+                "applied_at": applied_at,
+            }
+        )
+    return out
+
+
 async def list_users(*, org_id: str) -> list[dict[str, Any]]:
     """GET /v1/users — used by the connect flow's "On-behalf-of" picker."""
     creds = await _get_credentials(org_id)

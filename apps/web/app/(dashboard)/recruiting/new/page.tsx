@@ -41,6 +41,7 @@ export default function NewRequisitionPage() {
   const [stack, setStack] = useState("");
   const [disclosedCompensation, setDisclosedCompensation] = useState("");
   const [interviewDetails, setInterviewDetails] = useState("");
+  const [workingHours, setWorkingHours] = useState("");
   const [contextNotes, setContextNotes] = useState("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,9 +58,10 @@ export default function NewRequisitionPage() {
           location,
           department,
           seniority_level: seniorityLevel,
-          disclosed_compensation: disclosedCompensation.trim() || null,
+          disclosed_compensation: disclosedCompensation.trim(),
           stack: stack.trim() || null,
           interview_details: interviewDetails.trim(),
+          working_hours: workingHours.trim(),
           context_notes: contextNotes.trim() || null,
         }),
       });
@@ -93,7 +95,7 @@ export default function NewRequisitionPage() {
             <Label htmlFor="role">Role</Label>
             <Textarea
               id="role"
-              placeholder="Senior Product Designer focused on enterprise dashboards"
+              placeholder="e.g. Senior Product Designer focused on enterprise dashboards"
               rows={3}
               value={roleRequest}
               onChange={(e) => setRoleRequest(e.target.value)}
@@ -172,16 +174,27 @@ export default function NewRequisitionPage() {
           </div>
         </div>
 
+        {/* Working hours */}
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="working-hours">Working hours</Label>
+            <Input
+              id="working-hours"
+              placeholder="e.g. 5 Days a week"
+              value={workingHours}
+              onChange={(e) => setWorkingHours(e.target.value)}
+              maxLength={300}
+            />
+          </div>
+        </div>
+
         {/* Compensation */}
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="comp">
-              Compensation
-              <span className="ml-1 text-xs font-normal text-muted-foreground">(optional)</span>
-            </Label>
+            <Label htmlFor="comp">Compensation</Label>
             <Input
               id="comp"
-              placeholder="e.g. $120k–$150k + equity"
+              placeholder="e.g. $120k–$150k"
               value={disclosedCompensation}
               onChange={(e) => setDisclosedCompensation(e.target.value)}
               maxLength={300}
@@ -197,7 +210,7 @@ export default function NewRequisitionPage() {
             </Label>
             <Textarea
               id="context"
-              placeholder="1. Team mission & size  2. Problems they'll solve etc"
+              placeholder={`1. Team mission & size \n2. Problem they'll work on`}
               rows={3}
               value={contextNotes}
               onChange={(e) => setContextNotes(e.target.value)}
@@ -223,7 +236,9 @@ export default function NewRequisitionPage() {
               roleRequest.trim().length < 4 ||
               location.trim().length === 0 ||
               department.trim().length === 0 ||
-              interviewDetails.trim().length === 0
+              interviewDetails.trim().length === 0 ||
+              workingHours.trim().length === 0 ||
+              disclosedCompensation.trim().length === 0
             }
           >
             {generating ? "Generating 3 variants…" : "Generate variants"}

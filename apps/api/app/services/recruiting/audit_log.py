@@ -30,6 +30,7 @@ Action = Literal[
     "hiring_manager_email",
     "edit",
     "delete",
+    "candidate_sync",
 ]
 
 Status = Literal["success", "failure", "skipped"]

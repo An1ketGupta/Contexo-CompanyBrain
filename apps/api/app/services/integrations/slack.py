@@ -261,6 +261,51 @@ async def invalidate_channels_cache(org_id: str) -> None:
     await cache_delete(f"slack:channels:{org_id}")
 
 
+async def join_channel(*, org_id: str, channel_id: str) -> None:
+    """Add the bot to a public channel via conversations.join.
+
+    Slack policy: only public channels can be self-joined. Private channels
+    raise PermissionError("slack_cannot_join_private") — the only path there
+    is a human typing /invite from inside the channel.
+
+    Other PermissionError values the caller should be ready for:
+      - "slack_token_revoked"        — uninstall / expired token
+      - "slack_scope_upgrade_required" — install pre-dates `channels:join`
+      - "slack_channel_not_found"    — wrong id or bot can't see it
+      - "slack_is_archived"          — channel was archived
+    """
+    token = await get_bot_token(org_id=org_id)
+    if not token:
+        raise PermissionError("slack_not_connected")
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+        resp = await client.post(
+            f"{_SLACK_API}/conversations.join",
+            data={"channel": channel_id},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    body = resp.json() if resp.status_code == 200 else {}
+    if resp.status_code == 200 and body.get("ok"):
+        # New membership invalidates is_member on the cached channel list.
+        await invalidate_channels_cache(org_id)
+        return
+
+    err = (body or {}).get("error") or f"http_{resp.status_code}"
+    if err in {"token_revoked", "invalid_auth", "account_inactive"}:
+        raise PermissionError("slack_token_revoked")
+    if err == "missing_scope":
+        # The install pre-dates the channels:join scope; user needs to
+        # re-authorise. We map to a stable, UI-actionable code.
+        raise PermissionError("slack_scope_upgrade_required")
+    if err == "method_not_supported_for_channel_type":
+        # Slack's error code for "this is a private channel / DM / mpim".
+        raise PermissionError("slack_cannot_join_private")
+    if err in {"channel_not_found", "is_archived"}:
+        raise PermissionError(f"slack_{err}")
+    raise RuntimeError(f"slack_join_failed: {err}")
+
+
 # ── Direct messages (Agent Roadmap Day 6: approval DMs, Day 8: onboarding) ──
 
 

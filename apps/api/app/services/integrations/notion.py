@@ -584,6 +584,230 @@ async def create_page(
     }
 
 
+# ── Candidate database (recruiting): create + upsert rows ─────────────────
+
+
+# Notion's API limits a rich_text content run to 2000 chars. Names/companies
+# fit comfortably; we still cap defensively so a malformed ATS payload can't
+# break the property write.
+_NOTION_PROPERTY_TEXT_CAP = 1900
+
+
+def _short_text_prop(value: str | None) -> dict[str, Any]:
+    """Wrap a string as a Notion `rich_text` property value.
+
+    Notion accepts an empty array for "no value", so we map None → []; that
+    keeps the column visually blank rather than showing the string "None".
+    """
+    if not value:
+        return {"rich_text": []}
+    truncated = value[:_NOTION_PROPERTY_TEXT_CAP]
+    return {"rich_text": [{"type": "text", "text": {"content": truncated}}]}
+
+
+def _title_prop(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {"title": [{"type": "text", "text": {"content": "Unnamed candidate"}}]}
+    return {
+        "title": [{"type": "text", "text": {"content": value[:_NOTION_PROPERTY_TEXT_CAP]}}]
+    }
+
+
+def _select_prop(value: str | None) -> dict[str, Any]:
+    """Notion select options must be ≤ 100 chars and cannot contain commas
+    in the `name` field. Sanitise both so the upsert doesn't 400 on a stage
+    name like "Hiring Manager Review, Round 2"."""
+    if not value:
+        return {"select": None}
+    name = value.replace(",", "·")[:100]
+    return {"select": {"name": name}}
+
+
+def _date_prop(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {"date": None}
+    return {"date": {"start": value}}
+
+
+def _url_prop(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {"url": None}
+    return {"url": value[:_NOTION_PROPERTY_TEXT_CAP]}
+
+
+def _email_prop(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {"email": None}
+    return {"email": value[:_NOTION_PROPERTY_TEXT_CAP]}
+
+
+def _phone_prop(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {"phone_number": None}
+    return {"phone_number": value[:100]}
+
+
+async def create_candidate_database(
+    *,
+    org_id: str,
+    parent_page_id: str,
+    title: str,
+) -> dict[str, Any]:
+    """Create a Notion database under `parent_page_id` for candidate tracking.
+
+    The schema mirrors what the candidate-sync flow writes: name as title,
+    contact info, current company/title, ATS platform + stage as selects so
+    filtering inside Notion is a click instead of a free-text search, and
+    deep links to the resume and the candidate's ATS page.
+
+    Raises PermissionError when the bot has no Notion token or can't see the
+    parent; bubbles RuntimeError on any other non-200.
+    """
+    token = await _access_token(org_id)
+    if not token:
+        raise PermissionError("notion_not_connected")
+
+    clean_parent = parent_page_id.replace("-", "")
+    payload: dict[str, Any] = {
+        "parent": {"type": "page_id", "page_id": clean_parent},
+        "title": [
+            {
+                "type": "text",
+                "text": {"content": f"Candidates — {title[:120]}"},
+            }
+        ],
+        "properties": {
+            "Name": {"title": {}},
+            "ATS": {
+                "select": {
+                    "options": [
+                        {"name": "greenhouse", "color": "green"},
+                        {"name": "lever", "color": "blue"},
+                        {"name": "ashby", "color": "purple"},
+                    ]
+                }
+            },
+            "Stage": {"select": {}},
+            "Current Company": {"rich_text": {}},
+            "Current Title": {"rich_text": {}},
+            "Email": {"email": {}},
+            "Phone": {"phone_number": {}},
+            "Applied": {"date": {}},
+            "Resume": {"url": {}},
+            "ATS Link": {"url": {}},
+            "External ID": {"rich_text": {}},
+        },
+    }
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        resp = await client.post(
+            f"{_NOTION_API}/databases",
+            headers=_headers(token),
+            json=payload,
+        )
+    if resp.status_code in (401, 403):
+        raise PermissionError("notion_token_revoked")
+    if resp.status_code == 404:
+        raise PermissionError("notion_parent_not_shared")
+    if resp.status_code >= 400:
+        raise RuntimeError(
+            f"notion_db_create_failed: {resp.status_code} {resp.text[:200]}"
+        )
+    data = resp.json()
+    return {
+        "database_id": data.get("id"),
+        "url": data.get("url"),
+    }
+
+
+def _candidate_properties(candidate: dict[str, Any]) -> dict[str, Any]:
+    """Map a normalised CandidateRecord dict to Notion property values.
+
+    Kept as a free function (rather than a method) so the upsert flow can
+    reuse the same shape for both create-page and patch-page payloads —
+    Notion takes the same `properties` block for either operation.
+    """
+    return {
+        "Name": _title_prop(candidate.get("full_name")),
+        "ATS": _select_prop(candidate.get("ats_platform")),
+        "Stage": _select_prop(candidate.get("stage")),
+        "Current Company": _short_text_prop(candidate.get("current_company")),
+        "Current Title": _short_text_prop(candidate.get("current_title")),
+        "Email": _email_prop(candidate.get("email")),
+        "Phone": _phone_prop(candidate.get("phone")),
+        "Applied": _date_prop(candidate.get("applied_at")),
+        "Resume": _url_prop(candidate.get("resume_url")),
+        "ATS Link": _url_prop(candidate.get("candidate_url")),
+        "External ID": _short_text_prop(candidate.get("external_id")),
+    }
+
+
+async def create_candidate_row(
+    *,
+    org_id: str,
+    database_id: str,
+    candidate: dict[str, Any],
+) -> str | None:
+    """Create one row in the candidate database. Returns the page id.
+
+    Returns None on a recoverable failure (logged) — the caller treats that
+    as "this candidate is in our local cache but couldn't be mirrored to
+    Notion this run" rather than failing the whole sync.
+    """
+    token = await _access_token(org_id)
+    if not token:
+        raise PermissionError("notion_not_connected")
+    payload = {
+        "parent": {"database_id": database_id},
+        "properties": _candidate_properties(candidate),
+    }
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+        resp = await client.post(
+            f"{_NOTION_API}/pages",
+            headers=_headers(token),
+            json=payload,
+        )
+    if resp.status_code in (401, 403):
+        raise PermissionError("notion_token_revoked")
+    if resp.status_code >= 400:
+        log.warning(
+            "notion_candidate_create_failed code=%s body=%s",
+            resp.status_code,
+            resp.text[:200],
+        )
+        return None
+    return resp.json().get("id")
+
+
+async def update_candidate_row(
+    *,
+    org_id: str,
+    page_id: str,
+    candidate: dict[str, Any],
+) -> bool:
+    """PATCH /v1/pages/{page_id} with refreshed properties. Returns success."""
+    token = await _access_token(org_id)
+    if not token:
+        raise PermissionError("notion_not_connected")
+    payload = {"properties": _candidate_properties(candidate)}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+        resp = await client.patch(
+            f"{_NOTION_API}/pages/{page_id}",
+            headers=_headers(token),
+            json=payload,
+        )
+    if resp.status_code in (401, 403):
+        raise PermissionError("notion_token_revoked")
+    if resp.status_code >= 400:
+        log.warning(
+            "notion_candidate_update_failed page=%s code=%s body=%s",
+            page_id,
+            resp.status_code,
+            resp.text[:200],
+        )
+        return False
+    return True
+
+
 async def list_write_targets(*, org_id: str, query: str | None = None) -> list[dict[str, Any]]:
     """Return pages the integration can use as a parent for new pages.
 

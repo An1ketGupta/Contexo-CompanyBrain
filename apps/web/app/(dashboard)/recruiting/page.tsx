@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
-import { AlertTriangle, CheckCircle2, Plus, Settings } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Hash, Plus, Settings } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { NotionParentPicker } from "@/components/recruiting/notion-parent-picker";
+import { SlackChannelPicker } from "@/components/recruiting/slack-channel-picker";
 
 interface AtsPostingRow {
   platform: string;
@@ -39,6 +40,14 @@ interface NotionParentStatus {
   accessibility_error: string | null;
 }
 
+interface SlackChannelStatus {
+  connected: boolean;
+  channel_id: string | null;
+  channel_name: string | null;
+  accessible: boolean;
+  accessibility_error: string | null;
+}
+
 const fetcher = async <T,>(url: string): Promise<T> => {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed (${res.status})`);
@@ -53,7 +62,9 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function RecruitingPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [slackPickerOpen, setSlackPickerOpen] = useState(false);
   const [dismissedSetup, setDismissedSetup] = useState(false);
+  const [dismissedSlackSetup, setDismissedSlackSetup] = useState(false);
 
   const { data, error, isLoading } = useSWR<ListResponse>(
     "/api/recruiting/requisitions",
@@ -68,6 +79,13 @@ export default function RecruitingPage() {
       { revalidateOnFocus: false },
     );
 
+  const { data: slackStatus, mutate: mutateSlackStatus } =
+    useSWR<SlackChannelStatus>(
+      "/api/recruiting/slack-channel",
+      fetcher,
+      { revalidateOnFocus: false },
+    );
+
   // Show the empty-state card when:
   //   - we know Notion's state (not still loading)
   //   - no default parent is configured, OR the configured parent is no
@@ -77,6 +95,13 @@ export default function RecruitingPage() {
     !!notionStatus &&
     (!notionStatus.parent_id || !notionStatus.accessible) &&
     !dismissedSetup;
+
+  // Slack default channel is optional — we surface a quieter prompt than the
+  // Notion one because requisitions can still publish without a channel set.
+  const needsSlackSetup =
+    !!slackStatus &&
+    (!slackStatus.channel_id || !slackStatus.accessible) &&
+    !dismissedSlackSetup;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
@@ -122,11 +147,47 @@ export default function RecruitingPage() {
         </div>
       )}
 
+      {needsSlackSetup && (
+        <SlackSetupCard
+          status={slackStatus}
+          onOpenPicker={() => setSlackPickerOpen(true)}
+          onDismiss={() => setDismissedSlackSetup(true)}
+        />
+      )}
+
+      {slackStatus?.channel_id && slackStatus.accessible && (
+        <div className="flex items-center justify-between rounded border border-border bg-muted/30 px-3 py-2 text-xs">
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+            Requisitions post to{" "}
+            <span className="inline-flex items-center gap-1 font-medium text-foreground">
+              <Hash className="h-3 w-3" />
+              {slackStatus.channel_name || "your Slack channel"}
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setSlackPickerOpen(true)}
+            className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+          >
+            <Settings className="h-3 w-3" />
+            Change
+          </button>
+        </div>
+      )}
+
       <NotionParentPicker
         open={pickerOpen}
         onOpenChange={setPickerOpen}
         scope="org"
         onPicked={() => mutateNotionStatus()}
+      />
+
+      <SlackChannelPicker
+        open={slackPickerOpen}
+        onOpenChange={setSlackPickerOpen}
+        scope="org"
+        onPicked={() => mutateSlackStatus()}
       />
 
       {isLoading ? (
@@ -182,6 +243,67 @@ export default function RecruitingPage() {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+function SlackSetupCard({
+  status,
+  onOpenPicker,
+  onDismiss,
+}: {
+  status: SlackChannelStatus;
+  onOpenPicker: () => void;
+  onDismiss: () => void;
+}) {
+  const variant: "not-connected" | "no-channel" | "channel-broken" =
+    !status.connected
+      ? "not-connected"
+      : !status.channel_id
+        ? "no-channel"
+        : "channel-broken";
+
+  const headline =
+    variant === "not-connected"
+      ? "Connect Slack to announce new requisitions"
+      : variant === "no-channel"
+        ? "Pick a Slack channel for recruiting announcements"
+        : "Slack channel is no longer reachable";
+
+  const body =
+    variant === "not-connected"
+      ? "Every requisition you publish drops a one-line announcement into one Slack channel. Pick that channel once — every publish after that posts automatically."
+      : variant === "no-channel"
+        ? "Choose the Slack channel where new openings should be announced. Set this once; every published requisition posts there."
+        : `NirnayaIQ can no longer post to #${status.channel_name || "the configured channel"}. Re-invite the bot, or pick a different channel.`;
+
+  const cta =
+    variant === "channel-broken" ? "Pick a different channel" : "Set up Slack";
+
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-border bg-card p-4">
+      {variant === "channel-broken" ? (
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+      ) : (
+        <Settings className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">{headline}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{body}</p>
+        {variant === "channel-broken" && status.accessibility_error && (
+          <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+            {status.accessibility_error}
+          </p>
+        )}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button size="sm" onClick={onOpenPicker}>
+            {cta}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onDismiss}>
+            Skip for now
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -132,6 +132,76 @@ async def publish_job(
     }
 
 
+async def fetch_candidates(*, org_id: str, job_id: str) -> list[dict[str, Any]]:
+    """POST /application.list filtered by jobId → normalised candidate dicts.
+
+    Ashby's application list embeds both the candidate object and the
+    currentInterviewStage, so one paginated call covers the sync. The job
+    opening id is what we stored as `job_id` at publish time.
+    """
+    creds = await _get_credentials(org_id)
+    if not creds:
+        raise PermissionError("ashby_not_connected")
+    api_key, _ = creds
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        resp = await client.post(
+            f"{_api()}/application.list",
+            headers={
+                "Authorization": _auth_header(api_key),
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            json={"jobId": job_id, "limit": 100},
+        )
+    if resp.status_code == 401:
+        raise PermissionError("ashby_unauthorized")
+    if resp.status_code >= 400:
+        raise RuntimeError(
+            f"ashby_candidates_failed: {resp.status_code} {resp.text[:200]}"
+        )
+
+    envelope = resp.json() or {}
+    if not envelope.get("success"):
+        raise RuntimeError(f"ashby_candidates_failed: {envelope.get('errors')}")
+
+    results = envelope.get("results")
+    if isinstance(results, dict):
+        applications = results.get("data") or []
+    elif isinstance(results, list):
+        applications = results
+    else:
+        applications = []
+
+    out: list[dict[str, Any]] = []
+    for app in applications:
+        cand = app.get("candidate") or {}
+        cand_id = cand.get("id") or app.get("candidateId")
+        if not cand_id:
+            continue
+        emails = cand.get("emailAddresses") or []
+        phones = cand.get("phoneNumbers") or []
+        stage_obj = app.get("currentInterviewStage") or {}
+        stage = stage_obj.get("title") or stage_obj.get("name")
+
+        out.append(
+            {
+                "ats_platform": "ashby",
+                "external_id": str(cand_id),
+                "full_name": cand.get("name") or None,
+                "email": (emails[0] or {}).get("value") if emails else None,
+                "phone": (phones[0] or {}).get("value") if phones else None,
+                "current_company": cand.get("company") or None,
+                "current_title": cand.get("position") or cand.get("title") or None,
+                "stage": stage,
+                "resume_url": cand.get("resumeFileHandle") or None,
+                "candidate_url": f"https://app.ashbyhq.com/candidates/{cand_id}",
+                "applied_at": app.get("createdAt"),
+            }
+        )
+    return out
+
+
 async def test_connection(*, api_key: str) -> bool:
     async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
         resp = await client.post(

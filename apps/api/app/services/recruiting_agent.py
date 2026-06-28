@@ -31,6 +31,9 @@ from app.database import get_service_client
 from app.models.recruiting import (
     AtsPlatform,
     JdVariant,
+    LinkedinSearch,
+    NaukriSearch,
+    NaukriTaxonomy,
     SourcingTemplate,
 )
 from app.services.agents.kb_synthesis import (
@@ -40,7 +43,9 @@ from app.services.agents.kb_synthesis import (
     synthesize_json,
     synthesize_text,
 )
+from app.services.integrations import posting_registry
 from app.services.integrations.ats import ashby, greenhouse, lever
+from app.services.integrations.job_boards import naukri
 from app.services.recruiting import audit_log, mapping_resolver
 
 log = logging.getLogger(__name__)
@@ -99,81 +104,311 @@ _THREE_TONES = [
 ]
 
 
-_GENERATE_SYSTEM = """You are a principal technical recruiter who has written thousands of job descriptions at high-bar companies. Your JDs are known for three things: brutal specificity, zero filler, and attracting exactly the right person while naturally filtering out the wrong one.
+_GENERATE_SYSTEM = """
+You are a senior technical recruiter with 15+ years of experience writing high-performing job descriptions for companies across early-stage startups, growth-stage scaleups, and global enterprises.
+Your job descriptions attract qualified candidates, filter unqualified applicants, and reflect the real character of the hiring company—not a generic template.
+You write like a seasoned recruiter, not a content generator.
 
-━━━ GROUND RULES ━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OBJECTIVE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-NEVER invent facts. Every claim must come from one of: "Role to hire", "Tech stack", "Org facts", "Hire-specific context", or "Company-grounded context". The hierarchy of authority is:
-  1. Org facts (authoritative DB columns — use verbatim, never paraphrase)
-  2. Tech stack (list provided by the recruiter — include all tools listed, add none)
-  3. Hire-specific context (per-hire specifics — overrides conflicting KB chunks)
-  4. Company-grounded context (KB retrieval — quotes are preferred over paraphrase)
+Generate three structurally and tonally distinct job descriptions, each ready to publish without editing.
+A sentence earns its place only if it does at least one of:
+• Clarifies what the role requires or involves
+• Helps the company attract better-fit applicants
+• Helps a candidate disqualify themselves early
+• Removes a common point of confusion
 
-Specific prohibitions:
-- If headcount is not in Org facts → never write a company size range
-- If comp is not disclosed → write "Competitive compensation" exactly; never invent or hint at a range
-- If a tool is not in "Tech stack" → do not add it
-- No buzzwords: passionate, rockstar, ninja, guru, world-class, dynamic team, fast-paced, self-starter
+Remove anything that fails this test.
 
-━━━ SENIORITY SIGNALS ━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INPUT HIERARCHY (Source of Truth)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Match every JD to the seniority level provided. Use these signals:
+Information must come from these sources only, in priority order:
 
-- intern / entry:    "you will learn", guided work, mentorship mentioned, explicit ramp-up period
-- mid:               "you will own", some ambiguity expected, cross-team collaboration, 2-4 yr experience signal
-- senior:            "you will lead the design/decision", broad scope, mentors others implicitly, 5+ yr signal
-- staff / principal: "you will set direction", org-wide impact, works across multiple teams, define standards
-- lead / manager:    "you will grow the team", hiring/performance ownership, strategy + execution balance, P&L or headcount ownership if relevant
+1. Org Facts          — highest authority
+2. Tech Stack
+3. Hire-specific Context
+4. Company-grounded KB — lowest authority
 
-━━━ INTERVIEW PROCESS ━━━
+Higher-priority inputs always override lower-priority ones.
+If a piece of information is missing from all sources:
+→ DO NOT GUESS. Omit it entirely.
 
-When an interview process is provided, include it under a "## Interview process" section in every variant.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HALLUCINATION PREVENTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Always format the process with framing prose — never paste the raw input as-is:
-- Always open with a short lead-in: "The process consists of N round(s):"
-- Always number each round: "Round 1: …", "Round 2: …"
-- Light connective sentences are fine but must not add new facts
+Never invent or infer any of the following unless explicitly present in the input:
 
-You MUST NOT invent any of the following — only include them if they appear in the input:
-- Durations, time slots, or scheduling
-- Panel members, interviewer names, roles, or titles
-- Formats (in-person / virtual / async / live)
-- Follow-up steps or post-interview communication
-- Take-home assignments, prep materials, or any artefacts not mentioned
+• Company size or headcount
+• Salary ranges, equity, or bonuses
+• Benefits or perks
+• Remote / hybrid / on-site policy
+• Visa sponsorship
+• Interview format, duration, or number of rounds
+• Technologies, tools, or platforms
+• Responsibilities or deliverables
+• Reporting or team structure
+• Career progression or growth paths
+• Company culture claims
+• KPIs or performance metrics
+• Hiring urgency or start date
 
-If the input is a single phrase like "HR Screening", render it as a one-round process ("The process consists of 1 round:" → "Round 1: HR Screening"). If the input lists multiple stages (e.g. "HR → Tech Interview → Final HR call"), split on "→" or "," or numbered markers, then number each stage in order.
+COMPENSATION FALLBACK
+If no compensation data is provided, write exactly:
+"Competitive compensation"
+Nothing more.
 
-━━━ THREE VARIANTS — STRUCTURAL SPECS ━━━
+LOCATION FALLBACK
+If no location is provided, omit the field entirely.
 
-Each variant must differ in STRUCTURE and OPENING, not just vocabulary. Produce exactly three, in this order:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TECH STACK — STRICT INCLUSION RULE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. startup-casual
-   - Open with 1-2 sentence "who we are / what we're building" hook (use Org facts if present, otherwise derive from role)
-   - Use first person plural ("we're looking for", "you'll own")
-   - Bullet-heavy responsibilities (6-8 tight bullets)
-   - Requirements split: Must-have (3-5) + Nice-to-have (2-3)
-   - Close with a human note on culture or why this role exists now
+Include only technologies explicitly listed in the Tech Stack input.
+Do NOT add technologies because they are commonly paired, implied by the stack, or assumed by industry convention.
+Example:
+Input: Python, FastAPI
 
-2. enterprise-formal
-   - Open with "Position Summary" paragraph in third person ("The [Title] will…")
-   - Numbered or headed sections: Summary → Key Responsibilities → Qualifications → Preferred → Compensation → Process
-   - Passive/formal register throughout
-   - Emphasise scope, stakeholders, and measurable impact
+You may NOT add: Docker, AWS, PostgreSQL, Redis, Git, Linux, Celery, Nginx
+Every technology you mention must appear word-for-word in the input.
 
-3. concise-pragmatic
-   - 250-350 words maximum — no section you can cut without losing signal
-   - Format: role in one line → 4-5 must-have requirements → comp/location → how to apply
-   - Zero filler sentences
-   - Reads like a well-written internal headcount request, not marketing copy
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LEGAL COMPLIANCE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-━━━ OUTPUT ━━━
+All three variants must comply with equal employment opportunity standards.
 
-JSON ONLY — no prose, no markdown fences around the JSON block, no trailing explanation.
+NEVER include language that discriminates—explicitly or implicitly—based on:
+
+• Age (avoid: "recent graduate," "young and hungry," "digital native")
+• Gender (use gender-neutral language throughout)
+• Race, nationality, or ethnicity
+• Disability or health status
+• Family or marital status
+• Religion
+
+Avoid degree gatekeeping where possible. Prefer "equivalent experience" phrasing alongside formal qualifications.
+
+Examples:
+✗ "Bachelor's degree required"
+✓ "Bachelor's degree or equivalent practical experience"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WRITING STYLE — NON-NEGOTIABLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Write in plain, direct language. Every line should sound like a real person wrote it.
+BANNED PHRASES — never use:
+
+• passionate / passionate about
+• rockstar / ninja / guru / wizard
+• world-class
+• fast-paced environment
+• dynamic team
+• self-starter
+• wear many hats
+• hit the ground running
+• exciting opportunity
+• join our amazing team
+• thrive under pressure
+• collaborative culture
+• we're like a family
+• make an impact
+• move fast and break things
+• results-oriented
+
+STYLE RULES:
+
+• Active voice by default
+• Short paragraphs (2-4 lines max)
+• Specific over general
+• Concrete over abstract
+• Believable over aspirational
+
+BAD: "You'll work closely with cross-functional stakeholders to drive impactful outcomes."
+GOOD: "You'll work with the product manager and data team to ship features on a bi-weekly cycle."
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SENIORITY CALIBRATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Match every responsibility and requirement to the stated seniority level.
+
+Intern / Entry-Level
+→ Learning, mentorship, guided ownership, structured onboarding
+
+Mid-Level
+→ Owns discrete features, collaborates across teams, comfortable with moderate ambiguity, accountable for delivery
+
+Senior
+→ Leads technical decisions, designs systems, mentors junior engineers, drives architecture discussions
+
+Staff / Principal
+→ Sets long-range technical direction, influences multiple teams, establishes standards, owns multi-quarter roadmap items
+
+Engineering Manager / Lead
+→ Responsible for hiring, coaching, planning, delivery, cross-functional alignment, and team health
+
+If a responsibility does not fit the seniority level, remove it.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INTERVIEW PROCESS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If interview stages are provided, include a clearly labeled section in each applicable variant:
+
+## Interview Process
+
+Open with:
+"The hiring process consists of [N] round(s):"
+
+Then number each stage.
+
+Example:
+Round 1: HR Screening
+Round 2: Technical Assessment
+Round 3: Hiring Manager Discussion
+
+DO NOT invent or assume:
+• Duration of any round
+• Whether rounds are virtual or in-person
+• Panel composition
+• Take-home assignment details
+• Feedback timelines
+
+If no interview data is provided, omit the section entirely.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PRE-WRITE VALIDATION CHECKLIST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Before writing any variant, run this check internally:
+
+✓ Every responsibility is traceable to Hire-specific Context or Org Facts.
+✓ Every requirement is traceable to a provided input.
+✓ Every technology appears verbatim in Tech Stack.
+✓ Every company claim appears in Org Facts or KB.
+✓ No language violates legal compliance rules.
+✓ Seniority level is reflected in every line.
+✓ No banned phrases appear.
+✓ No unsupported assumptions remain.
+
+Remove anything that fails. Do not add a caveat—just remove it.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+VARIANT REQUIREMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Generate exactly three variants. They must differ in:
+
+• Structure (sections, order, formatting)
+• Pacing (dense vs. spaced, short vs. long)
+• Opening approach (narrative, summary, direct)
+• Tone (conversational, formal, terse)
+
+Variation must be substantive—not surface-level rewording.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+VARIANT 1 — startup-casual
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Structure:
+1. Opening narrative (1-2 short paragraphs): what the company does and why this role exists now.
+2. What You'll Do — 6-8 specific bullets
+3. What We're Looking For — split into:
+   • Must Have
+   • Nice to Have
+4. Closing paragraph: human, specific to this role, explains what makes this opportunity worth considering.
+
+Voice: first-person ("we," "our," "you'll")
+Tone: direct, grounded, no fluff
+Length: medium
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+VARIANT 2 — enterprise-formal
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Sections (in order):
+1. Position Summary
+2. Key Responsibilities
+3. Required Qualifications
+4. Preferred Qualifications
+5. Compensation
+6. Interview Process (if data available)
+
+Voice: third-person ("The candidate will…", "This role requires…")
+Tone: formal, scope-focused, business-impact oriented
+Emphasis: stakeholders, ownership, measurable outcomes
+Length: longer; comprehensive
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+VARIANT 3 — concise-pragmatic
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Hard limit: 350 words
+
+Sections:
+1. Role Summary (3-5 sentences max)
+2. Must-Have Requirements (bullets only; no elaboration)
+3. Compensation
+4. Location
+5. How to Apply
+
+Voice: neutral, impersonal
+Tone: internal memo style; no preamble
+No opening narrative. No culture language. No closing pitch.
+Reads like a brief written for a hiring manager, not a candidate.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FINAL QUALITY STANDARD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Each variant must:
+
+• Read as if written by a senior recruiter, not generated
+• Pass ATS keyword parsing without keyword stuffing
+• Contain zero duplicated information across sections
+• Contain zero generic filler or marketing language
+• Be legally compliant
+• Be maximally specific to the provided inputs
+• Be immediately publishable without editing
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT FORMAT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Return ONLY valid JSON. No markdown wrapping. No preamble. No trailing explanation.
+
+Schema:
+
 {
   "variants": [
-    {"tone": "<tone name>", "text": "<full JD in markdown, 300-600 words except concise-pragmatic which is 250-350>"}
+    {
+      "tone": "startup-casual",
+      "text": "<full JD in markdown>"
+    },
+    {
+      "tone": "enterprise-formal",
+      "text": "<full JD in markdown>"
+    },
+    {
+      "tone": "concise-pragmatic",
+      "text": "<full JD in markdown>"
+    }
   ]
 }
+
+If any input is insufficient to produce a complete, compliant JD, return:
+
+{
+  "error": "<specific description of what is missing>"
+}
+Return nothing outside the JSON object.
 """.strip()
 
 
@@ -213,6 +448,7 @@ async def generate_job_requisition(
     disclosed_compensation: str | None = None,
     interview_details: str | None = None,
     stack: str | None = None,
+    working_hours: str | None = None,
     context_notes: str | None = None,
 ) -> dict[str, Any]:
     """Search → synthesize → persist. Returns the inserted row.
@@ -279,6 +515,11 @@ async def generate_job_requisition(
             else ""
         )
         + (
+            f"\n## Working hours (include verbatim in every variant under '## Working hours')\n{working_hours}\n"
+            if working_hours
+            else ""
+        )
+        + (
             f"\n## Hire-specific context (highest authority — overrides KB chunks)\n{context_notes}\n"
             if context_notes
             else ""
@@ -339,6 +580,7 @@ async def generate_job_requisition(
                     "disclosed_compensation": disclosed_compensation,
                     "interview_details": interview_details,
                     "stack": stack,
+                    "working_hours": working_hours,
                     "context_notes": context_notes,
                     "location": location,
                     "department": department,
@@ -368,7 +610,15 @@ async def generate_job_requisition(
 # ── 2. Publish ───────────────────────────────────────────────────────────────
 
 
-_ATS_ADAPTERS = {"greenhouse": greenhouse, "lever": lever, "ashby": ashby}
+# Every key here MUST appear in posting_registry as well — the registry's
+# kind metadata (ats | job_board) decorates each posting result so the UI can
+# render them differently.
+_ATS_ADAPTERS = {
+    "greenhouse": greenhouse,
+    "lever": lever,
+    "ashby": ashby,
+    "naukri": naukri,
+}
 
 
 async def _publish_one_ats(
@@ -425,6 +675,10 @@ async def _publish_one_ats(
     )
 
     adapter = _ATS_ADAPTERS[ats_platform]
+    # Tag every posting with the registry's destination_type so the UI can
+    # render "ATS" vs "Job board" failures differently. Looked up once here
+    # rather than re-derived on every read of ats_postings.
+    destination_type = posting_registry.kind_of(ats_platform)
     try:
         async with audit_log.timed(
             org_id=org_id,
@@ -449,17 +703,26 @@ async def _publish_one_ats(
             }
         return {
             "platform": ats_platform,
+            "destination_type": destination_type,
             "job_id": ats_result["job_id"],
             "url": ats_result["url"],
         }
     except PermissionError as exc:
         msg = f"ats_not_connected_or_unauthorized: {exc}"
         log.warning("recruiting.publish.permission ats=%s err=%s", ats_platform, exc)
-        return {"platform": ats_platform, "error": msg}
+        return {
+            "platform": ats_platform,
+            "destination_type": destination_type,
+            "error": msg,
+        }
     except Exception as exc:
         msg = f"ats_publish_failed: {exc}"
         log.warning("recruiting.publish.failed ats=%s err=%s", ats_platform, exc)
-        return {"platform": ats_platform, "error": msg}
+        return {
+            "platform": ats_platform,
+            "destination_type": destination_type,
+            "error": msg,
+        }
 
 
 async def publish_requisition(
@@ -475,6 +738,7 @@ async def publish_requisition(
     location_override: str | None = None,
     department_override: str | None = None,
     mapping_overrides: dict[str, dict[str, Any]] | None = None,
+    naukri_taxonomy: NaukriTaxonomy | None = None,
 ) -> dict[str, Any]:
     """Publish the requisition to every selected ATS, then run best-effort
     side-effects in parallel.
@@ -512,6 +776,8 @@ async def publish_requisition(
     # leaving an escape hatch for the per-requisition override.
     if not notion_parent_page_id:
         notion_parent_page_id = await _org_default_notion_parent(org_id)
+    if not slack_channel:
+        slack_channel = await _org_default_slack_channel(org_id)
 
     variants = row.get("jd_variants") or []
     if selected_variant_index >= len(variants):
@@ -534,7 +800,48 @@ async def publish_requisition(
     if not platforms:
         raise ValueError("no_ats_platforms")
 
-    overrides = mapping_overrides or {}
+    # Naukri requires the recruiter's explicit taxonomy choices — the publish
+    # form collects functional_area, role_category, industry_type, experience
+    # band, and key_skills. Without them the HotVacancy API rejects the
+    # payload. Fail fast at the boundary so the recruiter gets a clear
+    # validation message instead of an opaque "Naukri 400" downstream.
+    if "naukri" in platforms:
+        if naukri_taxonomy is None:
+            raise ValueError("naukri_taxonomy_required")
+        if not naukri_taxonomy.functional_area_id:
+            raise ValueError("naukri_functional_area_required")
+        if not naukri_taxonomy.role_category_id:
+            raise ValueError("naukri_role_category_required")
+        if not naukri_taxonomy.industry_type_id:
+            raise ValueError("naukri_industry_type_required")
+
+    overrides = dict(mapping_overrides or {})
+    # Layer the Naukri taxonomy onto its mapping_override. The adapter reads
+    # functional_area_id / role_category_id / industry_type_id / experience /
+    # key_skills from `metadata`; we collect them here so the rest of the
+    # parallel-publish flow doesn't need a Naukri-specific code path.
+    if naukri_taxonomy is not None and "naukri" in platforms:
+        existing = overrides.get("naukri") or {}
+        naukri_meta = {
+            "functional_area_id": naukri_taxonomy.functional_area_id,
+            "functional_area_name": naukri_taxonomy.functional_area_name,
+            "role_category_id": naukri_taxonomy.role_category_id,
+            "role_category_name": naukri_taxonomy.role_category_name,
+            "industry_type_id": naukri_taxonomy.industry_type_id,
+            "industry_type_name": naukri_taxonomy.industry_type_name,
+            "experience_min_years": naukri_taxonomy.experience_min_years,
+            "experience_max_years": naukri_taxonomy.experience_max_years,
+            "key_skills": naukri_taxonomy.key_skills or None,
+            # Pass disclosed_compensation through so Naukri's hideSalary flag
+            # flips to false when the recruiter chose to disclose comp.
+            "disclosed_compensation": row.get("disclosed_compensation"),
+        }
+        # Drop None values so the mapping_resolver-supplied defaults don't
+        # get overwritten by explicit nulls from a partially-filled form.
+        overrides["naukri"] = {
+            **existing,
+            **{k: v for k, v in naukri_meta.items() if v is not None},
+        }
 
     # Fan out across platforms in parallel — each ATS is an independent
     # network call. One failing doesn't abort the others.
@@ -580,7 +887,13 @@ async def publish_requisition(
     extra_success_urls = [s["url"] for s in successes[1:]]
 
     sourcing_task = asyncio.create_task(
-        _draft_sourcing(org_id=org_id, role_request=row["role_request"], jd=content)
+        _draft_sourcing(
+            org_id=org_id,
+            role_request=row["role_request"],
+            jd=content,
+            seniority_level=row.get("seniority_level"),
+            location=row.get("location"),
+        )
     )
     notion_task = asyncio.create_task(
         _create_notion_tracker_audited(
@@ -618,9 +931,23 @@ async def publish_requisition(
     )
 
     sourcing_drafts, linkedin_urls = await sourcing_task
-    notion_url = await notion_task
-    await slack_task
+    notion_result = await notion_task
+    notion_url = notion_result.get("tracker_url")
+    notion_candidates_db_id = notion_result.get("candidates_db_id")
+    slack_post_error = await slack_task
     await email_task
+
+    # Naukri Resdex search variants — only generated when Naukri was in the
+    # publish set, since they're useless without a Naukri Resdex subscription
+    # for the recruiter to land in.
+    naukri_search_urls: list[NaukriSearch] = []
+    if "naukri" in platforms:
+        naukri_search_urls = _naukri_search_urls_for(
+            role_request=row["role_request"],
+            seniority_level=row.get("seniority_level"),
+            location=row.get("location"),
+            key_skills=(naukri_taxonomy.key_skills if naukri_taxonomy else None),
+        )
 
     # If some platforms failed but at least one succeeded, surface that as
     # a non-fatal error message — the UI shows it alongside the ats_postings
@@ -632,25 +959,32 @@ async def publish_requisition(
     )
 
     def _update() -> dict[str, Any]:
+        update_payload: dict[str, Any] = {
+            "selected_variant_index": selected_variant_index,
+            "ats_platform": primary["platform"],
+            "ats_job_id": primary["job_id"],
+            "ats_url": primary_url,
+            "ats_postings": postings,
+            "notion_tracker_url": notion_url,
+            "notion_candidates_db_id": notion_candidates_db_id,
+            "sourcing_templates": [t.model_dump() for t in sourcing_drafts],
+            "linkedin_search_urls": [s.model_dump() for s in linkedin_urls],
+            "naukri_search_urls": [s.model_dump() for s in naukri_search_urls],
+            "hiring_manager_email": hiring_manager_email,
+            "slack_channel": slack_channel,
+            "slack_post_error": slack_post_error,
+            "status": "published",
+            "error_message": error_message,
+            "published_at": datetime.now(UTC).isoformat(),
+        }
+        # Persist the recruiter's explicit Naukri taxonomy choices so the
+        # detail page can render them back even after a refresh, and so the
+        # audit story for "what did we send to Naukri" is complete.
+        if naukri_taxonomy is not None and "naukri" in platforms:
+            update_payload["naukri_taxonomy"] = naukri_taxonomy.model_dump()
         res = (
             svc.table("job_requisitions")
-            .update(
-                {
-                    "selected_variant_index": selected_variant_index,
-                    "ats_platform": primary["platform"],
-                    "ats_job_id": primary["job_id"],
-                    "ats_url": primary_url,
-                    "ats_postings": postings,
-                    "notion_tracker_url": notion_url,
-                    "sourcing_templates": [t.model_dump() for t in sourcing_drafts],
-                    "linkedin_search_urls": linkedin_urls,
-                    "hiring_manager_email": hiring_manager_email,
-                    "slack_channel": slack_channel,
-                    "status": "published",
-                    "error_message": error_message,
-                    "published_at": datetime.now(UTC).isoformat(),
-                }
-            )
+            .update(update_payload)
             .eq("id", requisition_id)
             .eq("org_id", org_id)
             .execute()
@@ -739,8 +1073,10 @@ async def _draft_sourcing(
     org_id: str,
     role_request: str,
     jd: str,
-) -> tuple[list[SourcingTemplate], list[str]]:
-    """Returns (templates, linkedin_search_urls). Best-effort: failures
+    seniority_level: str | None = None,
+    location: str | None = None,
+) -> tuple[list[SourcingTemplate], list[LinkedinSearch]]:
+    """Returns (templates, linkedin_searches). Best-effort: failures
     produce empty lists rather than blowing up the publish."""
     templates: list[SourcingTemplate] = []
     try:
@@ -757,32 +1093,320 @@ async def _draft_sourcing(
     except Exception as exc:
         log.warning("recruiting.sourcing.failed org=%s err=%s", org_id, exc)
 
-    # LinkedIn Recruiter search URL templates — no API call, just a deep link
-    # the recruiter can click. We synthesize 2-3 query strings from role
-    # keywords.
-    linkedin_urls = _linkedin_search_urls_for(role_request)
+    # LinkedIn deep links — no LinkedIn API call. We hand the recruiter a
+    # small menu of pre-filtered searches keyed off the requisition's role,
+    # seniority, and location so they don't have to rebuild the same query
+    # in LinkedIn's UI five times.
+    linkedin_urls = _linkedin_search_urls_for(
+        role_request, seniority_level=seniority_level, location=location
+    )
 
     return templates, linkedin_urls
 
 
-def _linkedin_search_urls_for(role_request: str) -> list[str]:
-    """Build clickable LinkedIn search URLs. No LinkedIn API call.
+# Seniority labels that drift across companies (Lead/Staff/Principal are
+# title-level, so we drop "Senior" rather than stacking it).
+_TITLE_LEVEL_SENIORITIES = {"staff", "lead", "principal"}
 
-    LinkedIn Sales Navigator / Recruiter search uses /search/results/people/
-    with `keywords` query. We construct 3 variants:
-      1. exact role
-      2. role with seniority disambiguated ("senior", "staff")
-      3. role with adjacent title family
+
+def _linkedin_search_urls_for(
+    role_request: str,
+    *,
+    seniority_level: str | None = None,
+    location: str | None = None,
+) -> list[LinkedinSearch]:
+    """Build a curated list of LinkedIn People-search deep links.
+
+    LinkedIn's /search/results/people/ endpoint accepts:
+      * `keywords`     — full-text match across profile
+      * `titleFreeText` — match on current title only (fewer false positives)
+      * `network`      — JSON-encoded array of degree codes: F (1st), S (2nd)
+      * `openToWork`   — surfaces #OpenToWork badge holders
+
+    We return them in the order a recruiter would normally try them:
+    closest signal first (warm intros), broadest reach last.
     """
     base = "https://www.linkedin.com/search/results/people/"
-    keywords = role_request.strip()
-    urls = [f"{base}?keywords={quote_plus(keywords)}"]
-    if "senior" not in keywords.lower():
-        urls.append(f"{base}?keywords={quote_plus('senior ' + keywords)}")
-    urls.append(
-        f"{base}?keywords={quote_plus(keywords)}&network=%5B%22S%22%5D"  # 2nd-degree
+    role = role_request.strip()
+    role_lower = role.lower()
+
+    # Pick the seniority prefix that makes sense. If the title already
+    # contains the level (e.g. "Senior Frontend Engineer") or the level is
+    # title-level (Staff/Lead/Principal), we just use the role as-is.
+    level = (seniority_level or "").strip().lower()
+    if level and level not in role_lower and level not in _TITLE_LEVEL_SENIORITIES:
+        senior_role = f"{level.capitalize()} {role}"
+    elif "senior" not in role_lower and level in {"", "senior"}:
+        senior_role = f"Senior {role}"
+    else:
+        senior_role = role
+
+    def _qs(params: dict[str, str]) -> str:
+        return "&".join(f"{k}={quote_plus(v)}" for k, v in params.items() if v)
+
+    searches: list[LinkedinSearch] = []
+
+    # 1. Title-only, 1st-degree — warm intros, highest reply rate.
+    searches.append(
+        LinkedinSearch(
+            label=f"{role} — warm intros",
+            url=f"{base}?{_qs({'titleFreeText': role, 'network': '[\"F\"]'})}",
+            description="Title-only search across your 1st-degree connections. "
+            "Best for asking for intros before cold outreach.",
+        )
     )
-    return urls
+
+    # 2. Title-only, 2nd-degree — best balance of reach + relevance.
+    searches.append(
+        LinkedinSearch(
+            label=f"{role} — 2nd-degree network",
+            url=f"{base}?{_qs({'titleFreeText': role, 'network': '[\"S\"]'})}",
+            description="Title-only search across 2nd-degree connections. "
+            "Largest pool of candidates you can still reference-check.",
+        )
+    )
+
+    # 3. Seniority-disambiguated keyword search (broader recall).
+    if senior_role != role:
+        searches.append(
+            LinkedinSearch(
+                label=senior_role,
+                url=f"{base}?{_qs({'keywords': senior_role})}",
+                description=(
+                    "Full-profile keyword search disambiguated by seniority. "
+                    "Catches candidates whose current title is adjacent "
+                    f"(e.g. Tech Lead, Principal) but who match {senior_role!r} elsewhere on their profile."
+                ),
+            )
+        )
+
+    # 4. Open-to-work pool — active job seekers.
+    searches.append(
+        LinkedinSearch(
+            label=f"{role} — open to work",
+            url=f"{base}?{_qs({'titleFreeText': role, 'openToWork': 'true'})}",
+            description="Filtered to profiles flagged #OpenToWork. Smaller pool, "
+            "but highest response rate on cold outreach.",
+        )
+    )
+
+    # 5. Location-scoped search (only when we have one and it isn't 'Remote').
+    loc = (location or "").strip()
+    if loc and loc.lower() not in {"remote", "anywhere"}:
+        searches.append(
+            LinkedinSearch(
+                label=f"{role} in {loc}",
+                url=f"{base}?{_qs({'keywords': role, 'origin': 'FACETED_SEARCH'})}#location={quote_plus(loc)}",
+                description=(
+                    f"Keyword search you can immediately narrow to {loc!r} via "
+                    "LinkedIn's left-rail Location filter. (LinkedIn requires a "
+                    "geoUrn for true pre-filtering — they don't expose those publicly.)"
+                ),
+            )
+        )
+
+    return searches
+
+
+# ── Naukri Resdex search variants ───────────────────────────────────────────
+
+
+# Indian-market experience bands keyed off seniority. Naukri's Resdex search
+# expects a numeric `experience` band; these map our seniority enum to the
+# values an Indian recruiter would typically use. Tuned to be neither too
+# narrow (recall) nor too wide (precision).
+_NAUKRI_EXP_BANDS: dict[str, tuple[int, int]] = {
+    "intern": (0, 1),
+    "entry": (0, 2),
+    "mid": (3, 6),
+    "senior": (6, 10),
+    "staff": (8, 14),
+    "lead": (10, 20),
+}
+
+# Naukri location aliases — Indian cities have multiple common spellings.
+# Resdex accepts the canonical name; we don't try to fuzz match here, but we
+# strip "Remote" prefixes so the location filter doesn't return zero hits.
+def _normalise_naukri_location(loc: str | None) -> str | None:
+    if not loc:
+        return None
+    s = loc.strip()
+    if not s or s.lower() in {"remote", "anywhere"}:
+        return None
+    # Drop common "Remote — " / "Hybrid — " prefixes Indian recruiters write
+    # in the form but Resdex doesn't understand.
+    for prefix in ("Remote — ", "Remote - ", "Hybrid — ", "Hybrid - "):
+        if s.startswith(prefix):
+            s = s[len(prefix) :].strip()
+            break
+    return s or None
+
+
+def _naukri_search_urls_for(
+    *,
+    role_request: str,
+    seniority_level: str | None = None,
+    location: str | None = None,
+    key_skills: list[str] | None = None,
+) -> list[NaukriSearch]:
+    """Build a curated list of Naukri Resdex deep links.
+
+    Resdex (resdex.naukri.com) is Naukri's candidate database — the Indian
+    equivalent of LinkedIn Recruiter. Its filter set is broader than
+    LinkedIn's (notice-period, last-active, current-company, CTC band, etc.)
+    so we generate six variants tuned for Indian recruiting workflows:
+
+        1. Role + experience band (catch-all sourcing query)
+        2. Role + location (Indian-city filter; null when location is Remote)
+        3. Role + key skills Boolean (skill-stack precision)
+        4. Role + competitor poach exclude (current_company NOT pattern)
+        5. Active this week (last_active filter — surfaces fresh candidates)
+        6. Immediate joiners (notice_period<30d — fastest to hire)
+
+    Resdex doesn't accept all filters via URL — for those we land the user
+    on the search page with the textual filters pre-applied and ask them to
+    confirm the advanced facet inside Resdex. `query_summary` is a single-line
+    human-readable explanation of what filters are pre-set.
+    """
+    role = (role_request or "").strip()
+    if not role:
+        return []
+
+    level = (seniority_level or "").strip().lower()
+    exp_lo, exp_hi = _NAUKRI_EXP_BANDS.get(level, (0, 30))
+
+    # Naukri's Resdex search URL accepts the following query params:
+    #   qp     — keywords (role/title/skill)
+    #   qe     — experience band as "min-max"
+    #   ql     — location
+    #   qns    — notice period (1=15d, 2=30d, 3=60d, 4=90d)
+    #   qla    — last active (1=1day, 2=7day, 3=15day, 4=30day, 5=90day)
+    #   qexcl  — exclude companies (current_company NOT in list)
+    base = "https://resdex.naukri.com/"
+
+    def _qs(params: dict[str, str | None]) -> str:
+        return "&".join(
+            f"{k}={quote_plus(v)}" for k, v in params.items() if v not in (None, "")
+        )
+
+    searches: list[NaukriSearch] = []
+    norm_location = _normalise_naukri_location(location)
+    exp_band = f"{exp_lo}-{exp_hi}"
+
+    # 1. Role + experience band — broadest cast, best recall.
+    searches.append(
+        NaukriSearch(
+            label=f"{role} · {exp_band} yrs",
+            url=f"{base}?{_qs({'qp': role, 'qe': exp_band})}",
+            description=(
+                "Title + experience-band search across Resdex. "
+                "Use this first to gauge the size of the candidate pool."
+            ),
+            query_summary=f"role: {role} · experience: {exp_band} years",
+        )
+    )
+
+    # 2. Role + location (Indian city). Skipped for fully-remote roles.
+    if norm_location:
+        searches.append(
+            NaukriSearch(
+                label=f"{role} in {norm_location}",
+                url=f"{base}?{_qs({'qp': role, 'qe': exp_band, 'ql': norm_location})}",
+                description=(
+                    f"Same as above but filtered to candidates in {norm_location}. "
+                    "Indian recruiters often start here because relocation budgets are tight."
+                ),
+                query_summary=f"role: {role} · experience: {exp_band}y · location: {norm_location}",
+            )
+        )
+
+    # 3. Skill-stack Boolean — precision over recall. Naukri's Resdex
+    # supports OR within keywords; we list each skill so candidates with ANY
+    # of the listed skills surface. Recruiter narrows to AND inside Resdex.
+    skills = [s.strip() for s in (key_skills or []) if s and s.strip()]
+    if skills:
+        skills_query = " OR ".join(f'"{s}"' for s in skills[:6])
+        full_query = f"{role} AND ({skills_query})"
+        searches.append(
+            NaukriSearch(
+                label=f"{role} · skill match",
+                url=f"{base}?{_qs({'qp': full_query, 'qe': exp_band})}",
+                description=(
+                    "Boolean keyword search across role + key skills. "
+                    "Most precise variant — candidates need at least one listed skill."
+                ),
+                query_summary=f"role: {role} · skills (OR): {', '.join(skills[:6])}",
+            )
+        )
+
+    # 4. Competitor poach — exclude candidates currently at our own company
+    # name (placeholder — recruiter replaces inside Resdex with real
+    # competitor names). The URL just opens with role pre-filled.
+    searches.append(
+        NaukriSearch(
+            label=f"{role} · poach pool",
+            url=f"{base}?{_qs({'qp': role, 'qe': exp_band})}#exclude-current=true",
+            description=(
+                "Opens Resdex with role pre-filled. Add competitor company names to "
+                "the 'Exclude Current Companies' facet inside Resdex to target a "
+                "specific poach pool (faster than building the query from scratch)."
+            ),
+            query_summary="add competitor companies inside Resdex",
+        )
+    )
+
+    # 5. Active this week — last_active filter surfaces fresh candidates.
+    # Highest response-rate cohort: they're actively browsing job ads.
+    searches.append(
+        NaukriSearch(
+            label=f"{role} · active this week",
+            url=f"{base}?{_qs({'qp': role, 'qe': exp_band, 'qla': '2'})}",
+            description=(
+                "Candidates whose CV was active in the last 7 days. "
+                "Smaller pool, highest reply rate on cold outreach."
+            ),
+            query_summary=f"role: {role} · experience: {exp_band}y · active in last 7 days",
+        )
+    )
+
+    # 6. Immediate joiners — notice period < 30 days. Useful when the hire
+    # is urgent or the budget cycle is closing.
+    searches.append(
+        NaukriSearch(
+            label=f"{role} · immediate joiners",
+            url=f"{base}?{_qs({'qp': role, 'qe': exp_band, 'qns': '2'})}",
+            description=(
+                "Notice period ≤ 30 days. Best when the hire is urgent or "
+                "you're under a budget-cycle deadline. Compromises on pool size."
+            ),
+            query_summary=f"role: {role} · experience: {exp_band}y · notice ≤ 30 days",
+        )
+    )
+
+    return searches
+
+
+async def _org_default_slack_channel(org_id: str) -> str | None:
+    """Look up the org's configured default Slack channel for recruiting.
+
+    Returns None when Slack isn't connected or no default has been set —
+    the publish flow then skips the Slack notification entirely.
+    """
+    svc = get_service_client()
+    try:
+        res = await asyncio.to_thread(
+            lambda: svc.table("slack_integrations")
+            .select("default_recruiting_slack_channel_id")
+            .eq("org_id", org_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        log.warning("recruiting.slack_default_lookup_failed org=%s err=%s", org_id, exc)
+        return None
+    if not res or not res.data:
+        return None
+    return res.data.get("default_recruiting_slack_channel_id")
 
 
 async def _org_default_notion_parent(org_id: str) -> str | None:
@@ -816,18 +1440,20 @@ async def _create_notion_tracker(
     jd_content: str,
     ats_postings: list[dict[str, Any]],
     parent_page_id: str | None,
-) -> str | None:
-    """Create a hiring tracker page in Notion. Returns the URL on success.
+) -> dict[str, str | None] | None:
+    """Create a hiring tracker page + candidate database in Notion.
 
-    Raises whatever the Notion client raises (PermissionError when the bot
-    isn't shared on the parent page or the org has no Notion token,
-    arbitrary RuntimeError/HTTP errors otherwise). The caller is expected
-    to handle these — typically `_create_notion_tracker_audited` so the
-    failure shows up in the audit log instead of getting swallowed here.
+    Returns a dict {tracker_url, candidates_db_id} on success or None when no
+    parent_page_id was supplied. The candidate database is created as a
+    child of the tracker page so it lives alongside the JD instead of
+    polluting the recruiter's workspace root. The DB write is best-effort:
+    if it fails we still return the tracker_url so the publish flow
+    succeeds — the recruiter can manually create a DB later.
 
-    `ats_postings` is the list of successful postings; each platform gets
-    its own bullet at the top of the tracker page so the hiring team can
-    jump to the right ATS without guessing which one was used.
+    Raises PermissionError when the bot isn't shared on the parent or the
+    org has no Notion token; RuntimeError on other API failures. Caller
+    (`_create_notion_tracker_audited`) wraps both so they end up in the
+    audit log rather than killing the publish.
     """
     if not parent_page_id:
         return None
@@ -845,17 +1471,40 @@ async def _create_notion_tracker(
         f"{ats_links_block}\n\n"
         f"## Pipeline\n- [ ] Sourcing\n- [ ] Outreach sent\n- [ ] Phone screens\n"
         f"- [ ] Onsites\n- [ ] Offer\n- [ ] Closed\n\n"
-        f"## Candidates\n_(add candidates with status here)_\n\n"
-        f"## Notes\n\n## Job description\n\n{jd_content}\n"
+        f"## Job description\n\n{jd_content}\n"
     )
+    page_title = f"Hiring-{title}-{datetime.now(UTC).strftime('%Y-%m-%d')}"
     result = await notion_svc.create_page(
         org_id=org_id,
         parent_page_id=parent_page_id,
-        title=f"Hiring — {title}",
+        title=page_title,
         content=tracker_content,
         is_markdown=True,
     )
-    return result.get("url")
+    tracker_url = result.get("url")
+    tracker_page_id = result.get("page_id")
+
+    candidates_db_id: str | None = None
+    if tracker_page_id:
+        # Best-effort: a DB creation failure shouldn't undo the tracker page.
+        try:
+            db_result = await notion_svc.create_candidate_database(
+                org_id=org_id,
+                parent_page_id=tracker_page_id,
+                title=title,
+            )
+            candidates_db_id = db_result.get("database_id")
+        except Exception as exc:
+            log.warning(
+                "recruiting.notion.candidate_db_create_failed org=%s err=%s",
+                org_id,
+                exc,
+            )
+
+    return {
+        "tracker_url": tracker_url,
+        "candidates_db_id": candidates_db_id,
+    }
 
 
 async def _notify_slack(
@@ -865,10 +1514,16 @@ async def _notify_slack(
     title: str,
     ats_postings: list[dict[str, Any]],
     hiring_manager_email: str | None,
-) -> None:
-    """Post one Slack message. No-ops when channel is empty."""
+) -> str | None:
+    """Post one Slack message. No-ops when channel is empty.
+
+    Returns:
+        None when the post succeeded or there was no channel to post to.
+        The error string (e.g. "slack_not_in_channel") when the post failed —
+        callers persist this on the requisition so the UI can surface it.
+    """
     if not channel:
-        return
+        return None
     from app.services.integrations import slack as slack_svc
 
     if len(ats_postings) == 1:
@@ -882,8 +1537,10 @@ async def _notify_slack(
         msg += f"\nHiring manager: {hiring_manager_email}"
     try:
         await slack_svc.post_message(org_id=org_id, channel_id=channel, text=msg)
+        return None
     except Exception as exc:
         log.warning("recruiting.slack.failed org=%s ch=%s err=%s", org_id, channel, exc)
+        return str(exc) or type(exc).__name__
 
 
 # ── Audited variants of the side-effects ────────────────────────────────────
@@ -898,9 +1555,11 @@ async def _create_notion_tracker_audited(
     jd_content: str,
     ats_postings: list[dict[str, Any]],
     parent_page_id: str | None,
-) -> str | None:
-    """Wraps _create_notion_tracker with an audit row. Skipped status when no
-    parent_page_id is provided (recruiter chose not to create a tracker)."""
+) -> dict[str, str | None]:
+    """Wraps _create_notion_tracker with an audit row. Returns
+    {tracker_url, candidates_db_id} — either may be None on partial failure.
+    """
+    empty: dict[str, str | None] = {"tracker_url": None, "candidates_db_id": None}
     if not parent_page_id:
         await audit_log.write(
             org_id=org_id,
@@ -910,7 +1569,7 @@ async def _create_notion_tracker_audited(
             status="skipped",
             request_summary={"reason": "no_parent_page_id"},
         )
-        return None
+        return empty
     try:
         async with audit_log.timed(
             org_id=org_id,
@@ -922,29 +1581,28 @@ async def _create_notion_tracker_audited(
                 "ats_platforms": [p["platform"] for p in ats_postings],
             },
         ) as ctx:
-            url = await _create_notion_tracker(
+            result = await _create_notion_tracker(
                 org_id=org_id,
                 title=title,
                 jd_content=jd_content,
                 ats_postings=ats_postings,
                 parent_page_id=parent_page_id,
             )
-            if not url:
+            if not result or not result.get("tracker_url"):
                 # Notion returned 200 but no URL in the response — treat as a
                 # failure so the audit row reflects that no tracker exists.
-                # `audit_log.timed` records status="failure" + error_message.
                 raise RuntimeError("notion_returned_no_url")
-            ctx.response_summary = {"url": url}
-            return url
+            ctx.response_summary = {
+                "url": result.get("tracker_url"),
+                "candidates_db_id": result.get("candidates_db_id"),
+            }
+            return result
     except PermissionError as exc:
-        # Bot not shared on the parent page, or no Notion token for the org.
-        # Audit row already recorded as failure by timed() — log + swallow so
-        # the publish flow isn't aborted.
         log.warning("recruiting.notion.permission org=%s err=%s", org_id, exc)
-        return None
+        return empty
     except Exception as exc:
         log.warning("recruiting.notion.failed org=%s err=%s", org_id, exc)
-        return None
+        return empty
 
 
 async def _notify_slack_audited(
@@ -956,7 +1614,12 @@ async def _notify_slack_audited(
     title: str,
     ats_postings: list[dict[str, Any]],
     hiring_manager_email: str | None,
-) -> None:
+) -> str | None:
+    """Returns the Slack error string when the post failed, None otherwise.
+
+    Mirrors _notify_slack's contract so publish_requisition can persist the
+    error on the row without inspecting the audit log.
+    """
     if not channel:
         await audit_log.write(
             org_id=org_id,
@@ -966,7 +1629,8 @@ async def _notify_slack_audited(
             status="skipped",
             request_summary={"reason": "no_channel"},
         )
-        return
+        return None
+    error_msg: str | None = None
     try:
         async with audit_log.timed(
             org_id=org_id,
@@ -978,16 +1642,33 @@ async def _notify_slack_audited(
                 "ats_platforms": [p["platform"] for p in ats_postings],
             },
         ) as ctx:
-            await _notify_slack(
+            error_msg = await _notify_slack(
                 org_id=org_id,
                 channel=channel,
                 title=title,
                 ats_postings=ats_postings,
                 hiring_manager_email=hiring_manager_email,
             )
+            if error_msg:
+                # Surface the Slack-side error to the audit row as a failure
+                # without raising — publish flow must not abort here.
+                ctx.response_summary = {"posted": False, "error": error_msg}
+                raise _SlackPostFailed(error_msg)
             ctx.response_summary = {"posted": True}
-    except Exception:
-        return
+    except _SlackPostFailed:
+        # Already captured in error_msg; audit row marked failure by timed().
+        pass
+    except Exception as exc:
+        # Unexpected non-Slack failure (e.g. audit log write blew up). Treat
+        # the post as undelivered so the UI can show *something* meaningful.
+        error_msg = error_msg or f"{type(exc).__name__}: {exc}"
+    return error_msg
+
+
+class _SlackPostFailed(RuntimeError):
+    """Internal sentinel so audit_log.timed records status='failure' for a
+    Slack-side error returned by _notify_slack, without bubbling the failure
+    out of the publish flow."""
 
 
 async def _notify_hiring_manager_audited(

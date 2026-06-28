@@ -1,4 +1,12 @@
-"""Pydantic models for the Recruiting Agent (#20, Agent2 Day 5)."""
+"""Pydantic models for the Recruiting Agent (#20, Agent2 Day 5).
+
+Posting destinations are split into two kinds:
+    * ATS              — internal hiring system (Greenhouse, Lever, Ashby)
+    * job_board        — external candidate destination (Naukri)
+
+The legacy `AtsPlatform` Literal stays as the union for back-compat; new code
+should branch on `destination_type` from posting_destinations.registry.
+"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -6,7 +14,14 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-AtsPlatform = Literal["greenhouse", "lever", "ashby"]
+# Union of every posting destination we can publish to. The column name on
+# job_requisitions is still `ats_platform` for historical reasons — see
+# migration 068 — but the values include the job-board provider 'naukri'.
+AtsPlatform = Literal["greenhouse", "lever", "ashby", "naukri"]
+
+# Job-board vs ATS — exposed so the publish form can group destinations by
+# kind without hard-coding the split client-side.
+DestinationType = Literal["ats", "job_board"]
 
 SeniorityLevel = Literal["intern", "entry", "mid", "senior", "staff", "lead"]
 
@@ -25,19 +40,76 @@ class SourcingTemplate(BaseModel):
     notes: str | None = None
 
 
+class LinkedinSearch(BaseModel):
+    """One pre-built LinkedIn People-search deep link.
+
+    `label` is the human-readable headline shown in the UI (e.g. "Senior
+    Frontend Engineer"); `description` explains what filters/strategy the
+    URL applies (e.g. "Title-only search, 2nd-degree connections").
+    """
+
+    label: str
+    url: str
+    description: str
+
+
+class NaukriSearch(BaseModel):
+    """One Resdex (Naukri's candidate database) deep-link variant.
+
+    `query_summary` is a single-line human-readable summary of the filter set
+    so the UI can show "Senior Python · 5-8y · Bangalore · Available now"
+    without parsing the URL. Resdex itself doesn't accept all filters via
+    query string — for those (e.g. notice-period band) we land the user on
+    the search page with the textual filters pre-applied and ask them to
+    confirm the advanced facet inside Resdex.
+    """
+
+    label: str
+    url: str
+    description: str
+    query_summary: str | None = None
+
+
+class NaukriTaxonomy(BaseModel):
+    """Naukri-required taxonomy fields the recruiter picks at publish time.
+
+    Naukri's HotVacancy create endpoint rejects payloads without these — the
+    Indian taxonomy is heavier than Greenhouse/Lever/Ashby. We expose them
+    explicitly in the UI rather than auto-deriving so the recruiter owns the
+    mapping (LLM mis-classification can route a Python engineering req into
+    "Banking/Finance" which is unrecoverable once posted).
+    """
+
+    functional_area_id: str | None = None
+    functional_area_name: str | None = None
+    role_category_id: str | None = None
+    role_category_name: str | None = None
+    industry_type_id: str | None = None
+    industry_type_name: str | None = None
+    # Required by Naukri. The publish form derives sensible defaults from
+    # seniority_level but the recruiter can override.
+    experience_min_years: int | None = Field(default=None, ge=0, le=40)
+    experience_max_years: int | None = Field(default=None, ge=0, le=40)
+    # Resdex search variants benefit from key skills being explicit (LLM
+    # extraction from JD text is unreliable for stack lists with version
+    # numbers like "Spring Boot 3.x"). Limit 12 to match Naukri's UI cap.
+    key_skills: list[str] = Field(default_factory=list, max_length=12)
+
+
 class GenerateRequisitionRequest(BaseModel):
     role_request: str = Field(..., min_length=4, max_length=4000)
     location: str = Field(..., min_length=1, max_length=200)
     department: str = Field(..., min_length=1, max_length=200)
     seniority_level: SeniorityLevel
-    # When provided, quoted verbatim in every JD variant.
-    # When absent, LLM writes "Competitive compensation" and never invents a figure.
-    disclosed_compensation: str | None = Field(default=None, max_length=300)
+    # Quoted verbatim in every JD variant.
+    disclosed_compensation: str = Field(..., min_length=1, max_length=300)
     # Free-text interview process: rounds, format, panel, timeline.
     # Included in the JD so candidates know what to expect.
     interview_details: str = Field(..., min_length=1, max_length=2000)
     # Tech stack required for the role — fed into KB facet queries and synthesis.
     stack: str | None = Field(default=None, max_length=1000)
+    # Free-text working hours / schedule expectations (timezone, on-call, async norms).
+    working_hours: str = Field(..., min_length=1, max_length=300)
     # Per-hire specifics fed into KB facet queries to disambiguate same-role hires.
     context_notes: str | None = Field(default=None, max_length=4000)
 
@@ -53,24 +125,28 @@ class GenerateRequisitionResponse(BaseModel):
 
 
 class AtsPosting(BaseModel):
-    """Result of publishing one requisition to one ATS platform.
+    """Result of publishing one requisition to one destination (ATS or job board).
 
     `error` is set instead of `job_id` / `url` when that platform failed.
     The requisition is still considered "published" as long as at least one
     platform succeeded — the failures are surfaced inline so the recruiter
-    can retry the bad ones.
+    can retry the bad ones. `destination_type` carries the registry tag so
+    the UI can render different copy for "ATS" vs "Job board" failures.
     """
 
     platform: AtsPlatform
+    destination_type: DestinationType | None = None
     job_id: str | None = None
     url: str | None = None
     error: str | None = None
 
 
 class PublishRequisitionRequest(BaseModel):
-    selected_variant_index: int = Field(..., ge=0, le=2)
-    # At least one platform required; deduped server-side to be safe.
-    ats_platforms: list[AtsPlatform] = Field(..., min_length=1, max_length=3)
+    selected_variant_index: int = Field(..., ge=0, le=4)
+    # At least one platform required; deduped server-side to be safe. Cap
+    # bumped to 4 to accommodate the new 'naukri' destination alongside the
+    # three ATSes.
+    ats_platforms: list[AtsPlatform] = Field(..., min_length=1, max_length=4)
     hiring_manager_email: str | None = None
     slack_channel: str | None = None
     notion_parent_page_id: str | None = None
@@ -79,6 +155,10 @@ class PublishRequisitionRequest(BaseModel):
     # Per-platform mapping overrides keyed by platform name. Each value is the
     # same shape the single-platform flow used (office_ids, department_id …).
     mapping_overrides: dict[AtsPlatform, dict] | None = None
+    # Required when 'naukri' is in ats_platforms. The publish endpoint
+    # rejects the request with 400 if it's missing — we'd rather fail fast
+    # at the boundary than synthesise garbage downstream.
+    naukri_taxonomy: NaukriTaxonomy | None = None
 
 
 class UpdateRequisitionRequest(BaseModel):
@@ -94,8 +174,60 @@ class UpdateRequisitionRequest(BaseModel):
     disclosed_compensation: str | None = Field(default=None, max_length=300)
     interview_details: str | None = Field(default=None, max_length=2000)
     stack: str | None = Field(default=None, max_length=1000)
+    working_hours: str | None = Field(default=None, max_length=300)
     context_notes: str | None = Field(default=None, max_length=4000)
     regenerate_variants: bool = False
+
+
+class CandidateRecord(BaseModel):
+    """One candidate normalised across every ATS.
+
+    Each ATS exposes candidates in a different shape — Greenhouse splits
+    name into first/last + nested email arrays, Lever uses opportunities
+    with a stage object, Ashby returns applications with embedded candidate
+    info. We flatten all of them into this common shape so the Notion upsert
+    layer doesn't need a per-platform branch.
+
+    `external_id` is the ATS's candidate id (NOT application id) — stable
+    across re-syncs even if the candidate moves through stages.
+    """
+
+    ats_platform: Literal["greenhouse", "lever", "ashby"]
+    external_id: str
+    full_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    current_company: str | None = None
+    current_title: str | None = None
+    # Free-text stage label from the ATS (e.g. "Phone Screen", "Onsite").
+    # We don't normalise to a canonical pipeline because each ATS has its
+    # own configurable stage taxonomy and forcing a mapping would lose
+    # information.
+    stage: str | None = None
+    resume_url: str | None = None
+    # Deep-link back to the candidate inside the ATS UI so a recruiter can
+    # click through from the Notion row to take action.
+    candidate_url: str | None = None
+    applied_at: datetime | None = None
+
+
+class SyncCandidatesResponse(BaseModel):
+    """Result of an on-demand candidate sync.
+
+    Reports a per-platform summary so the UI can show "Greenhouse: 12 new,
+    3 updated; Lever: skipped (not connected)" rather than a single opaque
+    count. `notion_db_url` is populated when the sync created the Notion
+    database on first run.
+    """
+
+    requisition_id: str
+    synced_at: datetime
+    total_candidates: int
+    new_candidates: int
+    updated_candidates: int
+    per_platform: dict[str, dict]
+    notion_db_url: str | None = None
+    errors: list[str] = Field(default_factory=list)
 
 
 class RequisitionRead(BaseModel):
@@ -109,6 +241,7 @@ class RequisitionRead(BaseModel):
     disclosed_compensation: str | None
     interview_details: str | None
     stack: str | None
+    working_hours: str | None = None
     context_notes: str | None
     grounded: bool
     jd_variants: list[JdVariant]
@@ -119,10 +252,21 @@ class RequisitionRead(BaseModel):
     ats_postings: list[AtsPosting] = Field(default_factory=list)
     notion_tracker_url: str | None
     sourcing_templates: list[SourcingTemplate]
-    linkedin_search_urls: list[str]
+    linkedin_search_urls: list[LinkedinSearch]
+    # Populated only when Naukri was in the publish set. Empty otherwise.
+    naukri_search_urls: list[NaukriSearch] = Field(default_factory=list)
+    naukri_taxonomy: NaukriTaxonomy | None = None
     hiring_manager_email: str | None
     slack_channel: str | None
+    # Non-null when publish ran but the Slack post failed (e.g. bot wasn't a
+    # member of the channel). UI surfaces this as an actionable amber card.
+    slack_post_error: str | None = None
     status: Literal["draft", "published", "failed"]
     error_message: str | None
     created_at: datetime
     published_at: datetime | None
+    # Candidate sync state — populated once the recruiter clicks
+    # "Sync Candidates" on the requisition detail page. NULL until then.
+    notion_candidates_db_id: str | None = None
+    candidates_last_synced_at: datetime | None = None
+    candidates_last_sync_error: str | None = None

@@ -269,6 +269,16 @@ class Settings(BaseSettings):
     lever_api_url: str = "https://api.lever.co/v1"
     ashby_api_url: str = "https://api.ashbyhq.com"
 
+    # Naukri (Info Edge) HotVacancy API. Naukri is a job board (not an ATS) —
+    # we group it under the same "posting destinations" model so the publish
+    # form is one checkbox group. Real Naukri requires a signed enterprise
+    # contract; no self-serve dev tier exists. USE_MOCK_ATS=true points every
+    # adapter at the mock; for granular Naukri-only mocking set NAUKRI_API_URL
+    # directly. Auth: HTTP "Auth-Key" header carrying the recruiter's account
+    # API key (not Basic — Naukri diverges from the ATS providers here).
+    naukri_api_url: str = "https://api.naukri.com/v1"
+    naukri_webhook_secret: str = ""
+
     # ── Agent2 Day 6: Asana + Linear OAuth (#44) ──────────────────────────
     asana_client_id: str = ""
     asana_client_secret: str = ""

@@ -140,6 +140,82 @@ async def publish_job(
     }
 
 
+async def fetch_candidates(*, org_id: str, job_id: str) -> list[dict[str, Any]]:
+    """GET /v1/opportunities?posting_id=… → normalised CandidateRecord dicts.
+
+    Lever calls candidates "opportunities" — every record is one candidate's
+    relationship with the company, scoped to one posting. `expand=stage`
+    inlines the stage object so we don't N+1 against /v1/stages.
+    """
+    creds = await _get_credentials(org_id)
+    if not creds:
+        raise PermissionError("lever_not_connected")
+    api_key, _ = creds
+
+    out: list[dict[str, Any]] = []
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        resp = await client.get(
+            f"{_api()}/opportunities",
+            params={
+                "posting_id": job_id,
+                "limit": 100,
+                "expand": "stage",
+            },
+            headers={"Authorization": _auth_header(api_key)},
+        )
+    if resp.status_code == 401:
+        raise PermissionError("lever_unauthorized")
+    if resp.status_code >= 400:
+        raise RuntimeError(
+            f"lever_candidates_failed: {resp.status_code} {resp.text[:200]}"
+        )
+
+    envelope = resp.json() or {}
+    opportunities = envelope.get("data") or []
+    for op in opportunities:
+        opp_id = op.get("id")
+        if not opp_id:
+            continue
+        emails = op.get("emails") or []
+        phones = op.get("phones") or []
+        organizations = op.get("organizations") or []
+        stage_obj = op.get("stage")
+        # `expand=stage` returns either a string id or an inlined object.
+        if isinstance(stage_obj, dict):
+            stage = stage_obj.get("text") or stage_obj.get("id")
+        else:
+            stage = stage_obj if isinstance(stage_obj, str) else None
+
+        created_at = op.get("createdAt")
+        applied_at: str | None = None
+        if isinstance(created_at, int):
+            # Lever returns ms timestamps; convert to ISO so the upstream
+            # Notion writer doesn't need to know that.
+            from datetime import datetime as _dt
+
+            applied_at = _dt.utcfromtimestamp(created_at / 1000).isoformat() + "Z"
+        elif isinstance(created_at, str):
+            applied_at = created_at
+
+        out.append(
+            {
+                "ats_platform": "lever",
+                "external_id": str(opp_id),
+                "full_name": op.get("name") or None,
+                "email": emails[0] if emails else None,
+                "phone": (phones[0] or {}).get("value") if phones else None,
+                "current_company": organizations[0] if organizations else None,
+                "current_title": op.get("headline") or None,
+                "stage": stage,
+                "resume_url": None,  # Lever resume requires /resumes call — skip for V1.
+                "candidate_url": (op.get("urls") or {}).get("show")
+                or f"https://hire.lever.co/candidates/{opp_id}",
+                "applied_at": applied_at,
+            }
+        )
+    return out
+
+
 async def list_users(*, org_id: str) -> list[dict[str, Any]]:
     creds = await _get_credentials(org_id)
     if not creds:

@@ -163,11 +163,6 @@ export function NotionParentPicker({
               ? "Pick a parent page for hiring trackers"
               : "Use a different parent for this requisition"}
           </DialogTitle>
-          <DialogDescription>
-            Every published requisition creates a child page under this
-            parent. Only pages you&apos;ve shared with NirnayaIQ in Notion
-            show up here.
-          </DialogDescription>
         </DialogHeader>
 
         {status && !status.connected ? (

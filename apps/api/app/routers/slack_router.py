@@ -138,6 +138,11 @@ async def slack_connect(
         "commands",
         "channels:read",
         "channels:history",
+        # Lets the bot self-join public channels via conversations.join — used
+        # by the recruiting picker so users don't have to type /invite for
+        # public channels. Private channels still require a manual /invite by
+        # Slack policy (no API path exists for self-joining private).
+        "channels:join",
         "groups:read",
         "groups:history",
         "pins:read",
@@ -237,6 +242,31 @@ async def slack_list_channels(
     org_id, _, _ = _require_org(current_user)
     channels = await slack_service.list_channels(org_id=org_id, force_refresh=refresh)
     return {"channels": channels}
+
+
+@router.post("/integrations/slack/channels/{channel_id}/join")
+async def slack_join_channel(
+    channel_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Bot self-joins a public channel via conversations.join.
+
+    Used by the recruiting picker so users don't have to type /invite for
+    public channels. Returns the user-actionable error code on the four
+    expected failure modes so the UI can render the right CTA:
+      - slack_scope_upgrade_required → "Re-authorise Slack"
+      - slack_cannot_join_private    → "/invite the bot manually"
+      - slack_token_revoked          → "Reconnect Slack"
+      - slack_channel_not_found / slack_is_archived → "Pick a different channel"
+    """
+    org_id, _, _ = _require_org(current_user)
+    try:
+        await slack_service.join_channel(org_id=org_id, channel_id=channel_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"joined": True, "channel_id": channel_id}
 
 
 class PostSlackRequest(BaseModel):

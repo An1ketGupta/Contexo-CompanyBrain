@@ -177,6 +177,17 @@ export default function IntegrationsPage() {
             status={atsData?.ashby}
             onChanged={() => mutateAts()}
           />
+
+          <div className="pt-2">
+            <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+              Job boards
+            </div>
+          </div>
+          <AtsCard
+            provider="naukri"
+            status={atsData?.naukri}
+            onChanged={() => mutateAts()}
+          />
         </div>
       )}
     </div>
