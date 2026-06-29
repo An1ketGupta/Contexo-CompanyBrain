@@ -981,16 +981,29 @@ async def approve_loi_draft(
     run_id: str,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
-    """HR clicks 'Send for signature' on the LOI review screen. We flip the
-    run to loi_pending_hr_sign and fire the resume event so the agent dispatches
-    into _step_send_to_hr_for_signature, which emails HR the (possibly-edited)
-    LOI for printing + signing."""
+    """HR clicks 'Send for signature' on the LOI review screen.
+
+    Two paths depending on whether DocuSign is configured:
+
+    * **DocuSign configured** — create a routed envelope with HR (embedded
+      signer, signs first from the dashboard) and the candidate (remote
+      signer, DocuSign emails them after HR signs). Run parks in
+      `loi_pending_docusign_signature` until the webhook flips it to
+      `loi_signed_uploaded` on full envelope completion.
+
+    * **DocuSign not configured** — fall back to the legacy print/scan flow:
+      transition to `loi_pending_hr_sign`, agent emails HR the PDF to sign
+      offline."""
+    from app.config import get_settings
+
     user_id, org_id, _ = _require_user(current_user)
     svc = get_service_client()
 
     run = await asyncio.to_thread(
         lambda: svc.table("onboarding_runs")
-        .select("id, status")
+        .select(
+            "id, status, candidate_email, candidate_name, triggered_by_user_id"
+        )
         .eq("id", run_id)
         .eq("org_id", org_id)
         .maybe_single()
@@ -1004,6 +1017,156 @@ async def approve_loi_draft(
             f"Run is in '{run.data['status']}', expected 'loi_pending_hr_review'.",
         )
 
+    doc = await asyncio.to_thread(
+        lambda: svc.table("onboarding_documents")
+        .select("id, storage_path, hr_edited_pdf_path")
+        .eq("run_id", run_id)
+        .eq("kind", "loi")
+        .maybe_single()
+        .execute()
+    )
+    if not doc or not doc.data:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "LOI document row not found for this run.",
+        )
+
+    settings = get_settings()
+    use_docusign = bool(getattr(settings, "docusign_integration_key", ""))
+
+    if use_docusign:
+        # Resolve HR's email from Supabase auth admin (mirrors agent.py:514).
+        triggered_by = run.data.get("triggered_by_user_id") or user_id
+        try:
+            au = await asyncio.to_thread(
+                lambda: svc.auth.admin.get_user_by_id(triggered_by)
+            )
+            hr_email = getattr(getattr(au, "user", None), "email", None)
+        except Exception:
+            hr_email = None
+        if not hr_email:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Couldn't resolve the HR user's email for DocuSign routing. "
+                "Sign out and back in, or contact support.",
+            )
+        # Display name comes from our users table; fall back to email prefix.
+        hr_profile = await asyncio.to_thread(
+            lambda: svc.table("users")
+            .select("display_name")
+            .eq("id", triggered_by)
+            .maybe_single()
+            .execute()
+        )
+        hr_name = (
+            (hr_profile.data or {}).get("display_name")
+            or hr_email.split("@", 1)[0]
+        )
+
+        # Use the HR-edited PDF if HR uploaded one, else the agent's render.
+        pdf_path = doc.data.get("hr_edited_pdf_path") or doc.data["storage_path"]
+
+        def _dl() -> bytes:
+            return svc.storage.from_(ob_storage.STORAGE_BUCKET).download(pdf_path)
+
+        pdf_bytes = await asyncio.to_thread(_dl)
+
+        from app.services.integrations.docusign import (
+            DocuSignError,
+            DocuSignUnavailable,
+            create_routed_signing_envelope,
+        )
+
+        try:
+            envelope = await create_routed_signing_envelope(
+                org_id=org_id,
+                run_id=run_id,
+                document_kinds=["loi"],
+                documents=[
+                    {
+                        "kind": "loi",
+                        "pdf_bytes": pdf_bytes,
+                        "name": "Letter of Intent.pdf",
+                    }
+                ],
+                signers=[
+                    {
+                        "role": "hr",
+                        "email": hr_email,
+                        "name": hr_name,
+                        "routing_order": 1,
+                        "embedded": True,
+                    },
+                    {
+                        "role": "candidate",
+                        "email": run.data["candidate_email"],
+                        "name": run.data["candidate_name"],
+                        "routing_order": 2,
+                        "embedded": False,
+                    },
+                ],
+                email_subject=(
+                    f"Sign the Letter of Intent — {run.data['candidate_name']}"
+                ),
+                email_body=(
+                    "Please sign the Letter of Intent. The document is routed "
+                    "to HR first, then to the candidate."
+                ),
+            )
+        except (DocuSignError, DocuSignUnavailable) as exc:
+            log.warning(
+                "onboarding_v2.loi_docusign_create_failed run=%s err=%s",
+                run_id, exc,
+            )
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                f"Couldn't create the DocuSign envelope: {exc}",
+            ) from exc
+
+        now = datetime.now(UTC).isoformat()
+        await asyncio.to_thread(
+            lambda: svc.table("onboarding_documents")
+            .update(
+                {
+                    "docusign_envelope_id": envelope["envelope_id"],
+                    "docusign_status": "sent",
+                    "sign_status": "sent_to_hr",
+                }
+            )
+            .eq("run_id", run_id)
+            .eq("kind", "loi")
+            .execute()
+        )
+        await asyncio.to_thread(
+            lambda: svc.table("onboarding_runs")
+            .update(
+                {
+                    "status": "loi_pending_docusign_signature",
+                    "loi_approved_for_signing_at": now,
+                    "loi_sent_to_hr_at": now,
+                }
+            )
+            .eq("id", run_id)
+            .execute()
+        )
+        await ob_storage.log_onboarding_event(
+            org_id=org_id,
+            run_id=run_id,
+            actor_kind="hr",
+            event_type="loi_docusign_envelope_created",
+            message=(
+                f"DocuSign envelope created for LOI signing. Routing: HR "
+                f"({hr_email}) → candidate ({run.data['candidate_email']})."
+            ),
+            metadata={"envelope_id": envelope["envelope_id"]},
+            actor_user_id=user_id,
+        )
+        return {
+            "status": "loi_pending_docusign_signature",
+            "document_id": doc.data["id"],
+        }
+
+    # Fallback: legacy print/scan flow (no DocuSign configured).
     now = datetime.now(UTC).isoformat()
     await asyncio.to_thread(
         lambda: svc.table("onboarding_runs")
@@ -1029,15 +1192,6 @@ async def approve_loi_draft(
         actor_user_id=user_id,
     )
 
-    doc = await asyncio.to_thread(
-        lambda: svc.table("onboarding_documents")
-        .select("id")
-        .eq("run_id", run_id)
-        .eq("kind", "loi")
-        .maybe_single()
-        .execute()
-    )
-
     inngest_client = get_inngest_client()
     await inngest_client.send(
         inngest.Event(
@@ -1047,8 +1201,90 @@ async def approve_loi_draft(
     )
     return {
         "status": "loi_pending_hr_sign",
-        "document_id": (doc.data or {}).get("id", ""),
+        "document_id": doc.data["id"],
     }
+
+
+@router.get("/runs/{run_id}/loi/docusign-url")
+async def get_loi_docusign_url(
+    run_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Mint a fresh embedded-signing URL for HR's LOI envelope. URLs are
+    5-min TTL so the UI calls this on click rather than caching it.
+
+    Candidates are remote signers — DocuSign emails them directly, so this
+    endpoint only supports the HR signer."""
+    from app.config import get_settings
+
+    user_id, org_id, _ = _require_user(current_user)
+    svc = get_service_client()
+
+    env = await asyncio.to_thread(
+        lambda: svc.table("onboarding_signing_envelopes")
+        .select("envelope_id, signers, status")
+        .eq("run_id", run_id)
+        .eq("org_id", org_id)
+        .contains("document_kinds", ["loi"])
+        .order("created_at", desc=True)
+        .limit(1)
+        .maybe_single()
+        .execute()
+    )
+    if not env or not env.data:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "No LOI envelope found for this run.",
+        )
+    if env.data.get("status") in ("completed", "voided", "declined", "expired"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Envelope is {env.data['status']}; no signing URL available.",
+        )
+
+    hr_signer = next(
+        (
+            s for s in (env.data.get("signers") or [])
+            if isinstance(s, dict) and s.get("role") == "hr" and s.get("embedded")
+        ),
+        None,
+    )
+    if not hr_signer:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "HR signer not found on this envelope.",
+        )
+    if (hr_signer.get("status") or "").lower() == "completed":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "You've already signed this LOI.",
+        )
+
+    from app.services.integrations.docusign import (
+        DocuSignError,
+        mint_signer_url,
+    )
+
+    settings = get_settings()
+    return_url = (
+        f"{settings.app_url.rstrip('/')}/onboarding/{run_id}?signed=1"
+        if settings.app_url else "https://nirnayaiq.com/onboarding/done"
+    )
+    try:
+        url = await mint_signer_url(
+            envelope_id=env.data["envelope_id"],
+            run_id=run_id,
+            role="hr",
+            email=hr_signer["email"],
+            name=hr_signer["name"],
+            return_url=return_url,
+        )
+    except DocuSignError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Couldn't mint a DocuSign signing URL: {exc}",
+        ) from exc
+    return {"status": "ok", "signing_url": url}
 
 
 # ── HR override: enter references manually if the candidate ghosts ─────────

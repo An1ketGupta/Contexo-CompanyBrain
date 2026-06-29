@@ -114,6 +114,7 @@ const STATUS_LABELS: Record<string, string> = {
   loi_generating: "Preparing LOI from template",
   loi_pending_hr_review: "Review LOI draft",
   loi_pending_hr_sign: "Awaiting HR signature",
+  loi_pending_docusign_signature: "Signing LOI in DocuSign",
   loi_signed_uploaded: "LOI signed — sending",
   loi_sent_to_candidate: "LOI sent",
   awaiting_candidate_references: "Awaiting candidate references",
@@ -268,6 +269,32 @@ export default function OnboardingDetailPage() {
       }
       const body = (await res.json()) as { docx_url?: string };
       if (body.docx_url) window.open(body.docx_url, "_blank");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function openLoiDocusignLink() {
+    setBusy("loi-docusign");
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/onboarding/runs/${id}/loi/docusign-url`);
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          detail?: string;
+          message?: string;
+        };
+        setActionError(
+          body.detail
+            || body.message
+            || "Couldn't get a fresh DocuSign signing link.",
+        );
+        return;
+      }
+      const body = (await res.json()) as { signing_url?: string };
+      if (body.signing_url) {
+        window.open(body.signing_url, "_blank");
+      }
     } finally {
       setBusy(null);
     }
@@ -522,6 +549,7 @@ export default function OnboardingDetailPage() {
           onReplaceDraft={replaceLoiDraft}
           onApproveDraft={approveLoiDraft}
           onDownloadDocx={downloadLoiDocx}
+          onOpenDocusignLink={openLoiDocusignLink}
         />
       </div>
 
@@ -638,6 +666,7 @@ function LoiPanel({
   onReplaceDraft,
   onApproveDraft,
   onDownloadDocx,
+  onOpenDocusignLink,
 }: {
   data: RunDetail;
   busy: string | null;
@@ -647,10 +676,13 @@ function LoiPanel({
   onReplaceDraft: (f: File) => void;
   onApproveDraft: () => void;
   onDownloadDocx: () => void;
+  onOpenDocusignLink: () => void;
 }) {
   const loi = data.documents.find((d) => d.kind === "loi");
   const inReview = data.status === "loi_pending_hr_review";
   const awaitingSign = data.status === "loi_pending_hr_sign";
+  const inDocusign = data.status === "loi_pending_docusign_signature";
+  const docusignStatus = (loi?.docusign_status || "").toLowerCase();
 
   return (
     <div className="space-y-3">
@@ -701,11 +733,15 @@ function LoiPanel({
           </div>
 
           {loi?.signed_url ? (
-            <iframe
-              src={loi.signed_url}
-              title="LOI preview"
-              className="h-[60vh] w-full rounded border border-border bg-white"
-            />
+            <a
+              href={loi.signed_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 self-start rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Preview LOI in new tab
+            </a>
           ) : (
             <p className="text-xs text-muted-foreground">
               Generating the preview…
@@ -790,6 +826,56 @@ function LoiPanel({
               )}
               Upload signed PDF
             </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {inDocusign ? (
+        <div className="space-y-3 rounded-md border border-blue-300/60 bg-blue-50/40 p-4 dark:border-blue-500/30 dark:bg-blue-500/5">
+          <div>
+            <p className="text-sm font-medium">Signing the LOI in DocuSign</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              The envelope is routed <strong>HR → candidate</strong>. You sign
+              first. The candidate will receive a DocuSign email automatically
+              once you're done.
+            </p>
+          </div>
+
+          <dl className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+            <div className="flex items-center justify-between rounded border border-border bg-background px-3 py-2">
+              <dt className="font-medium text-foreground">You (HR)</dt>
+              <dd className="text-muted-foreground">
+                {docusignStatus === "completed" ? "Signed ✓" : "Pending"}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between rounded border border-border bg-background px-3 py-2">
+              <dt className="font-medium text-foreground">
+                {data.candidate_name || "Candidate"}
+              </dt>
+              <dd className="text-muted-foreground">
+                {docusignStatus === "completed"
+                  ? "Signed ✓"
+                  : "Waiting for HR first"}
+              </dd>
+            </div>
+          </dl>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              onClick={onOpenDocusignLink}
+              disabled={busy === "loi-docusign"}
+            >
+              {busy === "loi-docusign" ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Open my signing link
+            </Button>
+            <p className="text-[11px] text-muted-foreground">
+              Link expires after 5 minutes — click again for a fresh one.
+            </p>
           </div>
         </div>
       ) : null}

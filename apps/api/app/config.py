@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     upstash_redis_rest_url: str = ""
     upstash_redis_rest_token: str = ""
 
+    # ── Sales Agent ─────────────────────────────────────────────────────────
+    # Tavily provides the web-research fallback when the KB has no signal on a
+    # company. ~$0.005/search; leave empty in dev to disable the web fallback —
+    # the agent will still run KB-only research.
+    tavily_api_key: str = ""
+
     # ── Email (Resend + React Email via internal Next.js render route) ──────
     resend_api_key: str = ""
     email_from: str = "NirnayaIQ <onboarding@resend.dev>"

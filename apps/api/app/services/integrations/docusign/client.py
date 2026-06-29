@@ -317,11 +317,20 @@ async def get_signing_url(
     recipient_email: str,
     recipient_name: str,
     return_url: str,
+    client_user_id: str | None = None,
 ) -> str:
     """Re-mint a fresh signing-ceremony URL for an existing envelope. Used
-    by the candidate portal when the cached URL has expired (5min TTL)."""
+    by the candidate portal when the cached URL has expired (5min TTL).
+
+    `client_user_id` must match exactly what was used when the envelope was
+    created — otherwise DocuSign returns "user not an embedded signer".
+    Defaults to the legacy candidate-only shape so the AL+NDA flow keeps
+    working without changes.
+    """
     client = DocuSignClient()
-    client_user_id_seed = hashlib.sha1(f"{envelope_id}".encode()).hexdigest()[:16]
+    if client_user_id is None:
+        client_user_id_seed = hashlib.sha1(f"{envelope_id}".encode()).hexdigest()[:16]
+        client_user_id = f"candidate-{client_user_id_seed}"
     res = await client._request(
         "POST",
         f"/envelopes/{envelope_id}/views/recipient",
@@ -330,13 +339,206 @@ async def get_signing_url(
             "authenticationMethod": "none",
             "email": recipient_email,
             "userName": recipient_name,
-            "clientUserId": f"candidate-{client_user_id_seed}",
+            "clientUserId": client_user_id,
         },
     )
     url = res.get("url")
     if not url:
         raise DocuSignError("DocuSign returned no signing URL.")
     return url
+
+
+# ── Multi-signer routed envelopes (used by LOI: HR → candidate) ───────────
+
+
+def _embedded_client_user_id(*, run_id: str, role: str) -> str:
+    """Stable per-signer clientUserId so we can re-mint the same embedded
+    signing URL on demand. DocuSign requires the exact same value at view
+    creation as at envelope creation."""
+    return f"{role}-{run_id}"
+
+
+async def create_routed_signing_envelope(
+    *,
+    org_id: str,
+    run_id: str,
+    document_kinds: list[str],
+    documents: list[dict[str, Any]],
+    signers: list[dict[str, Any]],
+    email_subject: str,
+    email_body: str | None = None,
+) -> dict[str, Any]:
+    """Create a DocuSign envelope wrapping one or more PDFs and routed to
+    multiple signers in order (lowest routing_order signs first).
+
+    `signers` is a list of {role, email, name, routing_order} dicts. Each
+    signer is registered as an *embedded* signer (we mint our own signing
+    URL and surface it via our UI / our branded email). This gives us full
+    control over delivery — DocuSign won't send its own emails because every
+    recipient has a clientUserId set.
+
+    `document_kinds` lists the onboarding kinds wrapped in this envelope
+    (e.g. ["loi"]). Used for the signing_envelopes row + webhook fan-out.
+
+    Returns:
+        {
+            "envelope_id": str,
+            "signing_url_expires_at": ISO timestamp (5 minutes from now),
+            "signers": [
+                {role, email, name, routing_order, recipient_id,
+                 client_user_id, signing_url, status},
+                ...
+            ],
+        }
+    """
+    if not documents:
+        raise DocuSignError("No documents supplied for envelope.")
+    if not signers:
+        raise DocuSignError("No signers supplied for envelope.")
+
+    client = DocuSignClient()
+
+    docs_payload = []
+    for idx, d in enumerate(documents, start=1):
+        pdf_b64 = base64.b64encode(d["pdf_bytes"]).decode("ascii")
+        docs_payload.append(
+            {
+                "documentId": str(idx),
+                "name": d.get("name") or f"{d['kind']}.pdf",
+                "fileExtension": "pdf",
+                "documentBase64": pdf_b64,
+            }
+        )
+
+    sorted_signers = sorted(signers, key=lambda s: int(s.get("routing_order", 1)))
+
+    signer_payload = []
+    enriched: list[dict[str, Any]] = []
+    for idx, s in enumerate(sorted_signers, start=1):
+        role = s["role"]
+        is_embedded = bool(s.get("embedded", True))
+        client_user_id: str | None = (
+            _embedded_client_user_id(run_id=run_id, role=role) if is_embedded else None
+        )
+        payload: dict[str, Any] = {
+            "email": s["email"],
+            "name": s["name"],
+            "recipientId": str(idx),
+            "routingOrder": str(int(s.get("routing_order", idx))),
+            "roleName": role,
+            "tabs": {
+                "signHereTabs": [
+                    {
+                        "anchorString": s.get("anchor_string", f"[{role.upper()} SIGN]"),
+                        "anchorUnits": "pixels",
+                        "anchorXOffset": "0",
+                        "anchorYOffset": "0",
+                        "anchorIgnoreIfNotPresent": "true",
+                    },
+                    # Fallback anchor — many templates just have "Sign here"
+                    # or the signer's role keyword. Both anchors set
+                    # anchorIgnoreIfNotPresent so a missing anchor is OK;
+                    # DocuSign lets the signer free-place if needed.
+                    {
+                        "anchorString": "Sign here",
+                        "anchorUnits": "pixels",
+                        "anchorIgnoreIfNotPresent": "true",
+                    },
+                ]
+            },
+        }
+        # Embedded signers get a clientUserId — we mint the signing URL
+        # on demand from our UI. Remote signers (no clientUserId) trigger
+        # DocuSign's own email delivery, which is exactly what we want for
+        # candidates who aren't logged into NirnayaIQ.
+        if client_user_id:
+            payload["clientUserId"] = client_user_id
+        signer_payload.append(payload)
+        enriched.append(
+            {
+                "role": role,
+                "email": s["email"],
+                "name": s["name"],
+                "routing_order": int(s.get("routing_order", idx)),
+                "recipient_id": str(idx),
+                "client_user_id": client_user_id,
+                "embedded": is_embedded,
+                "status": "sent",
+                "signing_url": None,
+            }
+        )
+
+    envelope_payload = {
+        "emailSubject": email_subject,
+        "emailBlurb": email_body or email_subject,
+        "documents": docs_payload,
+        "recipients": {"signers": signer_payload},
+        "status": "sent",
+    }
+
+    log.info(
+        "docusign.create_routed_envelope run=%s doc_count=%d signer_count=%d",
+        run_id, len(documents), len(signers),
+    )
+    res = await client._request("POST", "/envelopes", json_body=envelope_payload)
+    envelope_id = res.get("envelopeId")
+    if not envelope_id:
+        raise DocuSignError(f"DocuSign envelope creation returned no envelopeId: {res}")
+
+    # Persist envelope. We store the FIRST signer (lowest routing order) as
+    # the row's primary recipient — that's who can sign right now. The full
+    # per-signer state lives in the `signers` JSONB column.
+    first = enriched[0]
+    now_iso = datetime.now(UTC).isoformat()
+    expires_at = (datetime.now(UTC) + timedelta(minutes=5)).isoformat()
+
+    svc = get_service_client()
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_signing_envelopes").insert(
+            {
+                "org_id": org_id,
+                "run_id": run_id,
+                "provider": "docusign",
+                "envelope_id": envelope_id,
+                "document_kinds": document_kinds,
+                "status": "sent",
+                "recipient_email": first["email"],
+                "recipient_name": first["name"],
+                "signers": enriched,
+                "signing_url_expires_at": expires_at,
+                "sent_at": now_iso,
+            }
+        ).execute()
+    )
+
+    return {
+        "envelope_id": envelope_id,
+        "signing_url_expires_at": expires_at,
+        "signers": enriched,
+    }
+
+
+async def mint_signer_url(
+    *,
+    envelope_id: str,
+    run_id: str,
+    role: str,
+    email: str,
+    name: str,
+    return_url: str,
+) -> str:
+    """Re-mint a fresh embedded-signing URL for a known signer on an existing
+    routed envelope. Caller is responsible for verifying the requesting user
+    is authorised to view this signer's link. Raises DocuSignError if the
+    signer was set up as remote (no clientUserId) — DocuSign handles email
+    delivery for those."""
+    return await get_signing_url(
+        envelope_id=envelope_id,
+        recipient_email=email,
+        recipient_name=name,
+        return_url=return_url,
+        client_user_id=_embedded_client_user_id(run_id=run_id, role=role),
+    )
 
 
 async def void_envelopes_for_run(
@@ -458,7 +660,10 @@ async def ingest_webhook_event(*, body: dict[str, Any]) -> dict[str, Any]:
     # Look up the row.
     row = await asyncio.to_thread(
         lambda: svc.table("onboarding_signing_envelopes")
-        .select("id, org_id, run_id, status, document_kinds, recipient_email, recipient_name")
+        .select(
+            "id, org_id, run_id, status, document_kinds, "
+            "recipient_email, recipient_name, signers"
+        )
         .eq("envelope_id", envelope_id)
         .maybe_single()
         .execute()
@@ -481,6 +686,41 @@ async def ingest_webhook_event(*, body: dict[str, Any]) -> dict[str, Any]:
         )
     elif our_status == "voided":
         update["voided_at"] = now_iso
+
+    # Per-signer status fan-out for routed envelopes. DocuSign Connect ships
+    # the current recipient set under recipients.signers — we mirror the
+    # per-signer status into our `signers` JSONB so the dashboard can show
+    # "HR signed ✓, candidate pending" without another DocuSign API call.
+    existing_signers = env.get("signers") or []
+    if isinstance(existing_signers, list) and existing_signers:
+        webhook_signers = (
+            (data.get("recipients") or {}).get("signers")
+            or (data.get("envelopeSummary") or {})
+                .get("recipients", {})
+                .get("signers")
+            or []
+        )
+        by_email = {
+            (s.get("email") or "").lower(): s for s in webhook_signers if isinstance(s, dict)
+        }
+        merged: list[dict[str, Any]] = []
+        for sig in existing_signers:
+            if not isinstance(sig, dict):
+                merged.append(sig)
+                continue
+            wh = by_email.get((sig.get("email") or "").lower())
+            if wh:
+                wh_status = (wh.get("status") or "").lower() or sig.get("status")
+                sig = {**sig, "status": wh_status}
+                if wh_status == "completed":
+                    sig["completed_at"] = wh.get("signedDateTime") or now_iso
+                elif wh_status == "declined":
+                    sig["declined_at"] = wh.get("declinedDateTime") or now_iso
+                    sig["decline_reason"] = (
+                        wh.get("declinedReason") or sig.get("decline_reason")
+                    )
+            merged.append(sig)
+        update["signers"] = merged
 
     # Append event for forensic audit. The envelopes row's `events` column
     # is a JSONB array — append by reading + writing back (small list, no
@@ -510,10 +750,15 @@ async def ingest_webhook_event(*, body: dict[str, Any]) -> dict[str, Any]:
     # Mirror status on onboarding_documents so the dashboard reads work
     # without joining envelopes. Only documents in this envelope.
     kinds = env.get("document_kinds") or []
+    is_loi_envelope = "loi" in kinds
     if kinds:
+        # LOI envelopes are HR-then-candidate; on completion the LOI is
+        # signed by both parties. AL+NDA envelopes are candidate-only today.
+        completed_sign_status = "signed_by_candidate"
+        declined_sign_status = "sent_to_candidate"
         sign_status = {
-            "completed": "signed_by_candidate",
-            "declined": "sent_to_candidate",  # revert — candidate declined
+            "completed": completed_sign_status,
+            "declined": declined_sign_status,
         }.get(our_status)
         doc_update: dict[str, Any] = {"docusign_status": our_status}
         if sign_status:
@@ -544,15 +789,45 @@ async def ingest_webhook_event(*, body: dict[str, Any]) -> dict[str, Any]:
                 "docusign.signed_pdf_download_failed envelope=%s err=%s",
                 envelope_id, exc,
             )
+
+        # LOI envelopes drive the run state machine differently from the
+        # AL+NDA bundle: an LOI completion means HR + candidate both signed,
+        # so the run is ready to move into the "send LOI to candidate"
+        # step (which mints the BGV references-form link). We flip the run
+        # status before kicking the agent so the resume dispatch lands in
+        # _step_send_loi_to_candidate.
+        if is_loi_envelope:
+            try:
+                await asyncio.to_thread(
+                    lambda: svc.table("onboarding_runs")
+                    .update(
+                        {
+                            "status": "loi_signed_uploaded",
+                            "loi_signed_at": now_iso,
+                        }
+                    )
+                    .eq("id", env["run_id"])
+                    .execute()
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "docusign.loi_status_flip_failed envelope=%s err=%s",
+                    envelope_id, exc,
+                )
+
         # Kick the agent forward.
         try:
             import inngest
 
             from app.inngest.client import get_inngest_client
             inngest_client = get_inngest_client()
+            event_name = (
+                "onboarding_v2/loi_signed_uploaded" if is_loi_envelope
+                else "onboarding_v2/docusign_signed"
+            )
             await inngest_client.send(
                 inngest.Event(
-                    name="onboarding_v2/docusign_signed",
+                    name=event_name,
                     data={"onboarding_run_id": env["run_id"], "org_id": env["org_id"]},
                 )
             )
@@ -605,7 +880,12 @@ async def _download_signed_documents(
 
     from app.services.agents.onboarding_v2.storage import STORAGE_BUCKET
     svc = get_service_client()
-    path = f"orgs/{org_id}/onboarding/{run_id}/offer_bundle_docusign_signed.pdf"
+    # Name the blob by the document kinds in the envelope so multiple
+    # envelopes per run (e.g. LOI + later AL/NDA bundle) don't collide.
+    blob_slug = "_".join(sorted(kinds)) or "envelope"
+    path = (
+        f"orgs/{org_id}/onboarding/{run_id}/{blob_slug}_docusign_signed.pdf"
+    )
     await asyncio.to_thread(
         lambda: svc.storage.from_(STORAGE_BUCKET).upload(
             path=path,

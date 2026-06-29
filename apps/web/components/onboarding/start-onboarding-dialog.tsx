@@ -209,15 +209,9 @@ export function StartOnboardingDialog({
           )}
         </DialogTrigger>
       ) : null}
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-h-[90vh] max-w-xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Start onboarding</DialogTitle>
-          <DialogDescription>
-            The Onboarding agent will generate a Letter of Intent draft from
-            your template. Review and edit it on the next page, send it for
-            HR signature, then it goes to the candidate along with a form for
-            background-check references.
-          </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={onSubmit} className="space-y-6">
@@ -347,13 +341,6 @@ export function StartOnboardingDialog({
               </div>
             </div>
           </section>
-
-          <div className="rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
-            The candidate will be asked to submit their background-check
-            references via a secure link sent with their Letter of Intent. If
-            they don&apos;t respond, you can enter them manually from the run
-            page.
-          </div>
 
           {error ? (
             <p className="rounded-md border border-red-300/60 bg-red-50 p-3 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">

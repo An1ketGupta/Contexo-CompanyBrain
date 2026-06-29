@@ -37,9 +37,11 @@ from app.services.integrations.docusign.client import (  # noqa: F401
     DocuSignClient,
     DocuSignError,
     DocuSignUnavailable,
+    create_routed_signing_envelope,
     create_signing_envelope,
     get_signing_url,
     ingest_webhook_event,
+    mint_signer_url,
     verify_webhook_signature,
     void_envelopes_for_run,
 )
@@ -48,9 +50,11 @@ __all__ = [
     "DocuSignClient",
     "DocuSignError",
     "DocuSignUnavailable",
+    "create_routed_signing_envelope",
     "create_signing_envelope",
     "get_signing_url",
     "ingest_webhook_event",
+    "mint_signer_url",
     "verify_webhook_signature",
     "void_envelopes_for_run",
 ]
