@@ -32,7 +32,12 @@ class StartOnboardingRequest(BaseModel):
     reporting_manager_name: str | None = Field(default=None, max_length=200)
     reporting_manager_email: EmailStr | None = None
     reporting_manager_user_id: UUID | None = None
-    references: list[BgvReferenceInput] = Field(..., min_length=2, max_length=4)
+    # References used to be required at run-start (HR entered 2+ in the dialog).
+    # Now the candidate submits them via a public form linked from their LOI
+    # email, so the field is optional and may stay empty. HR can still seed
+    # them up-front if they happen to know them (passed through to BGV after
+    # the candidate is sent the form).
+    references: list[BgvReferenceInput] = Field(default_factory=list, max_length=4)
 
 
 class BgvReferenceRead(BaseModel):
@@ -62,11 +67,17 @@ class OnboardingDocumentRead(BaseModel):
     signed_pdf_path: str | None = None
     signed_uploaded_at: datetime | None = None
     file_bytes: int | None = None
+    # HR's edited copy of the agent-rendered .docx (only set when HR
+    # downloaded, tweaked, and re-uploaded during the loi_pending_hr_review
+    # step). The PDF derived from that edit is at hr_edited_pdf_path.
+    hr_edited_storage_path: str | None = None
+    hr_edited_pdf_path: str | None = None
+    hr_edited_at: datetime | None = None
+    hr_edit_revision: int = 0
     docusign_envelope_id: str | None = None
     docusign_status: str | None = None
     docusign_signing_url: str | None = None
     docusign_completed_at: datetime | None = None
-    used_default_template: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -114,6 +125,17 @@ class OnboardingRunRead(BaseModel):
     policies_acknowledged_at: datetime | None = None
     induction_sent_at: datetime | None = None
     completed_at: datetime | None = None
+    # New: LOI review & candidate-references-form tracking.
+    loi_approved_for_signing_at: datetime | None = None
+    loi_draft_edited_at: datetime | None = None
+    loi_draft_revision: int = 0
+    references_form_expires_at: datetime | None = None
+    references_submitted_at: datetime | None = None
+    references_reminder_count: int = 0
+    references_last_reminder_at: datetime | None = None
+    # Note: references_form_token is intentionally NOT exposed in this read
+    # model — it's the candidate's auth credential. HR doesn't need it; we
+    # surface the form URL on the detail page through a separate field below.
     created_at: datetime
     updated_at: datetime
 
@@ -144,9 +166,118 @@ class BgvFormSubmit(BaseModel):
     role_description: str = Field(default="", max_length=4000)
 
 
+class LoiApproveDraftResponse(BaseModel):
+    """Returned by POST /runs/{id}/loi/approve-draft."""
+    status: str
+    document_id: str
+
+
+class LoiReplaceDraftResponse(BaseModel):
+    """Returned by POST /runs/{id}/loi/replace-draft. The preview_url points
+    to a freshly-rendered PDF of HR's edited .docx so the UI can refresh the
+    inline preview immediately after upload."""
+    status: str
+    revision: int
+    preview_url: str | None = None
+
+
+class CandidateReferencesPrefill(BaseModel):
+    """Returned by GET /onboarding/public/references/{token}. Tells the
+    candidate which company is asking, their own name, and how many
+    references they must submit."""
+    candidate_name: str
+    company_name: str
+    role_title: str
+    required_count: int
+    expires_at: datetime
+    already_submitted: bool
+
+
+class CandidateReferenceItem(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    email: EmailStr
+    phone: str | None = Field(default=None, max_length=40)
+    relationship: str | None = Field(default=None, max_length=200)
+
+
+class CandidateReferencesSubmit(BaseModel):
+    references: list[CandidateReferenceItem] = Field(..., min_length=1, max_length=4)
+
+
+class HrReferencesOverrideRequest(BaseModel):
+    """HR-driven override: if the candidate hasn't submitted their references
+    form, HR can post refs directly. Same shape as the candidate submission."""
+    references: list[CandidateReferenceItem] = Field(..., min_length=1, max_length=4)
+
+
 class TagTemplateRequest(BaseModel):
     document_id: UUID
     template_kind: str = Field(..., pattern=r"^(loi|appointment_letter|nda|induction)$")
+
+
+class ImportTemplateFromDriveRequest(BaseModel):
+    """Body for POST /onboarding/templates/import-from-drive.
+
+    `file_id` + `mime_type` are returned by the Google Picker to the browser.
+    `file_name` is used as the document's display name; we sanitize before
+    writing it to storage so it can't escape the per-org prefix.
+    """
+
+    file_id: str = Field(..., min_length=1, max_length=120)
+    file_name: str = Field(..., min_length=1, max_length=255)
+    mime_type: str = Field(..., min_length=1, max_length=160)
+    template_kind: str = Field(..., pattern=r"^(loi|appointment_letter|nda|induction)$")
+
+
+# ── Template analyzer (AI-assisted placeholder conversion) ──────────────────
+
+
+class TemplateMappingItem(BaseModel):
+    """One blank-text → variable mapping. The analyzer proposes these and HR
+    edits/confirms each one before they are applied to the DOCX."""
+
+    blank_text: str = Field(..., min_length=1, max_length=500)
+    variable: str = Field(..., min_length=1, max_length=80)
+    context_before: str = Field(default="", max_length=200)
+    context_after: str = Field(default="", max_length=200)
+    confidence: str = Field(default="medium", pattern=r"^(high|medium|low)$")
+
+
+class TemplateAnalyzeResponse(BaseModel):
+    """Returned by POST /templates/{id}/analyze.
+
+    `has_placeholders` short-circuits the UI — if the DOCX already has
+    `{{ var }}` placeholders, the mapper modal doesn't open.
+
+    `mappings` is the AI's best guess at blank → variable assignments. HR
+    reviews, edits, and confirms before they are applied.
+
+    `text_preview` is the first ~1500 chars of extracted text. The UI uses
+    it as a "what we read from the document" sanity check.
+
+    `available_variables` is the vocabulary the UI populates dropdowns with.
+    """
+
+    document_id: str
+    template_kind: str
+    has_placeholders: bool
+    mappings: list[TemplateMappingItem] = Field(default_factory=list)
+    text_preview: str = ""
+    available_variables: list[dict[str, str]] = Field(default_factory=list)
+    warning: str | None = None
+
+
+class TemplateApplyMappingsRequest(BaseModel):
+    """HR's confirmed mappings — written back to the DOCX as `{{ var }}`."""
+
+    mappings: list[TemplateMappingItem] = Field(..., min_length=1, max_length=200)
+
+
+class TemplateApplyMappingsResponse(BaseModel):
+    document_id: str
+    template_kind: str
+    applied_count: int
+    preview_url: str | None = None
 
 
 # ── Sources: published jobs + their pipeline candidates for the onboarding

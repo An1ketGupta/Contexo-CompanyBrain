@@ -7,8 +7,8 @@ runs *after* invite acceptance to generate a 90-day plan. This agent runs
 recruiting candidate.
 
 The class is imported lazily via __getattr__ so that side-effect-free
-submodules (default_templates, storage helpers) can be imported in tests
-without triggering the full agent + email-dispatcher chain.
+submodules (storage helpers) can be imported in tests without triggering
+the full agent + email-dispatcher chain.
 """
 from __future__ import annotations
 

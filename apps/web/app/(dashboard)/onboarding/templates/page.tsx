@@ -10,6 +10,7 @@ import {
   Eye,
   FileText,
   Loader2,
+  Sparkles,
   XCircle,
 } from "lucide-react";
 
@@ -22,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TemplateMapperModal } from "@/components/onboarding/template-mapper-modal";
 
 interface DocumentRow {
   id: string;
@@ -46,12 +48,14 @@ interface TemplateStatusResponse {
   loi: TemplateStatusRow | null;
   appointment_letter: TemplateStatusRow | null;
   nda: TemplateStatusRow | null;
+  induction: TemplateStatusRow | null;
 }
 
 const KIND_LABEL: Record<string, string> = {
   loi: "Letter of Intent",
   appointment_letter: "Appointment Letter",
   nda: "NDA",
+  induction: "Induction",
 };
 
 const fetcher = async <T,>(url: string): Promise<T> => {
@@ -69,6 +73,11 @@ export default function OnboardingTemplatesPage() {
   );
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mapper, setMapper] = useState<{
+    docId: string;
+    docName: string;
+    kind: string;
+  } | null>(null);
 
   const docxDocs = useMemo(
     () =>
@@ -98,9 +107,21 @@ export default function OnboardingTemplatesPage() {
         return;
       }
       await refreshStatus();
+      // Open the AI mapper modal automatically — it will short-circuit and
+      // close itself if the DOCX already has {{ placeholders }}.
+      const doc = docxDocs.find((d) => d.id === docId);
+      if (doc) {
+        setMapper({ docId, docName: doc.name, kind });
+      }
     } finally {
       setBusy(null);
     }
+  }
+
+  function openMapperFor(docId: string, kind: string) {
+    const doc = docxDocs.find((d) => d.id === docId);
+    if (!doc) return;
+    setMapper({ docId, docName: doc.name, kind });
   }
 
   async function previewDoc(docId: string) {
@@ -169,7 +190,7 @@ export default function OnboardingTemplatesPage() {
         </div>
       ) : null}
 
-      {(["loi", "appointment_letter", "nda"] as const).map((kind) => {
+      {(["loi", "appointment_letter", "nda", "induction"] as const).map((kind) => {
         const current = status?.[kind] ?? null;
         return (
           <section
@@ -207,7 +228,7 @@ export default function OnboardingTemplatesPage() {
             />
 
             {current ? (
-              <div className="mt-3 flex items-center gap-2">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
@@ -220,6 +241,14 @@ export default function OnboardingTemplatesPage() {
                     <Eye className="mr-1.5 h-3.5 w-3.5" />
                   )}
                   Preview with sample data
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openMapperFor(current.id, kind)}
+                >
+                  <Sparkles className="mr-1.5 h-3.5 w-3.5 text-violet-500" />
+                  AI convert blanks
                 </Button>
                 <a
                   href="https://github.com/nirnayaiq/docs/blob/main/onboarding-template-vars.md"
@@ -234,6 +263,19 @@ export default function OnboardingTemplatesPage() {
           </section>
         );
       })}
+
+      <TemplateMapperModal
+        documentId={mapper?.docId ?? null}
+        documentName={mapper?.docName}
+        templateKind={mapper?.kind ?? "loi"}
+        open={mapper !== null}
+        onOpenChange={(o) => {
+          if (!o) setMapper(null);
+        }}
+        onApplied={() => {
+          void refreshStatus();
+        }}
+      />
     </div>
   );
 }

@@ -31,7 +31,12 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.database import get_service_client
 from app.inngest.client import get_inngest_client
-from app.models.onboarding_v2 import BgvFormPrefill, BgvFormSubmit
+from app.models.onboarding_v2 import (
+    BgvFormPrefill,
+    BgvFormSubmit,
+    CandidateReferencesPrefill,
+    CandidateReferencesSubmit,
+)
 
 log = logging.getLogger(__name__)
 
@@ -227,3 +232,175 @@ async def submit_bgv(token: str, body: BgvFormSubmit) -> dict[str, Any]:
         )
     )
     return {"status": "submitted"}
+
+
+# ── Candidate references form ─────────────────────────────────────────────
+#
+# The candidate fills this AFTER they receive their LOI. The token lives in
+# the URL exactly like the BGV referee tokens — same security posture (UUID,
+# expiry, single-submission). The only difference: this form is filled by
+# the *candidate*, and submitting it inserts the BGV reference rows that the
+# agent's _step_kick_off_bgv reads to fire the per-reference verification
+# emails.
+
+
+async def _load_run_by_refs_token(token: str) -> dict[str, Any] | None:
+    svc = get_service_client()
+    res = await asyncio.to_thread(
+        lambda: svc.table("onboarding_runs")
+        .select(
+            "id, org_id, status, candidate_name, role_title, "
+            "references_form_expires_at, references_submitted_at"
+        )
+        .eq("references_form_token", token)
+        .maybe_single()
+        .execute()
+    )
+    return res.data if res else None
+
+
+@router.get(
+    "/references/{token}", response_model=CandidateReferencesPrefill
+)
+async def get_candidate_references_prefill(token: str) -> dict[str, Any]:
+    token = _validate_token(token)
+    row = await _load_run_by_refs_token(token)
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Link not recognised.")
+
+    expires_at_iso = row.get("references_form_expires_at")
+    if expires_at_iso:
+        try:
+            expires_at = datetime.fromisoformat(
+                expires_at_iso.replace("Z", "+00:00")
+            )
+        except ValueError:
+            expires_at = datetime.now(UTC)
+        if expires_at < datetime.now(UTC):
+            raise HTTPException(status.HTTP_410_GONE, detail="Link expired.")
+    else:
+        expires_at = datetime.now(UTC)
+
+    if row.get("status") in ("cancelled", "failed"):
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            detail="This onboarding has been cancelled.",
+        )
+
+    svc = get_service_client()
+    org = await asyncio.to_thread(
+        lambda: svc.table("organizations")
+        .select("name, required_references_count")
+        .eq("id", row["org_id"])
+        .maybe_single()
+        .execute()
+    )
+    org_data = org.data or {}
+    return {
+        "candidate_name": row.get("candidate_name") or "",
+        "company_name": org_data.get("name") or "the hiring company",
+        "role_title": row.get("role_title") or "",
+        "required_count": int(org_data.get("required_references_count") or 2),
+        "expires_at": expires_at.isoformat(),
+        "already_submitted": bool(row.get("references_submitted_at")),
+    }
+
+
+@router.post("/references/{token}")
+async def submit_candidate_references(
+    token: str, body: CandidateReferencesSubmit
+) -> dict[str, Any]:
+    token = _validate_token(token)
+    row = await _load_run_by_refs_token(token)
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Link not recognised.")
+    if row.get("references_submitted_at"):
+        return {"status": "already_submitted"}
+    if row.get("status") in ("cancelled", "failed"):
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            detail="This onboarding has been cancelled.",
+        )
+
+    expires_at_iso = row.get("references_form_expires_at")
+    if expires_at_iso:
+        try:
+            expires_at = datetime.fromisoformat(
+                expires_at_iso.replace("Z", "+00:00")
+            )
+            if expires_at < datetime.now(UTC):
+                raise HTTPException(status.HTTP_410_GONE, detail="Link expired.")
+        except ValueError:
+            pass
+
+    svc = get_service_client()
+    org = await asyncio.to_thread(
+        lambda: svc.table("organizations")
+        .select("required_references_count")
+        .eq("id", row["org_id"])
+        .maybe_single()
+        .execute()
+    )
+    required = int((org.data or {}).get("required_references_count") or 2)
+    if len(body.references) < required:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Please provide at least {required} reference(s); "
+                f"received {len(body.references)}."
+            ),
+        )
+
+    ref_rows = [
+        {
+            "org_id": row["org_id"],
+            "run_id": row["id"],
+            "reference_name": r.name,
+            "reference_email": r.email,
+            "reference_phone": r.phone,
+            "relationship": r.relationship,
+        }
+        for r in body.references
+    ]
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_bgv_references").insert(ref_rows).execute()
+    )
+
+    now = datetime.now(UTC).isoformat()
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_runs")
+        .update({"references_submitted_at": now})
+        .eq("id", row["id"])
+        .execute()
+    )
+
+    try:
+        await asyncio.to_thread(
+            lambda: svc.table("onboarding_events").insert(
+                {
+                    "org_id": row["org_id"],
+                    "run_id": row["id"],
+                    "actor_kind": "candidate",
+                    "event_type": "candidate_references_submitted",
+                    "message": (
+                        f"Candidate submitted {len(body.references)} "
+                        "background-check reference(s)."
+                    ),
+                    "metadata": {"count": len(body.references)},
+                }
+            ).execute()
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("onboarding_public.refs_event_log_failed err=%s", exc)
+
+    inngest_client = get_inngest_client()
+    await inngest_client.send(
+        inngest.Event(
+            name="onboarding_v2/resume",
+            data={
+                "onboarding_run_id": row["id"],
+                "org_id": row["org_id"],
+            },
+        )
+    )
+    return {"status": "submitted", "count": len(body.references)}

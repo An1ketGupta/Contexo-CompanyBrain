@@ -392,6 +392,66 @@ async def _export(access_token: str, file_id: str, mime: str) -> str:
     return resp.text
 
 
+# MIME constants — defined as module-level so callers (e.g. the onboarding
+# template-import endpoint) don't hardcode strings that drift from Google's.
+GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+async def download_template_as_docx(
+    *,
+    org_id: str,
+    file_id: str,
+    mime_type: str,
+) -> bytes:
+    """Fetch a Drive file and return DOCX bytes suitable for the onboarding
+    template pipeline.
+
+    Two paths:
+      * Google Docs (`application/vnd.google-apps.document`) → export as DOCX
+        via the Drive export endpoint. Google converts the Doc on its end and
+        streams us a real .docx the renderer can fill with placeholders.
+      * Real DOCX uploads → download the raw bytes with `alt=media`.
+
+    Anything else is rejected — we can't fill `{{ }}` placeholders into a PDF.
+    Raises PermissionError when Drive isn't connected so the caller can return
+    a clean 400 rather than a 500.
+    """
+    creds = await get_org_credentials(org_id)
+    if not creds:
+        raise PermissionError("drive_not_connected")
+
+    access_token = creds["access_token"]
+
+    if mime_type == GOOGLE_DOC_MIME:
+        url = f"https://www.googleapis.com/drive/v3/files/{file_id}/export"
+        params = {"mimeType": DOCX_MIME}
+    elif mime_type == DOCX_MIME:
+        url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
+        params = {"alt": "media", "supportsAllDrives": "true"}
+    else:
+        raise ValueError(
+            f"Unsupported Drive mime '{mime_type}' — pick a Google Doc or .docx file."
+        )
+
+    # 60s timeout: Google's export can be slow on large Docs (~10MB+). The
+    # response is a single body, so we read with a generous ceiling rather
+    # than streaming — templates max out at ~5MB in practice.
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
+        resp = await client.get(
+            url,
+            params=params,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    if resp.status_code == 401 or resp.status_code == 403:
+        raise PermissionError(f"drive_auth_failed: {resp.status_code}")
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"drive_template_download_failed: {resp.status_code} {resp.text[:200]}"
+        )
+    return resp.content
+
+
 async def _download_raw(access_token: str, file_id: str) -> str:
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
         resp = await client.get(

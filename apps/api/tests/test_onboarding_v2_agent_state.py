@@ -81,7 +81,7 @@ async def test_draft_dispatches_to_generate_loi(monkeypatch, fake_agent) -> None
 
     async def _spy(*a, **k):
         called["hit"] = True
-        return {"status": "loi_pending_hr_sign"}
+        return {"status": "loi_pending_hr_review"}
 
     monkeypatch.setattr(fake_agent, "_step_generate_loi", _spy)
     await fake_agent.run()
@@ -89,13 +89,72 @@ async def test_draft_dispatches_to_generate_loi(monkeypatch, fake_agent) -> None
 
 
 @pytest.mark.asyncio
-async def test_loi_pending_hr_sign_waits(monkeypatch, fake_agent) -> None:
-    fake_agent._run_row = {"id": "run-1", "status": "loi_pending_hr_sign"}
+async def test_loi_pending_hr_review_waits(monkeypatch, fake_agent) -> None:
+    """After the agent generates the LOI it parks in hr_review — no email,
+    no signature request — until HR clicks Send for signature."""
+    fake_agent._run_row = {"id": "run-1", "status": "loi_pending_hr_review"}
     result = await fake_agent.run()
     assert result == {
-        "status": "loi_pending_hr_sign",
-        "waiting_for": "hr_to_upload_signed_loi",
+        "status": "loi_pending_hr_review",
+        "waiting_for": "hr_to_approve_loi_draft",
     }
+
+
+@pytest.mark.asyncio
+async def test_loi_pending_hr_sign_dispatches_to_signature_step(
+    monkeypatch, fake_agent,
+) -> None:
+    """When HR approves the draft, the agent dispatches into the signature-
+    request step (which emails HR the LOI to print + sign)."""
+    fake_agent._run_row = {"id": "run-1", "status": "loi_pending_hr_sign"}
+    called = {"hit": False}
+
+    async def _spy(*a, **k):
+        called["hit"] = True
+        return {"status": "loi_pending_hr_sign", "document_id": "doc-1"}
+
+    monkeypatch.setattr(fake_agent, "_step_send_to_hr_for_signature", _spy)
+    await fake_agent.run()
+    assert called["hit"] is True
+
+
+@pytest.mark.asyncio
+async def test_awaiting_candidate_references_waits(
+    monkeypatch, fake_agent,
+) -> None:
+    """No references_submitted_at → park until candidate submits the form."""
+    fake_agent._run_row = {
+        "id": "run-1",
+        "status": "awaiting_candidate_references",
+        "references_submitted_at": None,
+    }
+    result = await fake_agent.run()
+    assert result == {
+        "status": "awaiting_candidate_references",
+        "waiting_for": "candidate_to_submit_references",
+    }
+
+
+@pytest.mark.asyncio
+async def test_awaiting_candidate_references_kicks_bgv_when_submitted(
+    monkeypatch, fake_agent,
+) -> None:
+    """Once the candidate (or HR override) writes references_submitted_at,
+    the wait step dispatches to _step_kick_off_bgv."""
+    fake_agent._run_row = {
+        "id": "run-1",
+        "status": "awaiting_candidate_references",
+        "references_submitted_at": "2026-06-29T00:00:00+00:00",
+    }
+    called = {"hit": False}
+
+    async def _spy(*a, **k):
+        called["hit"] = True
+        return {"status": "bgv_pending"}
+
+    monkeypatch.setattr(fake_agent, "_step_kick_off_bgv", _spy)
+    await fake_agent.run()
+    assert called["hit"] is True
 
 
 @pytest.mark.asyncio

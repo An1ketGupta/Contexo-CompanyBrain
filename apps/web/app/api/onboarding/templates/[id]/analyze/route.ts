@@ -6,9 +6,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const raw = request.nextUrl.searchParams.get("raw");
-  const qs = raw === "true" ? "?raw=true" : "";
-  return proxyJson(request, `/onboarding/templates/${id}/preview${qs}`, {
+  return proxyJson(request, `/onboarding/templates/${id}/analyze`, {
     method: "POST",
   });
 }

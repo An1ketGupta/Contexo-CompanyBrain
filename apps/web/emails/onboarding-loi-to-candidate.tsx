@@ -7,6 +7,7 @@ export interface OnboardingLoiToCandidateEmailProps {
   company_name: string;
   start_date: string;
   loi_signed_url: string | null;
+  references_form_url?: string | null;
   app_url: string;
 }
 
@@ -16,6 +17,7 @@ export function OnboardingLoiToCandidateEmail({
   company_name,
   start_date,
   loi_signed_url,
+  references_form_url,
 }: OnboardingLoiToCandidateEmailProps) {
   const first = candidate_name.split(" ")[0];
   return (
@@ -39,6 +41,27 @@ export function OnboardingLoiToCandidateEmail({
             Download Letter of Intent
           </Button>
         </Section>
+      ) : null}
+
+      {references_form_url ? (
+        <>
+          <Hr style={{ borderColor: "#e4e4e7", margin: "24px 0" }} />
+          <Text style={p}>
+            <strong>Next step — submit your reference contacts.</strong> So we
+            can complete the background check, please fill out a short form
+            with the people we should reach out to. It takes a couple of
+            minutes.
+          </Text>
+          <Section style={{ margin: "16px 0" }}>
+            <Button href={references_form_url} style={button}>
+              Submit reference contacts
+            </Button>
+          </Section>
+          <Text style={muted}>
+            The link is unique to you and expires in 14 days. You don&apos;t
+            need an account to fill it out.
+          </Text>
+        </>
       ) : null}
 
       <Hr style={{ borderColor: "#e4e4e7", margin: "24px 0" }} />

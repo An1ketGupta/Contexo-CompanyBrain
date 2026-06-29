@@ -16,7 +16,6 @@ import {
   RefreshCw,
   ShieldCheck,
   Upload,
-  Users,
   XCircle,
 } from "lucide-react";
 
@@ -50,11 +49,14 @@ interface DocumentRow {
   signed_pdf_path: string | null;
   signed_uploaded_at: string | null;
   file_bytes: number | null;
+  hr_edited_storage_path: string | null;
+  hr_edited_pdf_path: string | null;
+  hr_edited_at: string | null;
+  hr_edit_revision: number;
   docusign_envelope_id: string | null;
   docusign_status: string | null;
   docusign_signing_url: string | null;
   docusign_completed_at: string | null;
-  used_default_template: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -93,6 +95,13 @@ interface RunDetail {
   policies_acknowledged_at: string | null;
   induction_sent_at: string | null;
   completed_at: string | null;
+  loi_approved_for_signing_at: string | null;
+  loi_draft_edited_at: string | null;
+  loi_draft_revision: number;
+  references_form_expires_at: string | null;
+  references_submitted_at: string | null;
+  references_reminder_count: number;
+  references_last_reminder_at: string | null;
   created_at: string;
   updated_at: string;
   references: ReferenceRow[];
@@ -102,18 +111,20 @@ interface RunDetail {
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Draft",
-  loi_generating: "Generating LOI",
+  loi_generating: "Preparing LOI from template",
+  loi_pending_hr_review: "Review LOI draft",
   loi_pending_hr_sign: "Awaiting HR signature",
   loi_signed_uploaded: "LOI signed — sending",
   loi_sent_to_candidate: "LOI sent",
+  awaiting_candidate_references: "Awaiting candidate references",
   bgv_pending: "BGV in progress",
   bgv_complete: "BGV complete",
-  appointment_bundle_generating: "Generating Appointment Letter + NDA",
+  appointment_bundle_generating: "Preparing Appointment Letter + NDA from templates",
   appointment_pending_hr_review: "Awaiting HR approval",
   appointment_sent_to_candidate: "Appointment + NDA sent",
   policies_assigned: "Policies assigned",
   policies_acknowledged: "Policies acknowledged",
-  induction_generating: "Generating induction",
+  induction_generating: "Preparing induction from template",
   induction_sent: "Induction sent",
   completed: "Completed",
   blocked_missing_template: "Blocked — missing template",
@@ -161,6 +172,7 @@ export default function OnboardingDetailPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const loiFileInput = useRef<HTMLInputElement>(null);
+  const loiDraftInput = useRef<HTMLInputElement>(null);
 
   async function uploadSignedLoi(file: File) {
     setBusy("upload-loi");
@@ -179,6 +191,109 @@ export default function OnboardingDetailPage() {
         };
         setActionError(
           body.detail || body.message || "Couldn't upload the signed PDF.",
+        );
+        return;
+      }
+      await mutate();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function replaceLoiDraft(file: File) {
+    setBusy("replace-loi-draft");
+    setActionError(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(
+        `/api/onboarding/runs/${id}/loi/replace-draft`,
+        { method: "POST", body: form },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          detail?: string;
+          message?: string;
+        };
+        setActionError(
+          body.detail || body.message || "Couldn't upload the edited .docx.",
+        );
+        return;
+      }
+      await mutate();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function approveLoiDraft() {
+    if (
+      !confirm(
+        "Send this LOI to HR for signature? You won't be able to edit further once sent.",
+      )
+    ) {
+      return;
+    }
+    setBusy("approve-loi-draft");
+    setActionError(null);
+    try {
+      const res = await fetch(
+        `/api/onboarding/runs/${id}/loi/approve-draft`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          detail?: string;
+          message?: string;
+        };
+        setActionError(
+          body.detail || body.message || "Couldn't send the LOI for signature.",
+        );
+        return;
+      }
+      await mutate();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function downloadLoiDocx() {
+    setBusy("download-loi-docx");
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/onboarding/runs/${id}/loi/docx-url`);
+      if (!res.ok) {
+        setActionError("Couldn't get a download link. Try again.");
+        return;
+      }
+      const body = (await res.json()) as { docx_url?: string };
+      if (body.docx_url) window.open(body.docx_url, "_blank");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function submitHrReferencesOverride(
+    refs: { name: string; email: string; phone?: string; relationship?: string }[],
+  ) {
+    setBusy("refs-override");
+    setActionError(null);
+    try {
+      const res = await fetch(
+        `/api/onboarding/runs/${id}/references-override`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ references: refs }),
+        },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          detail?: string;
+          message?: string;
+        };
+        setActionError(
+          body.detail || body.message || "Couldn't submit references.",
         );
         return;
       }
@@ -216,8 +331,12 @@ export default function OnboardingDetailPage() {
     setBusy("resume");
     setActionError(null);
     try {
-      await fetch(`/api/onboarding/runs/${id}/resume`, { method: "POST" });
-      // Give the agent a beat to update state before we re-pull.
+      const res = await fetch(`/api/onboarding/runs/${id}/resume`, { method: "POST" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { detail?: string; message?: string };
+        setActionError(body.detail || body.message || "Couldn't re-run the agent.");
+        return;
+      }
       setTimeout(() => mutate(), 800);
     } finally {
       setBusy(null);
@@ -361,6 +480,22 @@ export default function OnboardingDetailPage() {
         </div>
       ) : null}
 
+      {data.status !== "blocked_missing_template" && data.blocked_reason ? (
+        <div className="mb-6 rounded-lg border border-red-300/60 bg-red-50 p-4 dark:border-red-500/30 dark:bg-red-500/10">
+          <div className="flex items-start gap-3">
+            <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600 dark:text-red-400" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-red-900 dark:text-red-100">
+                Agent failed
+              </p>
+              <p className="mt-1 text-xs text-red-800 dark:text-red-200">
+                {data.blocked_reason}
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* Summary card */}
       <section className="mb-8 grid grid-cols-2 gap-x-6 gap-y-3 rounded-lg border border-border bg-background p-4 sm:grid-cols-4">
         <Field label="CTC" value={ctc} />
@@ -382,14 +517,23 @@ export default function OnboardingDetailPage() {
           data={data}
           busy={busy}
           fileRef={loiFileInput}
+          draftFileRef={loiDraftInput}
           onUpload={uploadSignedLoi}
+          onReplaceDraft={replaceLoiDraft}
+          onApproveDraft={approveLoiDraft}
+          onDownloadDocx={downloadLoiDocx}
         />
       </div>
 
       {/* BGV section */}
       <SectionHeader icon={ShieldCheck} title="Background verification" />
       <div className="mb-6 rounded-lg border border-border bg-background p-4">
-        <BgvPanel references={data.references} />
+        <BgvPanel
+          data={data}
+          references={data.references}
+          busy={busy}
+          onHrOverride={submitHrReferencesOverride}
+        />
       </div>
 
       {/* Appointment + NDA section */}
@@ -489,15 +633,25 @@ function LoiPanel({
   data,
   busy,
   fileRef,
+  draftFileRef,
   onUpload,
+  onReplaceDraft,
+  onApproveDraft,
+  onDownloadDocx,
 }: {
   data: RunDetail;
   busy: string | null;
   fileRef: React.RefObject<HTMLInputElement | null>;
+  draftFileRef: React.RefObject<HTMLInputElement | null>;
   onUpload: (f: File) => void;
+  onReplaceDraft: (f: File) => void;
+  onApproveDraft: () => void;
+  onDownloadDocx: () => void;
 }) {
   const loi = data.documents.find((d) => d.kind === "loi");
+  const inReview = data.status === "loi_pending_hr_review";
   const awaitingSign = data.status === "loi_pending_hr_sign";
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -506,6 +660,11 @@ function LoiPanel({
           {loi ? (
             <span className="ml-2 text-xs text-muted-foreground">
               {loi.sign_status.replace(/_/g, " ")}
+              {loi.hr_edit_revision > 0 ? (
+                <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
+                  edited (rev {loi.hr_edit_revision})
+                </span>
+              ) : null}
             </span>
           ) : (
             <span className="ml-2 text-xs text-muted-foreground">
@@ -521,11 +680,87 @@ function LoiPanel({
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-xs font-medium text-foreground underline hover:no-underline"
             >
-              Download draft <ExternalLink className="h-3 w-3" />
+              Open PDF <ExternalLink className="h-3 w-3" />
             </a>
           ) : null}
         </div>
       </div>
+
+      {inReview ? (
+        <div className="space-y-3 rounded-md border border-amber-300/60 bg-amber-50/50 p-4 dark:border-amber-500/30 dark:bg-amber-500/5">
+          <div>
+            <p className="text-sm font-medium">
+              Review the LOI before sending for signature
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Check the filled values are correct. Download the .docx if you
+              need to tweak wording in Word, then re-upload here. When you
+              click <em>Send for signature</em>, an email goes to you with the
+              LOI to print, sign, and scan back.
+            </p>
+          </div>
+
+          {loi?.signed_url ? (
+            <iframe
+              src={loi.signed_url}
+              title="LOI preview"
+              className="h-[60vh] w-full rounded border border-border bg-white"
+            />
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Generating the preview…
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={draftFileRef}
+              type="file"
+              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) onReplaceDraft(f);
+                if (draftFileRef.current) draftFileRef.current.value = "";
+              }}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onDownloadDocx}
+              disabled={busy === "download-loi-docx"}
+            >
+              {busy === "download-loi-docx" ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              Download .docx to edit
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => draftFileRef.current?.click()}
+              disabled={busy === "replace-loi-draft"}
+            >
+              {busy === "replace-loi-draft" ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Upload className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Replace with edited .docx
+            </Button>
+            <Button
+              size="sm"
+              onClick={onApproveDraft}
+              disabled={busy === "approve-loi-draft"}
+            >
+              {busy === "approve-loi-draft" ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              Send for signature
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       {awaitingSign ? (
         <div className="rounded-md border border-dashed border-border bg-muted/30 p-4">
@@ -568,11 +803,136 @@ function LoiPanel({
   );
 }
 
-function BgvPanel({ references }: { references: ReferenceRow[] }) {
+function HrReferencesOverride({
+  busy,
+  onSubmit,
+}: {
+  busy: string | null;
+  onSubmit: (
+    refs: { name: string; email: string; phone?: string; relationship?: string }[],
+  ) => void;
+}) {
+  const [refs, setRefs] = useState([
+    { name: "", email: "", phone: "", relationship: "" },
+    { name: "", email: "", phone: "", relationship: "" },
+  ]);
+  const [open, setOpen] = useState(false);
+
+  function update(idx: number, patch: Partial<(typeof refs)[number]>) {
+    setRefs((rs) => rs.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-xs font-medium text-foreground underline hover:no-underline"
+      >
+        Enter references manually instead
+      </button>
+    );
+  }
+
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-background p-3">
+      <p className="text-xs font-medium">Enter references on the candidate&apos;s behalf</p>
+      {refs.map((r, idx) => (
+        <div key={idx} className="grid gap-2 sm:grid-cols-2">
+          <input
+            placeholder="Full name"
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            value={r.name}
+            onChange={(e) => update(idx, { name: e.target.value })}
+          />
+          <input
+            placeholder="Email"
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            value={r.email}
+            onChange={(e) => update(idx, { email: e.target.value })}
+          />
+          <input
+            placeholder="Phone (optional)"
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            value={r.phone}
+            onChange={(e) => update(idx, { phone: e.target.value })}
+          />
+          <input
+            placeholder="Relationship (e.g. Manager at Acme)"
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            value={r.relationship}
+            onChange={(e) => update(idx, { relationship: e.target.value })}
+          />
+        </div>
+      ))}
+      <div className="flex items-center gap-2 pt-1">
+        <Button
+          size="sm"
+          disabled={busy === "refs-override"}
+          onClick={() => {
+            const valid = refs
+              .filter((r) => r.name.trim() && r.email.trim())
+              .map((r) => ({
+                name: r.name.trim(),
+                email: r.email.trim(),
+                phone: r.phone.trim() || undefined,
+                relationship: r.relationship.trim() || undefined,
+              }));
+            if (valid.length < 1) {
+              alert("Add at least one reference with name + email.");
+              return;
+            }
+            onSubmit(valid);
+          }}
+        >
+          {busy === "refs-override" ? (
+            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+          ) : null}
+          Submit references
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function BgvPanel({
+  data,
+  references,
+  busy,
+  onHrOverride,
+}: {
+  data: RunDetail;
+  references: ReferenceRow[];
+  busy: string | null;
+  onHrOverride: (
+    refs: { name: string; email: string; phone?: string; relationship?: string }[],
+  ) => void;
+}) {
+  const awaitingCandidate = data.status === "awaiting_candidate_references";
+
+  if (awaitingCandidate && references.length === 0) {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          Waiting for the candidate to submit references via the form link in
+          their LOI email.
+          {data.references_reminder_count > 0
+            ? ` Reminders sent: ${data.references_reminder_count}.`
+            : ""}
+        </p>
+        <HrReferencesOverride busy={busy} onSubmit={onHrOverride} />
+      </div>
+    );
+  }
+
   if (references.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
-        No references on file. Cancel and recreate this run to add some.
+        No references on file yet — the candidate will submit them with their
+        LOI response.
       </p>
     );
   }
@@ -720,11 +1080,6 @@ function DocCard({
               </span>
             ) : null}
           </p>
-          {doc.used_default_template ? (
-            <p className="mt-1 text-[10px] italic text-amber-700 dark:text-amber-300">
-              Using NirnayaIQ default template — upload your own to customise.
-            </p>
-          ) : null}
           {doc.signed_url ? (
             <a
               href={doc.signed_url}

@@ -39,7 +39,8 @@
       "Bash(python -c \"from app.services.report_scheduler import compute_next_send_at; from datetime import datetime, timezone; print\\('weekly Wed 9 UTC, called Sun:', compute_next_send_at\\(frequency='weekly', send_time_utc=9, day_of_week=2, after=datetime\\(2026,6,21,12,0,tzinfo=timezone.utc\\)\\)\\); print\\('daily 8 UTC late:', compute_next_send_at\\(frequency='daily', send_time_utc=8, after=datetime\\(2026,6,21,12,0,tzinfo=timezone.utc\\)\\)\\); print\\('monthly day 1, mid-month:', compute_next_send_at\\(frequency='monthly', send_time_utc=8, day_of_month=1, after=datetime\\(2026,6,15,12,0,tzinfo=timezone.utc\\)\\)\\)\")",
       "Bash(python -c \"import ast, sys; ast.parse\\(open\\('app/routers/admin.py', encoding='utf-8'\\).read\\(\\)\\); ast.parse\\(open\\('app/inngest/feedback_functions.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
       "Bash(cat)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(git *)"
     ]
   }
 }

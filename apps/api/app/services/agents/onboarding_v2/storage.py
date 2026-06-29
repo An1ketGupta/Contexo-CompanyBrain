@@ -73,7 +73,10 @@ async def refresh_signed_urls_for_run(run_id: str) -> dict[str, str]:
     def _fetch() -> list[dict[str, Any]]:
         res = (
             svc.table("onboarding_documents")
-            .select("storage_path, signed_pdf_path")
+            .select(
+                "storage_path, signed_pdf_path, "
+                "hr_edited_storage_path, hr_edited_pdf_path"
+            )
             .eq("run_id", run_id)
             .execute()
         )
@@ -86,6 +89,10 @@ async def refresh_signed_urls_for_run(run_id: str) -> dict[str, str]:
             paths.append(r["storage_path"])
         if r.get("signed_pdf_path"):
             paths.append(r["signed_pdf_path"])
+        if r.get("hr_edited_storage_path"):
+            paths.append(r["hr_edited_storage_path"])
+        if r.get("hr_edited_pdf_path"):
+            paths.append(r["hr_edited_pdf_path"])
 
     # Fan out — bound parallelism to avoid hammering Supabase if a run has
     # many artifacts. asyncio.gather is fine here; mint_signed_url already
@@ -102,53 +109,71 @@ async def fetch_template_docx(
     """Find the KB document tagged `template_kind=<kind>` for the org and
     return its raw DOCX bytes + the document row.
 
-    Resolution order:
-      1. Customer-uploaded DOCX tagged with `template_kind=<kind>` (preferred).
-      2. Ship-with-product default (only NDA — see `default_templates.py`).
-      3. None (agent blocks the run with a clear missing-template error).
+    The actual storage path lives on `document_versions.file_path` keyed by
+    `documents.current_version_id`; we fall back to `documents.file_path`
+    (legacy single-version uploads) when there's no current version row.
 
-    The doc-row dict carries a special `is_default` flag in step 2 so the
-    agent can stamp `onboarding_documents.used_default_template=true`.
+    Returns None if the org has not uploaded and tagged a DOCX for this kind.
+    The agent treats that as a clean blocked state and prompts HR to upload
+    the missing template before proceeding.
     """
     svc = get_service_client()
 
     def _fetch_doc() -> dict[str, Any] | None:
+        # Only consider templates HR has explicitly saved (template_status =
+        # 'active'). Drafts are mid-iteration and must not be picked up by
+        # in-flight onboarding runs — they could be half-edited or broken.
         res = (
             svc.table("documents")
-            .select("id, name, storage_path, file_type, current_version_id, template_kind")
+            .select(
+                "id, name, file_path, file_type, current_version_id, "
+                "template_kind, template_status"
+            )
             .eq("org_id", org_id)
             .eq("template_kind", template_kind)
-            .order("updated_at", desc=True)
+            .eq("template_status", "active")
+            .order("created_at", desc=True)
             .limit(1)
             .execute()
         )
         return (res.data or [None])[0]
 
     doc = await asyncio.to_thread(_fetch_doc)
-    if doc:
-        storage_path = doc.get("storage_path")
-        if storage_path:
-            def _download() -> bytes:
-                return svc.storage.from_(STORAGE_BUCKET).download(storage_path)
-            raw = await asyncio.to_thread(_download)
-            return raw, doc
+    if not doc:
+        return None
+
+    storage_path: str | None = None
+    current_version_id = doc.get("current_version_id")
+    if current_version_id:
+        def _fetch_version() -> dict[str, Any] | None:
+            res = (
+                svc.table("document_versions")
+                .select("id, file_path")
+                .eq("id", current_version_id)
+                .maybe_single()
+                .execute()
+            )
+            return res.data if res else None
+
+        version = await asyncio.to_thread(_fetch_version)
+        if version:
+            storage_path = version.get("file_path")
+
+    if not storage_path:
+        storage_path = doc.get("file_path")
+
+    if not storage_path:
         log.warning(
             "onboarding_v2.template_missing_storage_path org=%s kind=%s doc=%s",
             org_id, template_kind, doc.get("id"),
         )
+        return None
 
-    # Fall back to the shipped default if we have one for this kind.
-    from app.services.agents.onboarding_v2.default_templates import (
-        get_default_template_docx,
-    )
-    default_bytes = await get_default_template_docx(template_kind)
-    if default_bytes:
-        return default_bytes, {
-            "id": None,
-            "name": f"NirnayaIQ default {template_kind}",
-            "is_default": True,
-        }
-    return None
+    def _download() -> bytes:
+        return svc.storage.from_(STORAGE_BUCKET).download(storage_path)
+
+    raw = await asyncio.to_thread(_download)
+    return raw, doc
 
 
 async def upload_onboarding_artifact(
@@ -224,7 +249,6 @@ async def upsert_onboarding_document(
     source_template_id: str | None,
     render_context: dict[str, Any] | None,
     sign_status: str = "draft",
-    used_default_template: bool = False,
 ) -> str:
     """Insert or update the onboarding_documents row for this (run, kind).
     Returns the row id."""
@@ -254,7 +278,6 @@ async def upsert_onboarding_document(
         "file_bytes": storage.get("file_bytes"),
         "render_context": render_context,
         "sign_status": sign_status,
-        "used_default_template": used_default_template,
     }
 
     if existing:

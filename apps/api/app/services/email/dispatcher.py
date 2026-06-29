@@ -39,6 +39,7 @@ EventType = Literal[
     "onboarding_loi_to_candidate",     # Candidate: signed LOI from HR
     "onboarding_bgv_request",          # Reference: please verify candidate
     "onboarding_bgv_reminder",         # Reference: gentle nudge
+    "onboarding_candidate_refs_reminder",  # Candidate: please submit refs
     "onboarding_offer_bundle_ready",   # HR: AL + NDA ready for review
     "onboarding_offer_to_candidate",   # Candidate: appointment letter + NDA
     "onboarding_policies_pending",     # Candidate: please acknowledge policies

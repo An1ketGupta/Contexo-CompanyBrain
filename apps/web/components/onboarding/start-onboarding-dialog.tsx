@@ -3,10 +3,13 @@
 /**
  * Dialog HR opens to kick off the Onboarding v2 pipeline for a candidate.
  *
- * Captures everything the pre-join pipeline needs:
+ * Captures the offer details only:
  *   - candidate identity (name, email, phone)
  *   - role + designation + CTC + start date + manager
- *   - two professional references with name/email/phone
+ *
+ * Background-check references are NO LONGER collected here — the candidate
+ * submits them via a public form linked from their LOI email. HR retains an
+ * override button on the run detail page if the candidate ghosts.
  *
  * On submit, POSTs to /api/onboarding/runs which fires the Inngest agent.
  * Routes the HR to the new run's detail page so they can watch the agent
@@ -15,7 +18,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -29,13 +32,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-
-interface ReferenceForm {
-  name: string;
-  email: string;
-  phone: string;
-  relationship: string;
-}
 
 interface StartOnboardingDialogProps {
   /** Pre-fill role from the requisition the HR is looking at. */
@@ -60,13 +56,6 @@ interface StartOnboardingDialogProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }
-
-const EMPTY_REF: ReferenceForm = {
-  name: "",
-  email: "",
-  phone: "",
-  relationship: "",
-};
 
 export function StartOnboardingDialog({
   defaultRoleTitle,
@@ -104,10 +93,6 @@ export function StartOnboardingDialog({
   const [probationMonths, setProbationMonths] = useState("");
   const [managerName, setManagerName] = useState("");
   const [managerEmail, setManagerEmail] = useState("");
-  const [references, setReferences] = useState<ReferenceForm[]>([
-    { ...EMPTY_REF },
-    { ...EMPTY_REF },
-  ]);
 
   function reset() {
     setCandidateName(defaultCandidate?.name || "");
@@ -122,7 +107,6 @@ export function StartOnboardingDialog({
     setProbationMonths("");
     setManagerName("");
     setManagerEmail("");
-    setReferences([{ ...EMPTY_REF }, { ...EMPTY_REF }]);
     setError(null);
   }
 
@@ -149,12 +133,6 @@ export function StartOnboardingDialog({
     defaultRoleTitle,
   ]);
 
-  function updateRef(idx: number, patch: Partial<ReferenceForm>) {
-    setReferences((rs) =>
-      rs.map((r, i) => (i === idx ? { ...r, ...patch } : r)),
-    );
-  }
-
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -165,11 +143,6 @@ export function StartOnboardingDialog({
     }
     if (!startDate) {
       setError("Pick a start date.");
-      return;
-    }
-    const validRefs = references.filter((r) => r.name && r.email);
-    if (validRefs.length < 2) {
-      setError("At least two references with name + email are required.");
       return;
     }
 
@@ -190,12 +163,7 @@ export function StartOnboardingDialog({
         : undefined,
       reporting_manager_name: managerName.trim() || undefined,
       reporting_manager_email: managerEmail.trim() || undefined,
-      references: validRefs.map((r) => ({
-        name: r.name.trim(),
-        email: r.email.trim(),
-        phone: r.phone.trim() || undefined,
-        relationship: r.relationship.trim() || undefined,
-      })),
+      references: [],
     };
 
     setSubmitting(true);
@@ -245,9 +213,10 @@ export function StartOnboardingDialog({
         <DialogHeader>
           <DialogTitle>Start onboarding</DialogTitle>
           <DialogDescription>
-            The Onboarding agent will generate the Letter of Intent, email
-            references for verification, and prepare the Appointment Letter and
-            NDA from your templates. You can watch progress on the run page.
+            The Onboarding agent will generate a Letter of Intent draft from
+            your template. Review and edit it on the next page, send it for
+            HR signature, then it goes to the candidate along with a form for
+            background-check references.
           </DialogDescription>
         </DialogHeader>
 
@@ -379,84 +348,12 @@ export function StartOnboardingDialog({
             </div>
           </section>
 
-          <section className="space-y-3">
-            <h3 className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              <span>Background check references</span>
-              {references.length < 4 ? (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setReferences((rs) => [...rs, { ...EMPTY_REF }])
-                  }
-                  className="inline-flex items-center gap-1 text-[10px] font-medium text-foreground hover:underline"
-                >
-                  <Plus className="h-3 w-3" /> Add reference
-                </button>
-              ) : null}
-            </h3>
-            <p className="-mt-2 text-xs text-muted-foreground">
-              Each reference gets a personalised email with a unique link to a
-              public form. No account required on their end.
-            </p>
-            <div className="space-y-3">
-              {references.map((r, idx) => (
-                <div
-                  key={idx}
-                  className="rounded-md border border-border bg-muted/20 p-3"
-                >
-                  <div className="mb-2 flex items-center justify-between">
-                    <p className="text-xs font-medium">
-                      Reference {idx + 1}
-                    </p>
-                    {references.length > 2 ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setReferences((rs) =>
-                            rs.filter((_, i) => i !== idx),
-                          )
-                        }
-                        className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
-                      >
-                        <Trash2 className="h-3 w-3" /> Remove
-                      </button>
-                    ) : null}
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <Input
-                      placeholder="Full name"
-                      value={r.name}
-                      onChange={(e) =>
-                        updateRef(idx, { name: e.target.value })
-                      }
-                    />
-                    <Input
-                      type="email"
-                      placeholder="Email"
-                      value={r.email}
-                      onChange={(e) =>
-                        updateRef(idx, { email: e.target.value })
-                      }
-                    />
-                    <Input
-                      placeholder="Phone (optional)"
-                      value={r.phone}
-                      onChange={(e) =>
-                        updateRef(idx, { phone: e.target.value })
-                      }
-                    />
-                    <Input
-                      placeholder="Relationship (e.g. Manager at Acme)"
-                      value={r.relationship}
-                      onChange={(e) =>
-                        updateRef(idx, { relationship: e.target.value })
-                      }
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
+          <div className="rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+            The candidate will be asked to submit their background-check
+            references via a secure link sent with their Letter of Intent. If
+            they don&apos;t respond, you can enter them manually from the run
+            page.
+          </div>
 
           {error ? (
             <p className="rounded-md border border-red-300/60 bg-red-50 p-3 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">

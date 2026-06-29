@@ -272,6 +272,105 @@ async def onboarding_v2_bgv_reminders(ctx: inngest.Context) -> dict[str, Any]:
     return {"status": "ok", "nudged": nudged}
 
 
+# ── Candidate references reminder cron ──────────────────────────────────────
+
+
+@_inngest_client.create_function(
+    fn_id="onboarding-v2-candidate-refs-reminders",
+    trigger=inngest.TriggerCron(cron="0 10 * * *"),  # daily 10:00 UTC
+    retries=1,
+)
+async def onboarding_v2_candidate_refs_reminders(
+    ctx: inngest.Context,
+) -> dict[str, Any]:
+    """Nudge candidates parked in awaiting_candidate_references whose form
+    has been idle for >3 days. Capped at 3 reminders per run so a ghosted
+    candidate doesn't keep getting pinged."""
+    svc = get_service_client()
+    cutoff = datetime.now(UTC).replace(microsecond=0)
+
+    res = (
+        svc.table("onboarding_runs")
+        .select(
+            "id, org_id, candidate_name, candidate_email, role_title, "
+            "references_form_token, references_form_expires_at, "
+            "references_reminder_count, references_last_reminder_at, "
+            "loi_sent_to_candidate_at"
+        )
+        .eq("status", "awaiting_candidate_references")
+        .lt("references_reminder_count", 3)
+        .execute()
+    )
+    rows = res.data or []
+    nudged = 0
+    for r in rows:
+        last_touch_iso = (
+            r.get("references_last_reminder_at") or r.get("loi_sent_to_candidate_at")
+        )
+        if not last_touch_iso:
+            continue
+        try:
+            last_touch = datetime.fromisoformat(last_touch_iso.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if (cutoff - last_touch).days < 3:
+            continue
+
+        # Don't reminder past form expiry — the link is dead.
+        expires_at_iso = r.get("references_form_expires_at")
+        if expires_at_iso:
+            try:
+                expires_at = datetime.fromisoformat(
+                    expires_at_iso.replace("Z", "+00:00")
+                )
+                if expires_at < cutoff:
+                    continue
+            except ValueError:
+                pass
+
+        from app.config import get_settings
+        settings = get_settings()
+        form_url = (
+            f"{settings.app_url.rstrip('/')}/references/{r['references_form_token']}"
+            if settings.app_url and r.get("references_form_token") else None
+        )
+        if not form_url:
+            continue
+
+        org_row = svc.table("organizations").select("name").eq(
+            "id", r["org_id"]
+        ).maybe_single().execute()
+        company_name = (org_row.data or {}).get("name", "the hiring team")
+
+        try:
+            await send_email_event(
+                event_type="onboarding_candidate_refs_reminder",
+                to=r["candidate_email"],
+                user_id=None,
+                org_id=r["org_id"],
+                dedupe_key=f"cand-refs-rem-{r['id']}-{r['references_reminder_count']}",
+                data={
+                    "candidate_name": r["candidate_name"],
+                    "company_name": company_name,
+                    "role_title": r.get("role_title") or "",
+                    "form_url": form_url,
+                },
+            )
+            svc.table("onboarding_runs").update(
+                {
+                    "references_reminder_count": (r.get("references_reminder_count") or 0) + 1,
+                    "references_last_reminder_at": cutoff.isoformat(),
+                }
+            ).eq("id", r["id"]).execute()
+            nudged += 1
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "onboarding_v2.candidate_refs_reminder_failed run=%s err=%s",
+                r["id"], exc,
+            )
+    return {"status": "ok", "nudged": nudged}
+
+
 FUNCTIONS = [
     onboarding_v2_start,
     onboarding_v2_loi_signed,
@@ -281,4 +380,5 @@ FUNCTIONS = [
     onboarding_v2_docusign_signed,
     onboarding_v2_resume,
     onboarding_v2_bgv_reminders,
+    onboarding_v2_candidate_refs_reminders,
 ]

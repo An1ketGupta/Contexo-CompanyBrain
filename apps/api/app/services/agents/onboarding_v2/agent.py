@@ -10,16 +10,24 @@ park between human steps without losing context:
   loi_generating ─── BLOCKED if no LOI template in KB
     │
     ▼
-  loi_pending_hr_sign  ── HR downloads PDF, prints, signs, scans, uploads
-    │
+  loi_pending_hr_review  ── HR previews the filled LOI; may download .docx,
+    │                       edit in Word, re-upload. Repeats until HR clicks
+    │                       "Send for signature". Agent parks until then.
+    ▼
+  loi_pending_hr_sign  ── HR is emailed the (possibly-edited) LOI; downloads,
+    │                       prints, signs, scans, uploads
     ▼
   loi_signed_uploaded
     │
     ▼
-  loi_sent_to_candidate
-    │
+  loi_sent_to_candidate ── Candidate email contains the signed LOI + a
+    │                       token-gated public link to submit BGV refs.
     ▼
-  bgv_pending  ── 2 references each get a tokenised URL; wait for responses
+  awaiting_candidate_references ── Candidate fills the references form.
+    │                                Cron sends reminders every 3 days. HR has
+    │                                an override button to enter refs manually.
+    ▼
+  bgv_pending  ── References each get a tokenised URL; wait for responses
     │             (Inngest cron sends reminders after 3 days)
     ▼
   bgv_complete
@@ -40,7 +48,7 @@ park between human steps without losing context:
   policies_acknowledged
     │
     ▼
-  induction_generating  ── LLM-synthesized from N facet searches
+  induction_generating  ── BLOCKED if no induction template in KB
     │
     ▼
   induction_sent
@@ -62,16 +70,7 @@ from app.config import get_settings
 from app.database import get_service_client
 from app.observability import get_logger
 from app.services.agents.base_agent import BaseAgent
-from app.services.agents.kb_synthesis import (
-    build_context_block,
-    collect_sources,
-    search_facets_concurrent,
-    synthesize_json,
-)
 from app.services.agents.onboarding_v2 import storage as ob_storage
-from app.services.agents.onboarding_v2.induction_template import (
-    render_induction_html,
-)
 from app.services.agents.onboarding_v2.pre_join import (
     ensure_pre_join_user,
     send_magic_link,
@@ -82,7 +81,6 @@ from app.services.pdf import (
     PdfRenderUnavailable,
     TemplateVariableError,
     render_docx_template_to_pdf,
-    render_html_to_pdf,
 )
 
 log = get_logger(__name__)
@@ -155,7 +153,9 @@ class OnboardingV2Agent(BaseAgent):
         extra: dict[str, Any] | None = None,
     ) -> None:
         svc = get_service_client()
-        payload: dict[str, Any] = {"status": status, "current_step": status}
+        # Always clear blocked_reason on status transitions unless the caller
+        # explicitly sets it (error / block states).
+        payload: dict[str, Any] = {"status": status, "current_step": status, "blocked_reason": None}
         if extra:
             payload.update(extra)
         await asyncio.to_thread(
@@ -173,7 +173,10 @@ class OnboardingV2Agent(BaseAgent):
         await self._set_status(
             "blocked_missing_template",
             extra={
-                "blocked_reason": f"missing_template:{template_kind}",
+                "blocked_reason": (
+                    f"No {template_kind.replace('_', ' ')} template uploaded. "
+                    "Configure it in Onboarding → Document templates."
+                ),
                 "blocked_template_kind": template_kind,
             },
         )
@@ -183,8 +186,8 @@ class OnboardingV2Agent(BaseAgent):
             actor_kind="agent",
             event_type="blocked_missing_template",
             message=(
-                f"Upload your {template_kind.replace('_', ' ')} template "
-                "to the knowledge base and tag it to continue."
+                f"No {template_kind.replace('_', ' ')} template configured. "
+                "Go to Onboarding → Document templates and upload a DOCX for this slot."
             ),
             metadata={"template_kind": template_kind},
         )
@@ -220,29 +223,6 @@ class OnboardingV2Agent(BaseAgent):
             "logo_url": data.get("logo_url"),
             "registered_address": data.get("registered_address") or "",
         }
-
-    async def _fetch_logo_data_url(self, logo_url: str | None) -> str | None:
-        """Download the org logo and inline as a data: URL for WeasyPrint.
-        Best-effort — a failure returns None so the induction renders
-        without a logo rather than erroring out."""
-        if not logo_url:
-            return None
-        try:
-            import base64
-
-            import httpx
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(logo_url)
-            if resp.status_code != 200 or not resp.content:
-                return None
-            mime = resp.headers.get("content-type", "image/png").split(";", 1)[0].strip()
-            if not mime.startswith("image/"):
-                return None
-            b64 = base64.b64encode(resp.content).decode("ascii")
-            return f"data:{mime};base64,{b64}"
-        except Exception as exc:  # noqa: BLE001
-            log.warning("onboarding_v2.logo_fetch_failed url=%s err=%s", logo_url, exc)
-            return None
 
     # ── Render context ────────────────────────────────────────────────────
 
@@ -306,12 +286,21 @@ class OnboardingV2Agent(BaseAgent):
 
         if current in ("draft", "loi_generating"):
             return await self._step_generate_loi()
+        if current == "loi_pending_hr_review":
+            # HR is reviewing/editing the LOI draft. The run is re-kicked
+            # from the approve-draft route which transitions us to
+            # loi_pending_hr_sign and dispatches into the signature step.
+            return {"status": current, "waiting_for": "hr_to_approve_loi_draft"}
         if current == "loi_pending_hr_sign":
-            return {"status": current, "waiting_for": "hr_to_upload_signed_loi"}
+            return await self._step_send_to_hr_for_signature()
         if current == "loi_signed_uploaded":
             return await self._step_send_loi_to_candidate()
         if current == "loi_sent_to_candidate":
-            return await self._step_kick_off_bgv()
+            # Candidate has the LOI; references-form link is in their email.
+            # Park until the candidate submits (or HR overrides).
+            return await self._step_wait_for_candidate_references()
+        if current == "awaiting_candidate_references":
+            return await self._step_wait_for_candidate_references()
         if current == "bgv_pending":
             return await self._step_check_bgv_completion()
         if current == "bgv_complete":
@@ -334,15 +323,20 @@ class OnboardingV2Agent(BaseAgent):
                 return await self._step_generate_loi()
             if missing in ("appointment_letter", "nda"):
                 return await self._step_generate_offer_bundle()
+            if missing == "induction":
+                return await self._step_generate_induction()
 
         return {"status": current, "no_op": True}
 
     # ── Step 1: LOI ────────────────────────────────────────────────────────
 
     async def _step_generate_loi(self) -> dict[str, Any]:
-        await self._set_status("loi_generating")
         await self.log_step("generate_loi", "started")
 
+        # Check for the KB-tagged LOI template BEFORE flipping status to
+        # loi_generating — otherwise a missing template (or a crash between
+        # the two writes) leaves the run stuck on a misleading
+        # "Generating LOI" label.
         fetched = await ob_storage.fetch_template_docx(
             org_id=self.org_id, template_kind="loi"
         )
@@ -350,6 +344,7 @@ class OnboardingV2Agent(BaseAgent):
             await self.log_step("generate_loi", "skipped", {"reason": "no_template"})
             return await self._block_missing_template("loi")
 
+        await self._set_status("loi_generating")
         docx_bytes, doc_row = fetched
         ctx = await self._build_render_context()
 
@@ -361,9 +356,11 @@ class OnboardingV2Agent(BaseAgent):
                 template_kind="loi",
             )
         except PdfRenderUnavailable as exc:
-            await self.log_step("generate_loi", "failed", error=str(exc))
-            await self._set_status("failed", extra={"blocked_reason": str(exc)})
-            raise
+            # Deployment config issue (Gotenberg not running). Reset to draft
+            # so the run is retryable once the sidecar is provisioned.
+            await self.log_step("generate_loi", "blocked", error=str(exc))
+            await self._set_status("draft", extra={"blocked_reason": str(exc)})
+            return {"status": "draft", "error": "pdf_render_unavailable"}
         except TemplateVariableError as exc:
             # The customer's DOCX references an unknown {{ variable }}.
             # Block the run with an actionable message instead of failing
@@ -409,13 +406,10 @@ class OnboardingV2Agent(BaseAgent):
             storage=storage,
             source_template_id=doc_row.get("id"),
             render_context=ctx,
-            sign_status="sent_to_hr",
+            sign_status="draft",
         )
 
-        now = datetime.now(UTC).isoformat()
-        await self._set_status(
-            "loi_pending_hr_sign", extra={"loi_sent_to_hr_at": now}
-        )
+        await self._set_status("loi_pending_hr_review")
         await self.log_step(
             "generate_loi",
             "completed",
@@ -425,13 +419,83 @@ class OnboardingV2Agent(BaseAgent):
             org_id=self.org_id,
             run_id=self.onboarding_run_id,
             actor_kind="agent",
-            event_type="loi_generated",
-            message=f"LOI generated for {ctx['candidate_name']}.",
+            event_type="loi_ready_for_review",
+            message=(
+                f"LOI draft ready for HR review. Preview on the run page, "
+                f"download to edit if needed, then click Send for signature."
+            ),
             metadata={"document_id": doc_id},
         )
+        return {"status": "loi_pending_hr_review", "document_id": doc_id}
 
-        await self._notify_hr_loi_ready(ctx, storage)
-        return {"status": "loi_pending_hr_sign", "document_id": doc_id}
+    # ── Step 1b: HR has reviewed the draft → send for signature ────────────
+
+    async def _step_send_to_hr_for_signature(self) -> dict[str, Any]:
+        """Called after HR approves the LOI draft (POST .../loi/approve-draft).
+        Stamps the signing timestamp, emails HR with the (possibly-edited)
+        LOI PDF link, and parks the run in loi_pending_hr_sign waiting for
+        the signed-scan upload."""
+        await self.log_step("send_to_hr_for_signature", "started")
+        run = await self._load_run()
+        ctx = await self._build_render_context()
+
+        # Resolve which PDF to send: HR's edited copy if present, else the
+        # agent's original render. Edited copy lives at hr_edited_pdf_path.
+        svc = get_service_client()
+        doc = await asyncio.to_thread(
+            lambda: svc.table("onboarding_documents")
+            .select("id, storage_path, hr_edited_pdf_path")
+            .eq("run_id", self.onboarding_run_id)
+            .eq("kind", "loi")
+            .maybe_single()
+            .execute()
+        )
+        if not doc or not doc.data:
+            await self.log_step(
+                "send_to_hr_for_signature", "failed", error="loi_document_missing"
+            )
+            raise RuntimeError("loi_document_row_missing")
+
+        pdf_path = doc.data.get("hr_edited_pdf_path") or doc.data["storage_path"]
+
+        def _signed_url() -> str | None:
+            try:
+                res = svc.storage.from_(ob_storage.STORAGE_BUCKET).create_signed_url(
+                    path=pdf_path,
+                    expires_in=ob_storage.SIGNED_URL_TTL_SECONDS,
+                )
+                return res.get("signedURL") or res.get("signed_url")
+            except Exception:
+                return None
+
+        signed_url = await asyncio.to_thread(_signed_url)
+        await asyncio.to_thread(
+            lambda: svc.table("onboarding_documents")
+            .update({"sign_status": "sent_to_hr"})
+            .eq("id", doc.data["id"])
+            .execute()
+        )
+
+        now = datetime.now(UTC).isoformat()
+        await self._set_status(
+            "loi_pending_hr_sign", extra={"loi_sent_to_hr_at": now}
+        )
+        await self._notify_hr_loi_ready(
+            ctx, {"signed_url": signed_url, "file_bytes": None}
+        )
+        await self.log_step("send_to_hr_for_signature", "completed")
+        await ob_storage.log_onboarding_event(
+            org_id=self.org_id,
+            run_id=self.onboarding_run_id,
+            actor_kind="agent",
+            event_type="loi_sent_to_hr_for_signature",
+            message=(
+                "HR approved the LOI draft — signing email dispatched. "
+                "Awaiting scanned-signed-PDF upload."
+            ),
+            metadata={"used_edited_copy": bool(doc.data.get("hr_edited_pdf_path"))},
+        )
+        return {"status": "loi_pending_hr_sign", "document_id": doc.data["id"]}
 
     async def _notify_hr_loi_ready(
         self, ctx: dict[str, Any], storage: dict[str, Any]
@@ -519,6 +583,19 @@ class OnboardingV2Agent(BaseAgent):
                 return None
 
         signed_url = await asyncio.to_thread(_signed_url)
+
+        # Mint the public-form token the candidate uses to submit BGV refs.
+        # 14-day expiry matches the existing referee-token convention so the
+        # cron reminder window has room to fire.
+        from uuid import uuid4
+        from datetime import timedelta
+        refs_token = str(uuid4())
+        refs_expires_at = (datetime.now(UTC) + timedelta(days=14)).isoformat()
+        refs_form_url = (
+            f"{settings.app_url.rstrip('/')}/references/{refs_token}"
+            if settings.app_url else None
+        )
+
         try:
             await send_email_event(
                 event_type="onboarding_loi_to_candidate",
@@ -532,6 +609,7 @@ class OnboardingV2Agent(BaseAgent):
                     "company_name": ctx["company_name"],
                     "start_date": ctx["start_date"],
                     "loi_signed_url": signed_url,
+                    "references_form_url": refs_form_url,
                     "app_url": settings.app_url.rstrip("/"),
                 },
             )
@@ -541,7 +619,12 @@ class OnboardingV2Agent(BaseAgent):
 
         now = datetime.now(UTC).isoformat()
         await self._set_status(
-            "loi_sent_to_candidate", extra={"loi_sent_to_candidate_at": now}
+            "loi_sent_to_candidate",
+            extra={
+                "loi_sent_to_candidate_at": now,
+                "references_form_token": refs_token,
+                "references_form_expires_at": refs_expires_at,
+            },
         )
         await self.log_step("send_loi_to_candidate", "completed")
         await ob_storage.log_onboarding_event(
@@ -549,7 +632,10 @@ class OnboardingV2Agent(BaseAgent):
             run_id=self.onboarding_run_id,
             actor_kind="agent",
             event_type="loi_sent_to_candidate",
-            message=f"Signed LOI emailed to {run['candidate_email']}.",
+            message=(
+                f"Signed LOI emailed to {run['candidate_email']}. "
+                "Candidate was asked to submit BGV references via the form link."
+            ),
         )
 
         # Provision the pre-join users row + send the candidate's magic link
@@ -586,8 +672,28 @@ class OnboardingV2Agent(BaseAgent):
                 exc,
             )
 
-        # Auto-advance to BGV — no human gate here.
-        return await self._step_kick_off_bgv()
+        # Park in awaiting_candidate_references — BGV kicks off only after
+        # the candidate (or an HR override) writes refs and re-kicks the agent.
+        await self._set_status("awaiting_candidate_references")
+        return {
+            "status": "awaiting_candidate_references",
+            "waiting_for": "candidate_to_submit_references",
+        }
+
+    # ── Step 2b: wait for candidate references ─────────────────────────────
+
+    async def _step_wait_for_candidate_references(self) -> dict[str, Any]:
+        """Park until the candidate submits the references form. The public
+        route at /api/public/onboarding/references/{token} writes the refs
+        and stamps references_submitted_at, then re-kicks the agent. HR can
+        also force-submit via /runs/{id}/references-override (same effect)."""
+        run = await self._load_run()
+        if run.get("references_submitted_at"):
+            return await self._step_kick_off_bgv()
+        return {
+            "status": "awaiting_candidate_references",
+            "waiting_for": "candidate_to_submit_references",
+        }
 
     # ── Step 3: BGV ────────────────────────────────────────────────────────
 
@@ -701,14 +807,12 @@ class OnboardingV2Agent(BaseAgent):
     # ── Step 4: Appointment Letter + NDA bundle ────────────────────────────
 
     async def _step_generate_offer_bundle(self) -> dict[str, Any]:
-        await self._set_status("appointment_bundle_generating")
         await self.log_step("generate_offer_bundle", "started")
-        ctx = await self._build_render_context()
 
-        for kind, label in (
-            ("appointment_letter", "Appointment Letter"),
-            ("nda", "NDA"),
-        ):
+        # Verify BOTH templates exist BEFORE flipping status — see comment
+        # in _step_generate_loi for why we check first.
+        fetched_by_kind: dict[str, tuple[bytes, dict[str, Any]]] = {}
+        for kind in ("appointment_letter", "nda"):
             fetched = await ob_storage.fetch_template_docx(
                 org_id=self.org_id, template_kind=kind
             )
@@ -719,6 +823,16 @@ class OnboardingV2Agent(BaseAgent):
                     {"reason": f"no_template:{kind}"},
                 )
                 return await self._block_missing_template(kind)
+            fetched_by_kind[kind] = fetched
+
+        await self._set_status("appointment_bundle_generating")
+        ctx = await self._build_render_context()
+
+        for kind, label in (
+            ("appointment_letter", "Appointment Letter"),
+            ("nda", "NDA"),
+        ):
+            fetched = fetched_by_kind[kind]
 
             docx_bytes, doc_row = fetched
             try:
@@ -750,7 +864,11 @@ class OnboardingV2Agent(BaseAgent):
                     metadata={"template_kind": kind, "variable": exc.variable_name},
                 )
                 return {"status": "blocked_missing_template", "variable": exc.variable_name}
-            except (PdfRenderError, PdfRenderUnavailable) as exc:
+            except PdfRenderUnavailable as exc:
+                await self.log_step("generate_offer_bundle", "blocked", error=f"{kind}: {exc}")
+                await self._set_status("bgv_complete", extra={"blocked_reason": str(exc)})
+                return {"status": "bgv_complete", "error": "pdf_render_unavailable"}
+            except PdfRenderError as exc:
                 await self.log_step(
                     "generate_offer_bundle", "failed", error=f"{kind}: {exc}"
                 )
@@ -764,7 +882,6 @@ class OnboardingV2Agent(BaseAgent):
                 pdf_bytes=pdf_bytes,
                 docx_bytes=filled_docx,
             )
-            is_default = bool(doc_row.get("is_default"))
             await ob_storage.upsert_onboarding_document(
                 org_id=self.org_id,
                 run_id=self.onboarding_run_id,
@@ -773,20 +890,13 @@ class OnboardingV2Agent(BaseAgent):
                 source_template_id=doc_row.get("id"),
                 render_context=ctx,
                 sign_status="sent_to_hr",
-                used_default_template=is_default,
             )
             await ob_storage.log_onboarding_event(
                 org_id=self.org_id,
                 run_id=self.onboarding_run_id,
                 actor_kind="agent",
                 event_type=f"{kind}_generated",
-                message=(
-                    f"{label} generated using the NirnayaIQ default template "
-                    f"(upload your own to customise)."
-                    if is_default
-                    else f"{label} generated."
-                ),
-                metadata={"used_default_template": is_default},
+                message=f"{label} generated.",
             )
 
         await self._set_status("appointment_pending_hr_review")
@@ -988,104 +1098,62 @@ class OnboardingV2Agent(BaseAgent):
     # ── Step 6: Induction PDF ──────────────────────────────────────────────
 
     async def _step_generate_induction(self) -> dict[str, Any]:
-        await self._set_status("induction_generating")
+        """Render the org's KB-tagged induction DOCX template with the same
+        variable-substitution pipeline used for LOI / AL / NDA. If no
+        template is tagged, block and prompt HR to upload one — we never
+        synthesize induction content."""
         await self.log_step("generate_induction", "started")
-        run = await self._load_run()
-        ctx = await self._build_render_context()
 
-        facets = {
-            "culture": "company culture values mission principles",
-            "team": "team structure org chart leadership",
-            "tools": "tools and software we use day to day",
-            "processes": "processes workflows ways of working",
-            "policies": "rules regulations expectations leave benefits",
-            "role_specific": f"{ctx['role_title']} responsibilities expectations",
-        }
-        facet_results = await search_facets_concurrent(
-            org_id=self.org_id, facets=facets, k=6, char_budget_per_facet=3500
+        fetched = await ob_storage.fetch_template_docx(
+            org_id=self.org_id, template_kind="induction"
         )
-        context_block = build_context_block(facet_results)
-        sources = collect_sources(facet_results)
-
-        if not context_block.strip():
+        if not fetched:
             await self.log_step(
                 "generate_induction",
-                "failed",
-                error="no_kb_content_for_induction",
+                "skipped",
+                {"reason": "no_template:induction"},
+            )
+            return await self._block_missing_template("induction")
+
+        await self._set_status("induction_generating")
+        run = await self._load_run()
+        ctx = await self._build_render_context()
+        docx_bytes, doc_row = fetched
+
+        try:
+            filled_docx, pdf_bytes = await render_docx_template_to_pdf(
+                template_bytes=docx_bytes,
+                context=ctx,
+                strict=True,
+                template_kind="induction",
+            )
+        except TemplateVariableError as exc:
+            await self.log_step(
+                "generate_induction", "failed",
+                error=str(exc),
+                metadata={"missing_variable": exc.variable_name},
             )
             await self._set_status(
-                "failed",
-                extra={"blocked_reason": "kb_empty_cannot_generate_induction"},
+                "blocked_missing_template",
+                extra={
+                    "blocked_reason": str(exc),
+                    "blocked_template_kind": "induction",
+                },
             )
-            return {"status": "failed", "reason": "kb_empty"}
-
-        system_prompt = (
-            "You are NirnayaIQ writing a personalised induction document for a "
-            "new hire. Use ONLY facts found in the provided knowledge-base "
-            "context. Where a section has no relevant context, write a short "
-            "honest note 'Your manager will brief you on this in your first 1:1.' "
-            "Return STRICT JSON only, no prose around it."
-        )
-        user_prompt = (
-            f"Hire: {ctx['candidate_name']}\n"
-            f"Role: {ctx['role_title']}\n"
-            f"Company: {ctx['company_name']}\n"
-            f"Start date: {ctx['start_date']}\n\n"
-            "Generate the induction as JSON of shape:\n"
-            "{\n"
-            '  "sections": [\n'
-            '    {"heading": "Welcome from the team", "body": "..."},\n'
-            '    {"heading": "How we work", "body": "..."},\n'
-            '    {"heading": "Your first two weeks", "body": "..."},\n'
-            '    {"heading": "Tools you\'ll use", "body": "..."},\n'
-            '    {"heading": "Who to talk to about what", "body": "..."},\n'
-            '    {"heading": "Rules and expectations", "body": "..."},\n'
-            '    {"heading": "Where to learn more", "body": "..."}\n'
-            "  ]\n"
-            "}\n\n"
-            "Each `body` is plain text — use blank lines for paragraphs and "
-            "lines starting with `- ` for bullets. Keep each section 4-8 short "
-            "paragraphs or a tight bullet list. Warm, practical tone.\n\n"
-            "=== Knowledge Base Context ===\n"
-            f"{context_block}\n"
-        )
-
-        try:
-            llm_out = await synthesize_json(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                temperature=0.4,
-                timeout=120.0,
+            await ob_storage.log_onboarding_event(
+                org_id=self.org_id,
+                run_id=self.onboarding_run_id,
+                actor_kind="agent",
+                event_type="template_variable_error",
+                message=str(exc),
+                metadata={"template_kind": "induction", "variable": exc.variable_name},
             )
-        except Exception as exc:  # noqa: BLE001
-            await self.log_step(
-                "generate_induction", "failed", error=f"llm_error: {exc}"
-            )
-            raise
-
-        sections = (
-            llm_out.get("sections", [])
-            if isinstance(llm_out, dict)
-            else (llm_out if isinstance(llm_out, list) else [])
-        )
-
-        # Logo for branded header — best-effort; renders without if missing.
-        branding = await self._resolve_org_branding()
-        logo_data_url = await self._fetch_logo_data_url(branding.get("logo_url"))
-
-        html = render_induction_html(
-            candidate_name=ctx["candidate_name"],
-            role_title=ctx["role_title"],
-            org_name=ctx["company_name"],
-            start_date=ctx["start_date"],
-            sections=sections,
-            sources=sources,
-            logo_data_url=logo_data_url,
-        )
-
-        try:
-            pdf_bytes = await render_html_to_pdf(html)
-        except (PdfRenderError, PdfRenderUnavailable) as exc:
+            return {"status": "blocked_missing_template", "variable": exc.variable_name}
+        except PdfRenderUnavailable as exc:
+            await self.log_step("generate_induction", "blocked", error=str(exc))
+            await self._set_status("policies_acknowledged", extra={"blocked_reason": str(exc)})
+            return {"status": "policies_acknowledged", "error": "pdf_render_unavailable"}
+        except PdfRenderError as exc:
             await self.log_step("generate_induction", "failed", error=str(exc))
             await self._set_status("failed", extra={"blocked_reason": str(exc)})
             raise
@@ -1095,21 +1163,18 @@ class OnboardingV2Agent(BaseAgent):
             run_id=self.onboarding_run_id,
             kind="induction",
             pdf_bytes=pdf_bytes,
+            docx_bytes=filled_docx,
         )
         doc_id = await ob_storage.upsert_onboarding_document(
             org_id=self.org_id,
             run_id=self.onboarding_run_id,
             kind="induction",
             storage=storage,
-            source_template_id=None,
-            render_context={
-                "section_count": len(sections),
-                "source_count": len(sources),
-            },
+            source_template_id=doc_row.get("id"),
+            render_context=ctx,
             sign_status="sent_to_candidate",
         )
 
-        # Email candidate.
         settings = get_settings()
         try:
             await send_email_event(
@@ -1137,7 +1202,7 @@ class OnboardingV2Agent(BaseAgent):
         await self.log_step(
             "generate_induction",
             "completed",
-            {"document_id": doc_id, "sections": len(sections)},
+            {"document_id": doc_id},
         )
         await ob_storage.log_onboarding_event(
             org_id=self.org_id,

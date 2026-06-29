@@ -118,6 +118,11 @@ import {
   type OnboardingBgvReminderEmailProps,
 } from "@/emails/onboarding-bgv-reminder";
 import {
+  OnboardingCandidateRefsReminderEmail,
+  onboardingCandidateRefsReminderSubject,
+  type OnboardingCandidateRefsReminderEmailProps,
+} from "@/emails/onboarding-candidate-refs-reminder";
+import {
   OnboardingOfferBundleReadyEmail,
   onboardingOfferBundleReadySubject,
   type OnboardingOfferBundleReadyEmailProps,
@@ -247,6 +252,10 @@ const TEMPLATES = {
     Component: OnboardingBgvReminderEmail,
     subject: onboardingBgvReminderSubject,
   } satisfies Template<OnboardingBgvReminderEmailProps>,
+  onboarding_candidate_refs_reminder: {
+    Component: OnboardingCandidateRefsReminderEmail,
+    subject: onboardingCandidateRefsReminderSubject,
+  } satisfies Template<OnboardingCandidateRefsReminderEmailProps>,
   onboarding_offer_bundle_ready: {
     Component: OnboardingOfferBundleReadyEmail,
     subject: onboardingOfferBundleReadySubject,
