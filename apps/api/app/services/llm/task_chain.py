@@ -626,13 +626,43 @@ async def execute_task(
         # Confidence — emitted whenever the LLM consulted retrieval. Skipping
         # zero-source turns means a "hi how are you" doesn't render a "low
         # confidence" badge on a chat that wasn't asking for facts.
+        confidence_event: ConfidenceEvent | None = None
         if sources:
-            yield _compute_confidence(
+            confidence_event = _compute_confidence(
                 sources,
                 all_hits,
                 knowledge_gap=knowledge_gap,
                 thresholds=confidence_thresholds,
             )
+            yield confidence_event
+
+        # Low-confidence gap signal (Gap-v2). A turn that *answered* but did
+        # so on thin retrieval (conf<6 AND sources<2) is the bulk of platform
+        # quality misses — the zero-hit path catches the obvious failures,
+        # this one catches "we have a doc but it's stale / off-topic". We
+        # fire one event per search the LLM ran so the worker can debounce
+        # per-topic the same way it does for zero-hit.
+        if (
+            not knowledge_gap
+            and search_attempts
+            and confidence_event is not None
+            and confidence_event.score < 6.0
+            and len(sources) < 2
+        ):
+            low_conf_topics = tuple(q for q, _ in search_attempts)
+            try:
+                await _enqueue_knowledge_gap(
+                    org_id=org_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_message=user_message,
+                    topics=low_conf_topics,
+                    signal_type="low_confidence",
+                    confidence_score=confidence_event.score,
+                    sources_count=len(sources),
+                )
+            except Exception as exc:
+                log.warning("low_confidence_gap_enqueue_failed: %s", exc)
 
         if stream and not final_text:
             # We may have exited the loop because the LLM was about to speak. To
@@ -712,6 +742,9 @@ async def _enqueue_knowledge_gap(
     conversation_id: str | None,
     user_message: str,
     topics: tuple[str, ...],
+    signal_type: str = "zero_hit",
+    confidence_score: float | None = None,
+    sources_count: int | None = None,
 ) -> None:
     """Emit a knowledge/gap-detected event for the Inngest worker.
 
@@ -719,6 +752,13 @@ async def _enqueue_knowledge_gap(
     granularity for the admin alert (a topic that's hit 3x is more
     actionable than a query that ran once). The worker handles dedupe +
     threshold + auto-draft.
+
+    `signal_type` distinguishes the two production triggers:
+      * 'zero_hit'         — all searches returned no chunks (the v1 case)
+      * 'low_confidence'   — answer surfaced, but on thin retrieval (Gap-v2)
+    Worker uses signal_type to decide whether to write an AI-stub draft
+    (zero_hit only — low-confidence drafts would mostly fight existing docs)
+    or just record for the weekly clustering report.
     """
     if not topics:
         return
@@ -740,6 +780,9 @@ async def _enqueue_knowledge_gap(
                     "query": user_message,
                     "user_id": user_id,
                     "conversation_id": conversation_id,
+                    "signal_type": signal_type,
+                    "confidence_score": confidence_score,
+                    "sources_count": sources_count,
                 },
             )
         )

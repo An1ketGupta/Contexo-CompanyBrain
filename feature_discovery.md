@@ -389,32 +389,7 @@
 
 ---
 
-## 2.1 Knowledge Graph Visualization
-
-**Problem:** The knowledge base is a flat list of documents. There's no visual map of how concepts relate, which documents cite each other, or which teams own which knowledge areas.
-
-**Why It Matters:** An org with 500 documents has no way to navigate conceptually. Users search for specific answers but can't browse the brain's structure. Knowledge managers can't see "where's the gap in the Sales domain?"
-
-**User Impact:** Admins, knowledge managers, onboarding new employees.
-
-**Technical Complexity:** Medium — embeddings + chunk-level data are all in the DB. Use the existing centroid-based clustering logic from `smart_routing.py` to produce a force-directed graph of document clusters. Frontend: use `react-force-graph` or `d3.js`.
-
-**Business Value:** High — enterprise buyers consistently ask for "knowledge maps." Glean and Guru both lack true visual graphs.
-
-**Competitive Advantage:** No competitor has an AI-generated knowledge map at the document cluster level.
-
-**Implementation Strategy:**
-1. New endpoint `GET /admin/knowledge-graph` — runs k-means clustering on `documents.summary_embedding` (already computed), returns clusters with centroid labels.
-2. Use the LLM to name each cluster (one LLM call, cache the result for 24h).
-3. Include `chunk_citation_count` as node size signal (from `citation_tracker.py`).
-4. Frontend: `admin/knowledge-graph` page using `react-force-graph-2d`.
-5. Clicking a cluster filters the document list.
-
-**Dependencies:** `smart_routing.py`, `document_summary.py`, `citation_tracker.py`, `summary_embedding` on `documents`.
-
----
-
-## 2.2 Proactive Morning Briefings
+## 2.1 Proactive Morning Briefings
 
 **Problem:** The brain is reactive — you ask, it answers. But the most valuable AI systems are proactive. An executive should walk in Monday morning and have a briefing already waiting: "3 knowledge gaps surfaced last week, 2 documents are overdue for review, your Q3 planning meeting is tomorrow and here's what's relevant."
 
@@ -439,7 +414,7 @@
 
 ---
 
-## 2.3 Org-Wide AI Memory (Cross-Conversation Decision Log)
+## 2.2 Org-Wide AI Memory (Cross-Conversation Decision Log)
 
 **Problem:** Every conversation is isolated. The AI has no memory of what the organization decided 3 months ago, which customers have been discussed, which debates were had, or which strategies were rejected.
 
@@ -464,7 +439,7 @@
 
 ---
 
-## 2.4 Microsoft Teams Integration
+## 2.3 Microsoft Teams Integration
 
 **Problem:** The Slack integration is mature (bot token, slash commands, block kit, DMs). But 90% of enterprise orgs use Microsoft Teams, not Slack. Today, enterprise sales is blocked on this.
 
@@ -490,7 +465,7 @@
 
 ---
 
-## 2.5 Semantic Deduplication with Merge Suggestions
+## 2.4 Semantic Deduplication with Merge Suggestions
 
 **Problem:** `duplicate_detection.py` exists but only detects exact or near-exact duplicates. The system doesn't detect semantic duplicates: the "Remote Work Policy" document from 2022 and the "Work From Home Guidelines" document from 2023 which cover the same ground but are named differently.
 
@@ -514,7 +489,7 @@
 
 ---
 
-## 2.6 Salesforce / HubSpot CRM Integration
+## 2.5 Salesforce / HubSpot CRM Integration
 
 **Problem:** The sales sequences (`sequences.py`) and pre-call brief (`precall_brief.py`) pull context from the internal KB. But they have no connection to the CRM — so the rep has to manually enter "prospect context" that's already in Salesforce.
 
@@ -539,7 +514,7 @@
 
 ---
 
-## 2.7 Real-Time Collaborative Chat (Multiplayer)
+## 2.6 Real-Time Collaborative Chat (Multiplayer)
 
 **Problem:** Two people can't work in the same conversation at the same time. If Alice and Bob both need to research the same topic, they each have a separate conversation and the context doesn't merge.
 
@@ -564,7 +539,7 @@
 
 ---
 
-## 2.8 Jira / Linear Integration
+## 2.7 Jira / Linear Integration
 
 **Problem:** The action item tracker (`action_items.py`) captures follow-ups from meetings and conversations but they stay inside NirnayaIQ. Developers and project managers use Jira or Linear — they won't adopt a new system just for action items.
 
@@ -589,7 +564,7 @@
 
 ---
 
-## 2.9 MCP Server (Model Context Protocol)
+## 2.8 MCP Server (Model Context Protocol)
 
 **Problem:** The API supports external callers via API keys (`public_api.py`). But as Claude, ChatGPT, and other AI assistants adopt MCP, orgs want the Company Brain callable as a tool from any AI system — not just via REST.
 
@@ -614,7 +589,7 @@
 
 ---
 
-## 2.10 Knowledge Certification System
+## 2.9 Knowledge Certification System
 
 **Problem:** Compliance (`compliance.py`) handles policy acknowledgements — "read and understood." But there's no test of comprehension. HR needs to know if employees actually understood the harassment policy, not just clicked "I acknowledge."
 
@@ -639,7 +614,7 @@
 
 ---
 
-## 2.11 Autoflow Visual Builder (No-Code)
+## 2.10 Autoflow Visual Builder (No-Code)
 
 **Problem:** Autoflows are created via raw JSON/API today (the admin page shows them but building them requires knowing the data model). Non-technical ops leads can't create automations.
 
@@ -664,7 +639,7 @@
 
 ---
 
-## 2.12 Public Knowledge Base (External Sharing)
+## 2.11 Public Knowledge Base (External Sharing)
 
 **Problem:** The knowledge base is strictly internal. But some orgs have knowledge they want to share with customers: FAQs, product documentation, support articles, partner guides.
 
@@ -689,7 +664,7 @@
 
 ---
 
-## 2.13 HR Systems Integration (BambooHR / Rippling / Workday)
+## 2.12 HR Systems Integration (BambooHR / Rippling / Workday)
 
 **Problem:** When a new employee joins, onboarding information comes from the HRIS. Today, the onboarding agent (`onboarding_agent.py`) runs based on an Inngest event but has no connection to the HRIS — so it doesn't know the employee's role, team, manager, start date, or department to pre-configure relevant document access and knowledge suggestions.
 
@@ -713,7 +688,7 @@
 
 ---
 
-## 2.14 Retrieval Quality Evaluation Dashboard (Eval Harness)
+## 2.13 Retrieval Quality Evaluation Dashboard (Eval Harness)
 
 **Problem:** There's no systematic way to measure if the retrieval is getting better or worse. The embedding fine-tuning infrastructure (`embedding_finetune.py`) has an `eval_improvement_floor` check (hit@5 must improve) but there's no UI to see current eval metrics.
 

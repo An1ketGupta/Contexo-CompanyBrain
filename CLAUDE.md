@@ -10,6 +10,12 @@ Stack: **Next.js** (App Router, React 19, TS5, Tailwind 4, shadcn/ui) + **FastAP
 
 ---
 
+## Current Status
+
+**Currently on local development.** Tailor responses to local setup — assume services (Supabase, backends, dev servers) may be running locally. Prefer local debugging, avoiding production/staging concerns.
+
+---
+
 ## How to Run
 
 ```bash
@@ -141,13 +147,3 @@ Gmail re-auth required if Drive was connected first (scopes don't overlap). Re-a
 - Backend: push to `main` → Railway auto-deploys (Docker)
 - Migrations: `supabase db push` — manual, test on staging first
 - Inngest functions register on backend startup
-
-## Pricing
-
-| Plan | Price | Users | Docs | Queries/mo |
-|------|-------|-------|------|-----------|
-| Starter | $49 | 10 | 100 | 500 |
-| Team | $129 | 30 | 1,000 | 3,000 |
-| Business | $299 | ∞ | ∞ | ∞ |
-
-See `PRICING.md` for full details.

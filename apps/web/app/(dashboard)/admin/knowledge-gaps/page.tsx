@@ -92,7 +92,17 @@ export default function KnowledgeGapsPage() {
             answer. The AI drafts stub documents for the most-asked topics.
           </p>
         </div>
-        <div className="flex gap-1 rounded-lg bg-muted p-1">
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              window.location.href = "/admin/knowledge-gaps/reports";
+            }}
+          >
+            Weekly reports
+          </Button>
+          <div className="flex gap-1 rounded-lg bg-muted p-1">
           {PERIODS.map((p) => (
             <button
               key={p.value}
@@ -108,6 +118,7 @@ export default function KnowledgeGapsPage() {
               {p.label}
             </button>
           ))}
+          </div>
         </div>
       </header>
 

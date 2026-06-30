@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, FolderPlus, Loader2, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -160,6 +160,11 @@ export default function CollectionsSettingsPage() {
         </ul>
       )}
 
+      <RfpApprovedCollectionSection
+        collections={collections}
+        isAdmin={isAdmin}
+      />
+
       <CollectionFormDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
@@ -188,6 +193,102 @@ export default function CollectionsSettingsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+
+function RfpApprovedCollectionSection({
+  collections,
+  isAdmin,
+}: {
+  collections: Collection[];
+  isAdmin: boolean;
+}) {
+  const [currentId, setCurrentId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/organizations/me")
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        setCurrentId(d?.rfp_approved_collection_id ?? null);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const save = async (next: string | null) => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/organizations/me/rfp-collection", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rfp_approved_collection_id: next }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error((detail as { detail?: string })?.detail || "Failed to save.");
+      }
+      setCurrentId(next);
+      toast.success(
+        next
+          ? "RFP-approved collection saved."
+          : "RFP-approved collection cleared. RFP agent will use the whole KB.",
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 rounded-xl border border-border bg-muted/20 p-4">
+      <div>
+        <h2 className="text-sm font-semibold">RFP-approved collection</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          The RFP Agent uses this collection as the default retrieval scope, so customer-facing
+          answers don&apos;t accidentally pull from internal-only documents. Leave unset to allow
+          the whole KB.
+        </p>
+      </div>
+      {loading ? (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Loading…
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            className="rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+            value={currentId ?? ""}
+            disabled={!isAdmin || saving}
+            onChange={(e) => save(e.target.value || null)}
+          >
+            <option value="">— Not set (use whole KB) —</option>
+            {collections.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} ({c.document_count} docs)
+              </option>
+            ))}
+          </select>
+          {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+        </div>
+      )}
+      {!isAdmin && (
+        <p className="text-[11px] text-muted-foreground">
+          Only admins can change this setting.
+        </p>
+      )}
     </div>
   );
 }

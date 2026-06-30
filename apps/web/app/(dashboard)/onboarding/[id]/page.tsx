@@ -7,6 +7,7 @@ import useSWR, { mutate as globalMutate } from "swr";
 import {
   AlertTriangle,
   ArrowLeft,
+  Bell,
   CheckCircle2,
   Clock,
   ExternalLink,
@@ -14,6 +15,7 @@ import {
   FileText,
   Loader2,
   RefreshCw,
+  RotateCcw,
   ShieldCheck,
   Upload,
   XCircle,
@@ -53,10 +55,10 @@ interface DocumentRow {
   hr_edited_pdf_path: string | null;
   hr_edited_at: string | null;
   hr_edit_revision: number;
-  docusign_envelope_id: string | null;
-  docusign_status: string | null;
-  docusign_signing_url: string | null;
-  docusign_completed_at: string | null;
+  esign_envelope_id: string | null;
+  esign_status: string | null;
+  esign_signing_url: string | null;
+  esign_completed_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -114,7 +116,7 @@ const STATUS_LABELS: Record<string, string> = {
   loi_generating: "Preparing LOI from template",
   loi_pending_hr_review: "Review LOI draft",
   loi_pending_hr_sign: "Awaiting HR signature",
-  loi_pending_docusign_signature: "Signing LOI in DocuSign",
+  loi_pending_esign_signature: "Signing LOI",
   loi_signed_uploaded: "LOI signed — sending",
   loi_sent_to_candidate: "LOI sent",
   awaiting_candidate_references: "Awaiting candidate references",
@@ -274,11 +276,11 @@ export default function OnboardingDetailPage() {
     }
   }
 
-  async function openLoiDocusignLink() {
-    setBusy("loi-docusign");
+  async function openLoiSigningLink() {
+    setBusy("loi-signing");
     setActionError(null);
     try {
-      const res = await fetch(`/api/onboarding/runs/${id}/loi/docusign-url`);
+      const res = await fetch(`/api/onboarding/runs/${id}/loi/signing-url`);
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as {
           detail?: string;
@@ -287,7 +289,7 @@ export default function OnboardingDetailPage() {
         setActionError(
           body.detail
             || body.message
-            || "Couldn't get a fresh DocuSign signing link.",
+            || "Couldn't open the signing link.",
         );
         return;
       }
@@ -295,6 +297,61 @@ export default function OnboardingDetailPage() {
       if (body.signing_url) {
         window.open(body.signing_url, "_blank");
       }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function nudgeCandidate() {
+    setBusy("nudge-candidate");
+    setActionError(null);
+    try {
+      const res = await fetch(
+        `/api/onboarding/runs/${id}/references-nudge`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          detail?: string;
+          message?: string;
+        };
+        setActionError(
+          body.detail || body.message || "Couldn't send the reminder.",
+        );
+        return;
+      }
+      await mutate();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function extendReferencesToken() {
+    if (
+      !confirm(
+        "Generate a new references form link and email it to the candidate? The old link will stop working.",
+      )
+    ) {
+      return;
+    }
+    setBusy("extend-token");
+    setActionError(null);
+    try {
+      const res = await fetch(
+        `/api/onboarding/runs/${id}/references-token/extend`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          detail?: string;
+          message?: string;
+        };
+        setActionError(
+          body.detail || body.message || "Couldn't extend the form link.",
+        );
+        return;
+      }
+      await mutate();
     } finally {
       setBusy(null);
     }
@@ -549,7 +606,7 @@ export default function OnboardingDetailPage() {
           onReplaceDraft={replaceLoiDraft}
           onApproveDraft={approveLoiDraft}
           onDownloadDocx={downloadLoiDocx}
-          onOpenDocusignLink={openLoiDocusignLink}
+          onOpenSigningLink={openLoiSigningLink}
         />
       </div>
 
@@ -561,6 +618,8 @@ export default function OnboardingDetailPage() {
           references={data.references}
           busy={busy}
           onHrOverride={submitHrReferencesOverride}
+          onNudge={nudgeCandidate}
+          onExtendToken={extendReferencesToken}
         />
       </div>
 
@@ -666,7 +725,7 @@ function LoiPanel({
   onReplaceDraft,
   onApproveDraft,
   onDownloadDocx,
-  onOpenDocusignLink,
+  onOpenSigningLink,
 }: {
   data: RunDetail;
   busy: string | null;
@@ -676,13 +735,13 @@ function LoiPanel({
   onReplaceDraft: (f: File) => void;
   onApproveDraft: () => void;
   onDownloadDocx: () => void;
-  onOpenDocusignLink: () => void;
+  onOpenSigningLink: () => void;
 }) {
   const loi = data.documents.find((d) => d.kind === "loi");
   const inReview = data.status === "loi_pending_hr_review";
   const awaitingSign = data.status === "loi_pending_hr_sign";
-  const inDocusign = data.status === "loi_pending_docusign_signature";
-  const docusignStatus = (loi?.docusign_status || "").toLowerCase();
+  const inEsign = data.status === "loi_pending_esign_signature";
+  const esignStatus = (loi?.esign_status || "").toLowerCase();
 
   return (
     <div className="space-y-3">
@@ -830,13 +889,13 @@ function LoiPanel({
         </div>
       ) : null}
 
-      {inDocusign ? (
+      {inEsign ? (
         <div className="space-y-3 rounded-md border border-blue-300/60 bg-blue-50/40 p-4 dark:border-blue-500/30 dark:bg-blue-500/5">
           <div>
-            <p className="text-sm font-medium">Signing the LOI in DocuSign</p>
+            <p className="text-sm font-medium">Signing the LOI</p>
             <p className="mt-1 text-xs text-muted-foreground">
               The envelope is routed <strong>HR → candidate</strong>. You sign
-              first. The candidate will receive a DocuSign email automatically
+              first. The candidate will receive a signing email automatically
               once you're done.
             </p>
           </div>
@@ -845,7 +904,7 @@ function LoiPanel({
             <div className="flex items-center justify-between rounded border border-border bg-background px-3 py-2">
               <dt className="font-medium text-foreground">You (HR)</dt>
               <dd className="text-muted-foreground">
-                {docusignStatus === "completed" ? "Signed ✓" : "Pending"}
+                {esignStatus === "completed" ? "Signed ✓" : "Pending"}
               </dd>
             </div>
             <div className="flex items-center justify-between rounded border border-border bg-background px-3 py-2">
@@ -853,7 +912,7 @@ function LoiPanel({
                 {data.candidate_name || "Candidate"}
               </dt>
               <dd className="text-muted-foreground">
-                {docusignStatus === "completed"
+                {esignStatus === "completed"
                   ? "Signed ✓"
                   : "Waiting for HR first"}
               </dd>
@@ -863,10 +922,10 @@ function LoiPanel({
           <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
-              onClick={onOpenDocusignLink}
-              disabled={busy === "loi-docusign"}
+              onClick={onOpenSigningLink}
+              disabled={busy === "loi-signing"}
             >
-              {busy === "loi-docusign" ? (
+              {busy === "loi-signing" ? (
                 <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
               ) : (
                 <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
@@ -989,6 +1048,8 @@ function BgvPanel({
   references,
   busy,
   onHrOverride,
+  onNudge,
+  onExtendToken,
 }: {
   data: RunDetail;
   references: ReferenceRow[];
@@ -996,8 +1057,18 @@ function BgvPanel({
   onHrOverride: (
     refs: { name: string; email: string; phone?: string; relationship?: string }[],
   ) => void;
+  onNudge: () => void;
+  onExtendToken: () => void;
 }) {
   const awaitingCandidate = data.status === "awaiting_candidate_references";
+
+  const formExpired =
+    data.references_form_expires_at != null &&
+    new Date(data.references_form_expires_at) < new Date();
+
+  const formExpiryLabel = data.references_form_expires_at
+    ? `Form link ${formExpired ? "expired" : "expires"} ${relativeTime(data.references_form_expires_at)}`
+    : null;
 
   if (awaitingCandidate && references.length === 0) {
     return (
@@ -1009,6 +1080,52 @@ function BgvPanel({
             ? ` Reminders sent: ${data.references_reminder_count}.`
             : ""}
         </p>
+
+        {formExpiryLabel ? (
+          <p
+            className={
+              "text-xs " +
+              (formExpired
+                ? "font-medium text-red-600 dark:text-red-400"
+                : "text-muted-foreground")
+            }
+          >
+            {formExpiryLabel}
+          </p>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2">
+          {formExpired ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onExtendToken}
+              disabled={busy === "extend-token"}
+            >
+              {busy === "extend-token" ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Extend form link (14 days)
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onNudge}
+              disabled={busy === "nudge-candidate"}
+            >
+              {busy === "nudge-candidate" ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Bell className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Nudge candidate
+            </Button>
+          )}
+        </div>
+
         <HrReferencesOverride busy={busy} onSubmit={onHrOverride} />
       </div>
     );
@@ -1160,9 +1277,9 @@ function DocCard({
         <>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             {doc.sign_status.replace(/_/g, " ")}
-            {doc.docusign_status ? (
+            {doc.esign_status ? (
               <span className="ml-1 rounded bg-blue-100 px-1 py-0.5 text-[10px] uppercase tracking-wide text-blue-700 dark:bg-blue-500/20 dark:text-blue-300">
-                DocuSign: {doc.docusign_status}
+                Signing: {doc.esign_status}
               </span>
             ) : null}
           </p>
@@ -1176,14 +1293,14 @@ function DocCard({
               Open PDF <ExternalLink className="h-3 w-3" />
             </a>
           ) : null}
-          {doc.docusign_signing_url && doc.docusign_status !== "completed" ? (
+          {doc.esign_signing_url && doc.esign_status !== "completed" ? (
             <a
-              href={doc.docusign_signing_url}
+              href={doc.esign_signing_url}
               target="_blank"
               rel="noopener noreferrer"
               className="ml-2 mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-blue-700 underline hover:no-underline dark:text-blue-300"
             >
-              Open in DocuSign <ExternalLink className="h-3 w-3" />
+              Open signing link <ExternalLink className="h-3 w-3" />
             </a>
           ) : null}
         </>

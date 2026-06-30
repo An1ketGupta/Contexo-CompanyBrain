@@ -17,17 +17,27 @@ export async function GET(req: NextRequest, { params }: RouteCtx): Promise<Respo
   if (!token) return unauthorized(requestId);
   const { id } = await params;
 
-  const upstream = await fetch(`${API_URL}/sales/rfp/${id}/download`, {
+  const url = new URL(req.url);
+  const kind = url.searchParams.get("kind") ?? "summary";
+  const upstream = await fetch(`${API_URL}/sales/rfp/${id}/download?kind=${kind}`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
       [REQUEST_ID_HEADER]: requestId,
     },
     cache: "no-store",
+    // Don't follow the redirect — let the browser hop directly to the signed
+    // Supabase Storage URL so our Authorization header isn't sent to Storage.
+    redirect: "manual",
   });
 
-  // Pass status/headers/body through verbatim so 410/409 from upstream still
-  // reach the browser as expected.
+  if (upstream.status === 307 || upstream.status === 308) {
+    const location = upstream.headers.get("location");
+    if (location) {
+      return Response.redirect(location, upstream.status);
+    }
+  }
+
   return new Response(upstream.body, {
     status: upstream.status,
     headers: upstream.headers,

@@ -321,23 +321,24 @@ class Settings(BaseSettings):
     # different domain (e.g. a subdomain for unauthenticated public flows).
     bgv_public_url: str = ""
 
-    # ── DocuSign (candidate signing for AL + NDA bundle) ────────────────────
-    # When all five are set the Onboarding v2 agent uses DocuSign embedded
+    # ── DocuSeal (self-hosted e-sign for the onboarding LOI flow) ──────────
+    # DocuSeal runs on Fly.io at sign.nirnayaiq.com — see infra/docuseal/.
+    # When all three are set the Onboarding v2 agent uses DocuSeal embedded
     # signing instead of plain email-with-PDF. Missing keys disable the
     # integration cleanly — the agent falls back to email + Settings UI
-    # shows "Configure DocuSign" to enable.
+    # shows "Configure e-signing" to enable.
     #
-    # See https://developers.docusign.com/platform/auth/jwt/ for the JWT
-    # grant flow this client uses. RSA key is the contents of the .pem file
-    # downloaded from the DocuSign admin app; paste as a multi-line env var
-    # (Railway accepts \n in values). DO NOT commit the key.
-    docusign_integration_key: str = ""
-    docusign_user_id: str = ""
-    docusign_account_id: str = ""
-    docusign_base_url: str = ""  # e.g. https://demo.docusign.net/restapi
-    docusign_rsa_private_key: str = ""
-    docusign_webhook_hmac_key: str = ""
-    docusign_auth_server: str = "account-d.docusign.com"  # account.docusign.com in prod
+    # Three env vars cover the whole integration:
+    #
+    #   DOCUSEAL_BASE_URL       — https://sign.nirnayaiq.com (no trailing slash)
+    #   DOCUSEAL_API_KEY        — Static X-Auth-Token header; rotate via the
+    #                             DocuSeal admin → API page
+    #   DOCUSEAL_WEBHOOK_SECRET — Shared secret matching DocuSeal's own
+    #                             WEBHOOK_SECRET env var; used to HMAC-verify
+    #                             every inbound /docuseal/webhook request
+    docuseal_base_url: str = ""
+    docuseal_api_key: str = ""
+    docuseal_webhook_secret: str = ""
 
 
 class ProductionConfigError(RuntimeError):

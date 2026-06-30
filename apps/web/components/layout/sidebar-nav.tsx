@@ -25,6 +25,7 @@ import {
   Phone,
   PieChart,
   Presentation,
+  Rocket,
   Settings,
   Mail,
   Megaphone,
@@ -90,6 +91,12 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    label: "Marketing",
+    items: [
+      { href: "/marketing", label: "Briefs", icon: Rocket },
+    ],
+  },
+  {
     label: "Talent & Exec",
     items: [
       { href: "/recruiting", label: "Recruiting", icon: Briefcase },
@@ -108,7 +115,6 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/admin/coverage", label: "Coverage", icon: PieChart, adminOnly: true },
       { href: "/admin/knowledge-gaps", label: "Knowledge gaps", icon: FileQuestion, adminOnly: true },
       { href: "/admin/knowledge-health", label: "Knowledge health", icon: Sparkles, adminOnly: true },
-      { href: "/admin/knowledge-graph", label: "Knowledge map", icon: Brain, adminOnly: true },
       { href: "/admin/quality", label: "Output quality", icon: Target, adminOnly: true },
     ],
   },

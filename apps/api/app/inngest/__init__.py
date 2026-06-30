@@ -23,12 +23,15 @@ from .gmail_functions import FUNCTIONS as _GMAIL_FUNCTIONS
 from .integration_functions import FUNCTIONS as _INTEGRATION_FUNCTIONS
 from .integration_write_functions import FUNCTIONS as _INTEGRATION_WRITE_FUNCTIONS
 from .knowledge_gap_functions import FUNCTIONS as _KNOWLEDGE_GAP_FUNCTIONS
-from .knowledge_graph_functions import FUNCTIONS as _KNOWLEDGE_GRAPH_FUNCTIONS
+from .knowledge_gap_weekly_functions import FUNCTIONS as _KNOWLEDGE_GAP_WEEKLY_FUNCTIONS
 from .briefing_functions import FUNCTIONS as _BRIEFING_FUNCTIONS
 from .meeting_functions import FUNCTIONS as _MEETING_FUNCTIONS
 from .onboarding_functions import FUNCTIONS as _ONBOARDING_FUNCTIONS
 from .onboarding_v2_functions import FUNCTIONS as _ONBOARDING_V2_FUNCTIONS
+from .rfp_agent_functions import FUNCTIONS as _RFP_AGENT_FUNCTIONS
 from .sales_agent_functions import FUNCTIONS as _SALES_AGENT_FUNCTIONS
+from .interview_kit_functions import FUNCTIONS as _INTERVIEW_KIT_FUNCTIONS
+from .marketing_agent_functions import FUNCTIONS as _MARKETING_AGENT_FUNCTIONS
 from .policy_functions import FUNCTIONS as _POLICY_FUNCTIONS
 from .query_log_retention import FUNCTIONS as _QUERY_LOG_RETENTION_FUNCTIONS
 from .report_functions import FUNCTIONS as _REPORT_FUNCTIONS
@@ -48,12 +51,15 @@ FUNCTIONS = [
     *_SLACK_INBOUND_FUNCTIONS,
     *_INTEGRATION_WRITE_FUNCTIONS,
     *_KNOWLEDGE_GAP_FUNCTIONS,
-    *_KNOWLEDGE_GRAPH_FUNCTIONS,
+    *_KNOWLEDGE_GAP_WEEKLY_FUNCTIONS,
     *_BRIEFING_FUNCTIONS,
     *_APPROVAL_FUNCTIONS,
     *_ONBOARDING_FUNCTIONS,
     *_ONBOARDING_V2_FUNCTIONS,
     *_SALES_AGENT_FUNCTIONS,
+    *_RFP_AGENT_FUNCTIONS,
+    *_INTERVIEW_KIT_FUNCTIONS,
+    *_MARKETING_AGENT_FUNCTIONS,
     *_POLICY_FUNCTIONS,
     *_COMPLIANCE_FUNCTIONS,
     *_SUPPORT_FUNCTIONS,

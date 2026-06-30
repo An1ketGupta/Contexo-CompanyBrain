@@ -4,11 +4,11 @@ import { EmailShell, button, muted, p } from "./_layout";
 export interface OnboardingOfferToCandidateEmailProps {
   candidate_name: string;
   role_title: string;
-  // Email-fallback path: signed URLs to the PDFs (when DocuSign isn't on).
+  // Email-fallback path: signed URLs to the PDFs (when e-sign isn't on).
   appointment_letter_url?: string | null;
   nda_url?: string | null;
-  // DocuSign embedded-signing path: one URL that wraps both documents.
-  docusign_signing_url?: string | null;
+  // Embedded-signing path: one URL that wraps both documents.
+  signing_url?: string | null;
   app_url: string;
 }
 
@@ -17,10 +17,10 @@ export function OnboardingOfferToCandidateEmail({
   role_title,
   appointment_letter_url,
   nda_url,
-  docusign_signing_url,
+  signing_url,
 }: OnboardingOfferToCandidateEmailProps) {
   const first = candidate_name.split(" ")[0];
-  const usingDocuSign = !!docusign_signing_url;
+  const usingEsign = !!signing_url;
 
   return (
     <EmailShell
@@ -29,15 +29,15 @@ export function OnboardingOfferToCandidateEmail({
     >
       <Text style={p}>
         Congratulations again on the <strong>{role_title}</strong> role.{" "}
-        {usingDocuSign
-          ? "Click the button below to review and sign both documents in one go via DocuSign."
+        {usingEsign
+          ? "Click the button below to review and sign both documents in one go."
           : "Please find the formal Appointment Letter and Non-Disclosure Agreement below. Review, sign both, and reply to this email with the signed copies."}
       </Text>
 
       <Section style={{ margin: "20px 0" }}>
-        {usingDocuSign ? (
-          <Button href={docusign_signing_url ?? "#"} style={button}>
-            Review & sign in DocuSign
+        {usingEsign ? (
+          <Button href={signing_url ?? "#"} style={button}>
+            Review & sign
           </Button>
         ) : (
           <>
@@ -64,9 +64,9 @@ export function OnboardingOfferToCandidateEmail({
         )}
       </Section>
 
-      {usingDocuSign ? (
+      {usingEsign ? (
         <Text style={muted}>
-          The link above logs you into DocuSign automatically — no account
+          The link above takes you straight to the signing page — no account
           needed. The link is valid for one signing session; if it expires
           before you sign, reply to this email and we&apos;ll resend it.
         </Text>

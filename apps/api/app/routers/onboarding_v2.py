@@ -481,10 +481,10 @@ async def get_run(
             "hr_edited_pdf_path": d.get("hr_edited_pdf_path"),
             "hr_edited_at": d.get("hr_edited_at"),
             "hr_edit_revision": d.get("hr_edit_revision") or 0,
-            "docusign_envelope_id": d.get("docusign_envelope_id"),
-            "docusign_status": d.get("docusign_status"),
-            "docusign_signing_url": d.get("docusign_signing_url"),
-            "docusign_completed_at": d.get("docusign_completed_at"),
+            "esign_envelope_id": d.get("esign_envelope_id"),
+            "esign_status": d.get("esign_status"),
+            "esign_signing_url": d.get("esign_signing_url"),
+            "esign_completed_at": d.get("esign_completed_at"),
             "created_at": d["created_at"],
             "updated_at": d["updated_at"],
         }
@@ -680,17 +680,17 @@ async def approve_offer_bundle(
     from app.services.email import send_email_event
     settings = get_settings()
 
-    docusign_envelope_id: str | None = None
-    docusign_signing_url: str | None = None
+    esign_envelope_id: str | None = None
+    esign_signing_url: str | None = None
 
-    # Prefer DocuSign embedded signing when configured; fall back to plain
+    # Prefer e-sign embedded signing when configured; fall back to plain
     # email with signed-link PDFs. The fallback path is what the customer
-    # uses on their first day before they wire DocuSign credentials.
-    use_docusign = bool(getattr(settings, "docusign_integration_key", ""))
+    # uses on their first day before they wire DocuSeal credentials.
+    use_esign = bool(getattr(settings, "docuseal_api_key", ""))
 
-    if use_docusign:
+    if use_esign:
         try:
-            from app.services.integrations.docusign import create_signing_envelope
+            from app.services.integrations.docuseal import create_signing_envelope
 
             # Download the latest PDFs from Storage so we send the freshest
             # bytes — HR may have re-generated after a tweak.
@@ -717,23 +717,23 @@ async def approve_offer_bundle(
                 ),
                 email_body=(
                     "Please review and sign your appointment letter and NDA. "
-                    "Click the link to open them in DocuSign."
+                    "Click the link to open the signing page."
                 ),
                 return_url=(
                     f"{settings.app_url.rstrip('/')}/candidate/done?run={run_id}"
                     if settings.app_url else "https://nirnayaiq.com/candidate/done"
                 ),
             )
-            docusign_envelope_id = envelope["envelope_id"]
-            docusign_signing_url = envelope["signing_url"]
+            esign_envelope_id = envelope["envelope_id"]
+            esign_signing_url = envelope["signing_url"]
 
             await asyncio.to_thread(
                 lambda: svc.table("onboarding_documents")
                 .update(
                     {
-                        "docusign_envelope_id": docusign_envelope_id,
-                        "docusign_status": "sent",
-                        "docusign_signing_url": docusign_signing_url,
+                        "esign_envelope_id": esign_envelope_id,
+                        "esign_status": "sent",
+                        "esign_signing_url": esign_signing_url,
                     }
                 )
                 .eq("run_id", run_id)
@@ -742,12 +742,12 @@ async def approve_offer_bundle(
             )
         except Exception as exc:  # noqa: BLE001
             log.warning(
-                "onboarding_v2.docusign_failed run=%s err=%s — falling back to email",
+                "onboarding_v2.esign_failed run=%s err=%s — falling back to email",
                 run_id, exc,
             )
-            use_docusign = False
+            use_esign = False
 
-    if not use_docusign:
+    if not use_esign:
         def _signed_url(path: str) -> str | None:
             try:
                 res = svc.storage.from_(ob_storage.STORAGE_BUCKET).create_signed_url(
@@ -781,7 +781,7 @@ async def approve_offer_bundle(
             },
         )
     else:
-        # Email the DocuSign one-click signing link.
+        # Email the one-click signing link.
         await send_email_event(
             event_type="onboarding_offer_to_candidate",
             to=run.data["candidate_email"],
@@ -791,7 +791,7 @@ async def approve_offer_bundle(
             data={
                 "candidate_name": run.data["candidate_name"],
                 "role_title": run.data["role_title"],
-                "docusign_signing_url": docusign_signing_url,
+                "signing_url": esign_signing_url,
                 "app_url": settings.app_url.rstrip("/"),
             },
         )
@@ -983,15 +983,15 @@ async def approve_loi_draft(
 ) -> dict[str, Any]:
     """HR clicks 'Send for signature' on the LOI review screen.
 
-    Two paths depending on whether DocuSign is configured:
+    Two paths depending on whether DocuSeal is configured:
 
-    * **DocuSign configured** — create a routed envelope with HR (embedded
+    * **DocuSeal configured** — create a routed envelope with HR (embedded
       signer, signs first from the dashboard) and the candidate (remote
-      signer, DocuSign emails them after HR signs). Run parks in
-      `loi_pending_docusign_signature` until the webhook flips it to
+      signer, DocuSeal emails them after HR signs). Run parks in
+      `loi_pending_esign_signature` until the webhook flips it to
       `loi_signed_uploaded` on full envelope completion.
 
-    * **DocuSign not configured** — fall back to the legacy print/scan flow:
+    * **DocuSeal not configured** — fall back to the legacy print/scan flow:
       transition to `loi_pending_hr_sign`, agent emails HR the PDF to sign
       offline."""
     from app.config import get_settings
@@ -1032,9 +1032,9 @@ async def approve_loi_draft(
         )
 
     settings = get_settings()
-    use_docusign = bool(getattr(settings, "docusign_integration_key", ""))
+    use_esign = bool(getattr(settings, "docuseal_api_key", ""))
 
-    if use_docusign:
+    if use_esign:
         # Resolve HR's email from Supabase auth admin (mirrors agent.py:514).
         triggered_by = run.data.get("triggered_by_user_id") or user_id
         try:
@@ -1047,7 +1047,7 @@ async def approve_loi_draft(
         if not hr_email:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Couldn't resolve the HR user's email for DocuSign routing. "
+                "Couldn't resolve the HR user's email for the signing flow. "
                 "Sign out and back in, or contact support.",
             )
         # Display name comes from our users table; fall back to email prefix.
@@ -1071,9 +1071,9 @@ async def approve_loi_draft(
 
         pdf_bytes = await asyncio.to_thread(_dl)
 
-        from app.services.integrations.docusign import (
-            DocuSignError,
-            DocuSignUnavailable,
+        from app.services.integrations.docuseal import (
+            DocuSealError,
+            DocuSealUnavailable,
             create_routed_signing_envelope,
         )
 
@@ -1113,14 +1113,14 @@ async def approve_loi_draft(
                     "to HR first, then to the candidate."
                 ),
             )
-        except (DocuSignError, DocuSignUnavailable) as exc:
+        except (DocuSealError, DocuSealUnavailable) as exc:
             log.warning(
-                "onboarding_v2.loi_docusign_create_failed run=%s err=%s",
+                "onboarding_v2.loi_esign_create_failed run=%s err=%s",
                 run_id, exc,
             )
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY,
-                f"Couldn't create the DocuSign envelope: {exc}",
+                f"Couldn't create the signing envelope: {exc}",
             ) from exc
 
         now = datetime.now(UTC).isoformat()
@@ -1128,8 +1128,8 @@ async def approve_loi_draft(
             lambda: svc.table("onboarding_documents")
             .update(
                 {
-                    "docusign_envelope_id": envelope["envelope_id"],
-                    "docusign_status": "sent",
+                    "esign_envelope_id": envelope["envelope_id"],
+                    "esign_status": "sent",
                     "sign_status": "sent_to_hr",
                 }
             )
@@ -1141,7 +1141,7 @@ async def approve_loi_draft(
             lambda: svc.table("onboarding_runs")
             .update(
                 {
-                    "status": "loi_pending_docusign_signature",
+                    "status": "loi_pending_esign_signature",
                     "loi_approved_for_signing_at": now,
                     "loi_sent_to_hr_at": now,
                 }
@@ -1153,20 +1153,20 @@ async def approve_loi_draft(
             org_id=org_id,
             run_id=run_id,
             actor_kind="hr",
-            event_type="loi_docusign_envelope_created",
+            event_type="loi_esign_envelope_created",
             message=(
-                f"DocuSign envelope created for LOI signing. Routing: HR "
+                f"Signing envelope created for LOI. Routing: HR "
                 f"({hr_email}) → candidate ({run.data['candidate_email']})."
             ),
             metadata={"envelope_id": envelope["envelope_id"]},
             actor_user_id=user_id,
         )
         return {
-            "status": "loi_pending_docusign_signature",
+            "status": "loi_pending_esign_signature",
             "document_id": doc.data["id"],
         }
 
-    # Fallback: legacy print/scan flow (no DocuSign configured).
+    # Fallback: legacy print/scan flow (no DocuSeal configured).
     now = datetime.now(UTC).isoformat()
     await asyncio.to_thread(
         lambda: svc.table("onboarding_runs")
@@ -1205,16 +1205,17 @@ async def approve_loi_draft(
     }
 
 
-@router.get("/runs/{run_id}/loi/docusign-url")
-async def get_loi_docusign_url(
+@router.get("/runs/{run_id}/loi/signing-url")
+async def get_loi_signing_url(
     run_id: str,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
-    """Mint a fresh embedded-signing URL for HR's LOI envelope. URLs are
-    5-min TTL so the UI calls this on click rather than caching it.
+    """Return the embedded-signing URL for HR's LOI envelope.
 
-    Candidates are remote signers — DocuSign emails them directly, so this
-    endpoint only supports the HR signer."""
+    DocuSeal slugs are stable for the lifetime of the submission, so this
+    is effectively a DB read with a fallback to the DocuSeal API. Candidates
+    are remote signers — DocuSeal emails them directly, so this endpoint
+    only supports the HR signer."""
     from app.config import get_settings
 
     user_id, org_id, _ = _require_user(current_user)
@@ -1260,8 +1261,8 @@ async def get_loi_docusign_url(
             "You've already signed this LOI.",
         )
 
-    from app.services.integrations.docusign import (
-        DocuSignError,
+    from app.services.integrations.docuseal import (
+        DocuSealError,
         mint_signer_url,
     )
 
@@ -1279,10 +1280,10 @@ async def get_loi_docusign_url(
             name=hr_signer["name"],
             return_url=return_url,
         )
-    except DocuSignError as exc:
+    except DocuSealError as exc:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            f"Couldn't mint a DocuSign signing URL: {exc}",
+            f"Couldn't load the signing URL: {exc}",
         ) from exc
     return {"status": "ok", "signing_url": url}
 
@@ -1375,6 +1376,234 @@ async def references_override(
     return {"status": "ok", "count": len(body.references)}
 
 
+# ── HR manual candidate nudge ────────────────────────────────────────────────
+
+
+@router.post("/runs/{run_id}/references-nudge")
+async def nudge_candidate_references(
+    run_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """HR manually sends an immediate reminder to the candidate to submit
+    references. Bypasses the 3-reminder auto-cron cap."""
+    from app.config import get_settings
+    from app.services.email import send_email_event
+
+    user_id, org_id, _ = _require_user(current_user)
+    svc = get_service_client()
+
+    run = await asyncio.to_thread(
+        lambda: svc.table("onboarding_runs")
+        .select(
+            "id, status, candidate_name, candidate_email, role_title, "
+            "references_form_token, references_form_expires_at, references_reminder_count"
+        )
+        .eq("id", run_id)
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not run or not run.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found.")
+    r = run.data
+    if r["status"] not in ("awaiting_candidate_references", "loi_sent_to_candidate"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Run is in '{r['status']}' — nudge only works while awaiting references.",
+        )
+    if not r.get("references_form_token"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "No references form token on this run."
+        )
+
+    if r.get("references_form_expires_at"):
+        try:
+            exp = datetime.fromisoformat(
+                r["references_form_expires_at"].replace("Z", "+00:00")
+            )
+            if exp < datetime.now(UTC):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "The references form link has expired. Extend the token first, then nudge.",
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+    settings = get_settings()
+    form_url = (
+        f"{settings.app_url.rstrip('/')}/references/{r['references_form_token']}"
+        if settings.app_url
+        else None
+    )
+    if not form_url:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "APP_URL not configured."
+        )
+
+    org_row = await asyncio.to_thread(
+        lambda: svc.table("organizations")
+        .select("name")
+        .eq("id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    company_name = (org_row.data or {}).get("name", "the hiring team")
+    reminder_count = (r.get("references_reminder_count") or 0) + 1
+    now = datetime.now(UTC)
+
+    await send_email_event(
+        event_type="onboarding_candidate_refs_reminder",
+        to=r["candidate_email"],
+        user_id=None,
+        org_id=org_id,
+        dedupe_key=f"cand-refs-rem-{run_id}-hr-{reminder_count}",
+        data={
+            "candidate_name": r["candidate_name"],
+            "company_name": company_name,
+            "role_title": r.get("role_title") or "",
+            "form_url": form_url,
+        },
+    )
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_runs")
+        .update(
+            {
+                "references_reminder_count": reminder_count,
+                "references_last_reminder_at": now.isoformat(),
+            }
+        )
+        .eq("id", run_id)
+        .execute()
+    )
+    await ob_storage.log_onboarding_event(
+        org_id=org_id,
+        run_id=run_id,
+        actor_kind="hr",
+        event_type="candidate_references_nudged",
+        message=(
+            f"HR sent a manual reminder to {r['candidate_email']} to submit references "
+            f"(reminder #{reminder_count})."
+        ),
+        actor_user_id=user_id,
+        metadata={"reminder_count": reminder_count},
+    )
+    return {"status": "ok", "reminder_count": reminder_count}
+
+
+# ── Extend expired references form token ────────────────────────────────────
+
+
+@router.post("/runs/{run_id}/references-token/extend")
+async def extend_references_token(
+    run_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Regenerate the candidate references form token and set a fresh 14-day
+    expiry. Also re-emails the candidate with the new link."""
+    import uuid
+    from datetime import timedelta
+
+    from app.config import get_settings
+    from app.services.email import send_email_event
+
+    user_id, org_id, _ = _require_user(current_user)
+    svc = get_service_client()
+
+    run = await asyncio.to_thread(
+        lambda: svc.table("onboarding_runs")
+        .select(
+            "id, status, candidate_name, candidate_email, role_title, "
+            "references_reminder_count"
+        )
+        .eq("id", run_id)
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    if not run or not run.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found.")
+    r = run.data
+    if r["status"] not in ("awaiting_candidate_references", "loi_sent_to_candidate"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Run is in '{r['status']}' — token can only be extended while awaiting references.",
+        )
+
+    new_token = str(uuid.uuid4())
+    new_expiry = (datetime.now(UTC) + timedelta(days=14)).isoformat()
+
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_runs")
+        .update(
+            {
+                "references_form_token": new_token,
+                "references_form_expires_at": new_expiry,
+            }
+        )
+        .eq("id", run_id)
+        .execute()
+    )
+
+    settings = get_settings()
+    form_url = (
+        f"{settings.app_url.rstrip('/')}/references/{new_token}"
+        if settings.app_url
+        else None
+    )
+    org_row = await asyncio.to_thread(
+        lambda: svc.table("organizations")
+        .select("name")
+        .eq("id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    company_name = (org_row.data or {}).get("name", "the hiring team")
+    now = datetime.now(UTC)
+    reminder_count = (r.get("references_reminder_count") or 0) + 1
+
+    if form_url:
+        await send_email_event(
+            event_type="onboarding_candidate_refs_reminder",
+            to=r["candidate_email"],
+            user_id=None,
+            org_id=org_id,
+            dedupe_key=f"cand-refs-ext-{run_id}-{new_token[:8]}",
+            data={
+                "candidate_name": r["candidate_name"],
+                "company_name": company_name,
+                "role_title": r.get("role_title") or "",
+                "form_url": form_url,
+            },
+        )
+        await asyncio.to_thread(
+            lambda: svc.table("onboarding_runs")
+            .update(
+                {
+                    "references_reminder_count": reminder_count,
+                    "references_last_reminder_at": now.isoformat(),
+                }
+            )
+            .eq("id", run_id)
+            .execute()
+        )
+
+    await ob_storage.log_onboarding_event(
+        org_id=org_id,
+        run_id=run_id,
+        actor_kind="hr",
+        event_type="references_token_extended",
+        message=(
+            f"HR extended the references form link for {r['candidate_email']} "
+            f"(new expiry: {new_expiry[:10]}). New link emailed to candidate."
+        ),
+        actor_user_id=user_id,
+        metadata={"new_expiry": new_expiry},
+    )
+    return {"status": "ok", "new_expiry": new_expiry}
+
+
 # ── Cancel / resume ─────────────────────────────────────────────────────────
 
 
@@ -1389,9 +1618,9 @@ async def cancel_run(
       * All non-submitted BGV reference tokens are expired so a leaked link
         can't be used after we've told the candidate the offer is off the
         table.
-      * Any open DocuSign envelope is voided. We do this best-effort — if
-        the DocuSign API call fails (network, deauth) we still flip the
-        local row and log the failure; HR can void in DocuSign manually.
+      * Any open signing envelope is voided. We do this best-effort — if
+        the DocuSeal API call fails (network, deauth) we still flip the
+        local row and log the failure; HR can void in DocuSeal manually.
     """
     user_id, org_id, _ = _require_user(current_user)
     svc = get_service_client()
@@ -1428,9 +1657,9 @@ async def cancel_run(
         )
     )
 
-    # Best-effort: void any open DocuSign envelopes.
+    # Best-effort: void any open signing envelopes.
     try:
-        from app.services.integrations.docusign import void_envelopes_for_run
+        from app.services.integrations.docuseal import void_envelopes_for_run
         voided = await void_envelopes_for_run(
             org_id=org_id, run_id=run_id, reason="Onboarding run cancelled by HR.",
         )

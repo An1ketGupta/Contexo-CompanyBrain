@@ -6,7 +6,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  return proxyJson(request, `/onboarding/runs/${id}/loi/docusign-url`, {
+  return proxyJson(request, `/onboarding/runs/${id}/loi/signing-url`, {
     method: "GET",
   });
 }

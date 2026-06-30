@@ -1129,6 +1129,15 @@ export default function RequisitionDetailPage() {
                   />
                   <Button
                     size="sm"
+                    variant="outline"
+                    onClick={() => router.push(`/recruiting/${data.id}/interview-kit`)}
+                    title="Generate or view the AI-drafted interview kit"
+                  >
+                    <FileText className="mr-2 h-3 w-3" />
+                    Interview kit
+                  </Button>
+                  <Button
+                    size="sm"
                     onClick={handleSyncCandidates}
                     disabled={syncing || !data.notion_candidates_db_id}
                     title={

@@ -25,11 +25,36 @@ const fetcher = async (url: string): Promise<{ rfps: RfpRow[] }> => {
 };
 
 const STATUS_COLORS: Record<string, string> = {
+  // legacy
   extracted: "bg-blue-100 text-blue-700",
   reviewed: "bg-amber-100 text-amber-700",
   generating: "bg-amber-100 text-amber-700",
+  // agent v2
+  extracting: "bg-blue-100 text-blue-700",
+  awaiting_requirements_review: "bg-amber-100 text-amber-700",
+  drafting: "bg-amber-100 text-amber-700",
+  awaiting_rep_review: "bg-purple-100 text-purple-700",
+  awaiting_legal_review: "bg-purple-100 text-purple-700",
+  legal_rejected: "bg-amber-100 text-amber-700",
+  finalizing: "bg-amber-100 text-amber-700",
+  // terminal
   ready: "bg-emerald-100 text-emerald-700",
   failed: "bg-red-100 text-red-700",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  extracting: "Extracting",
+  awaiting_requirements_review: "Review requirements",
+  drafting: "Drafting",
+  awaiting_rep_review: "Review answers",
+  awaiting_legal_review: "Legal review",
+  legal_rejected: "Re-drafting",
+  finalizing: "Finalizing",
+  ready: "Ready",
+  failed: "Failed",
+  extracted: "Extracted",
+  reviewed: "Reviewed",
+  generating: "Drafting",
 };
 
 export default function RfpListPage() {
@@ -70,14 +95,15 @@ export default function RfpListPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">RFP responses</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Upload an RFP (PDF or DOCX). We&apos;ll extract requirements, match each
-            to your KB, and assemble a Word doc with gaps flagged for legal.
+            Upload an RFP (XLSX, DOCX, or PDF). The agent extracts requirements, drafts answers from
+            your KB, runs through rep + legal review, then exports the answers back into the
+            buyer&apos;s original file.
           </p>
         </div>
         <label className="cursor-pointer">
           <input
             type="file"
-            accept=".pdf,.docx,.doc,.txt,.md"
+            accept=".xlsx,.pdf,.docx,.doc,.txt,.md,.csv"
             className="hidden"
             disabled={uploading}
             onChange={(e) => {
@@ -132,7 +158,9 @@ export default function RfpListPage() {
                         {r.gap_count} gaps
                       </Badge>
                     )}
-                    <Badge className={STATUS_COLORS[r.status] ?? ""}>{r.status}</Badge>
+                    <Badge className={STATUS_COLORS[r.status] ?? ""}>
+                      {STATUS_LABEL[r.status] ?? r.status}
+                    </Badge>
                   </div>
                 </div>
               </Link>

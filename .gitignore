@@ -49,3 +49,8 @@ desktop.ini
 # ── Supabase local ───────────────────────────────────────────
 supabase/.temp/
 supabase/config.toml.bak
+
+# ── Local credentials (never commit) ─────────────────────────
+gmail_creds.json
+nirnayaiq-*.json
+.claude/

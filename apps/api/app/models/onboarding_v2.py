@@ -74,10 +74,10 @@ class OnboardingDocumentRead(BaseModel):
     hr_edited_pdf_path: str | None = None
     hr_edited_at: datetime | None = None
     hr_edit_revision: int = 0
-    docusign_envelope_id: str | None = None
-    docusign_status: str | None = None
-    docusign_signing_url: str | None = None
-    docusign_completed_at: datetime | None = None
+    esign_envelope_id: str | None = None
+    esign_status: str | None = None
+    esign_signing_url: str | None = None
+    esign_completed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

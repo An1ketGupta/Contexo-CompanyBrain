@@ -7,3 +7,9 @@ export async function GET(req: NextRequest, { params }: RouteCtx): Promise<Respo
   const { id } = await params;
   return proxyJson(req, `/sales/rfp/${id}`);
 }
+
+export async function PATCH(req: NextRequest, { params }: RouteCtx): Promise<Response> {
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  return proxyJson(req, `/sales/rfp/${id}`, { method: "PATCH", body });
+}

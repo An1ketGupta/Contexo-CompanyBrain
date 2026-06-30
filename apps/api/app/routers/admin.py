@@ -500,64 +500,6 @@ async def bulk_health_action(
     }
 
 
-# ── Feature 2.1 — Knowledge Graph ────────────────────────────────────────────
-# Two endpoints:
-#   GET  /admin/knowledge-graph         — return the latest ok snapshot
-#   POST /admin/knowledge-graph/refresh — fire an Inngest event to recompute
-# Both are admin-only via _require_admin().
-
-@router.get("/knowledge-graph")
-async def get_knowledge_graph(
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    org_id = await _require_admin(current_user)
-    svc = get_service_client()
-
-    res = await asyncio.to_thread(
-        lambda: svc.table("knowledge_graph_snapshots")
-        .select("id, doc_count, cluster_count, status, clusters, nodes, edges, params, created_at")
-        .eq("org_id", org_id)
-        .eq("status", "ok")
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
-    )
-    rows = res.data or []
-    if not rows:
-        return {"snapshot": None}
-    return {"snapshot": rows[0]}
-
-
-@router.post("/knowledge-graph/refresh")
-async def refresh_knowledge_graph(
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Trigger an out-of-band recompute. Returns immediately; the new
-    snapshot lands when the Inngest worker finishes. Debounced by org
-    (per the function definition) so double-clicks don't double-charge."""
-    org_id = await _require_admin(current_user)
-    try:
-        from app.inngest.client import get_inngest_client
-        import inngest as _inngest
-
-        client = get_inngest_client()
-        await asyncio.to_thread(
-            lambda: client.send(
-                _inngest.Event(
-                    name="knowledge-graph/refresh",
-                    data={"org_id": org_id, "trigger": "manual"},
-                )
-            )
-        )
-    except Exception as exc:
-        log.warning("kg_manual_refresh_failed org=%s err=%s", org_id, exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Could not queue refresh. Try again in a minute.",
-        ) from exc
-    return {"queued": True}
-
-
 # ── Moderation logs (Day 2) ──────────────────────────────────────────────────
 
 @router.get("/moderation")

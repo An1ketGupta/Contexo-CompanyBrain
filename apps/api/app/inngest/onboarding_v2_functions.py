@@ -153,15 +153,15 @@ async def onboarding_v2_template_uploaded(ctx: inngest.Context) -> dict[str, Any
 
 
 @_inngest_client.create_function(
-    fn_id="onboarding-v2-docusign-signed",
-    trigger=inngest.TriggerEvent(event="onboarding_v2/docusign_signed"),
+    fn_id="onboarding-v2-esign-completed",
+    trigger=inngest.TriggerEvent(event="onboarding_v2/esign_completed"),
     retries=2,
     concurrency=[
         inngest.Concurrency(limit=1, key="event.data.onboarding_run_id", scope="fn"),
     ],
 )
-async def onboarding_v2_docusign_signed(ctx: inngest.Context) -> dict[str, Any]:
-    """The candidate completed the AL+NDA DocuSign envelope. Kick the agent
+async def onboarding_v2_esign_completed(ctx: inngest.Context) -> dict[str, Any]:
+    """The candidate completed the AL+NDA signing envelope. Kick the agent
     so it transitions to the policies step. The webhook handler already
     updated onboarding_documents.sign_status to signed_by_candidate."""
     data = ctx.event.data
@@ -371,14 +371,99 @@ async def onboarding_v2_candidate_refs_reminders(
     return {"status": "ok", "nudged": nudged}
 
 
+@_inngest_client.create_function(
+    fn_id="onboarding-v2-esign-timeout-watch",
+    trigger=inngest.TriggerCron(cron="0 8 * * *"),  # daily 08:00 UTC
+    retries=1,
+)
+async def onboarding_v2_esign_timeout_watch(
+    ctx: inngest.Context,
+) -> dict[str, Any]:
+    """Alert HR when an LOI signing envelope has been outstanding for >48 h.
+
+    We deliberately do NOT auto-void — the candidate may still be in the
+    process of signing. HR can decide whether to chase the candidate or void
+    from DocuSeal and restart the signing step manually."""
+    from datetime import timedelta
+
+    from app.config import get_settings
+
+    svc = get_service_client()
+    now = datetime.now(UTC)
+    stale_before = (now - timedelta(hours=48)).isoformat()
+
+    res = svc.table("onboarding_runs").select(
+        "id, org_id, candidate_name, role_title, "
+        "loi_approved_for_signing_at, triggered_by_user_id"
+    ).eq("status", "loi_pending_esign_signature").lt(
+        "loi_approved_for_signing_at", stale_before
+    ).execute()
+
+    rows = res.data or []
+    alerted = 0
+    settings = get_settings()
+    today = now.strftime("%Y-%m-%d")
+
+    for r in rows:
+        triggered_by = r.get("triggered_by_user_id")
+        if not triggered_by:
+            continue
+        try:
+            au = svc.auth.admin.get_user_by_id(triggered_by)
+            hr_email = getattr(getattr(au, "user", None), "email", None)
+        except Exception:
+            hr_email = None
+        if not hr_email:
+            continue
+
+        hours_elapsed = 0
+        approved_at = r.get("loi_approved_for_signing_at") or ""
+        if approved_at:
+            try:
+                sent_dt = datetime.fromisoformat(approved_at.replace("Z", "+00:00"))
+                hours_elapsed = int((now - sent_dt).total_seconds() / 3600)
+            except Exception:
+                pass
+
+        run_url = (
+            f"{settings.app_url.rstrip('/')}/onboarding/{r['id']}"
+            if settings.app_url
+            else ""
+        )
+
+        try:
+            await send_email_event(
+                event_type="onboarding_esign_stalled",
+                to=hr_email,
+                user_id=triggered_by,
+                org_id=r["org_id"],
+                dedupe_key=f"esign-stalled-{r['id']}-{today}",
+                data={
+                    "candidate_name": r["candidate_name"],
+                    "role_title": r.get("role_title") or "",
+                    "hours_elapsed": hours_elapsed,
+                    "run_url": run_url,
+                },
+            )
+            alerted += 1
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "onboarding_v2.esign_stall_alert_failed run=%s err=%s",
+                r["id"], exc,
+            )
+
+    return {"status": "ok", "alerted": alerted}
+
+
 FUNCTIONS = [
     onboarding_v2_start,
     onboarding_v2_loi_signed,
     onboarding_v2_bgv_response,
     onboarding_v2_policy_ack,
     onboarding_v2_template_uploaded,
-    onboarding_v2_docusign_signed,
+    onboarding_v2_esign_completed,
     onboarding_v2_resume,
     onboarding_v2_bgv_reminders,
     onboarding_v2_candidate_refs_reminders,
+    onboarding_v2_esign_timeout_watch,
 ]

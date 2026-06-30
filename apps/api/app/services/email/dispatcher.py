@@ -44,6 +44,7 @@ EventType = Literal[
     "onboarding_offer_to_candidate",   # Candidate: appointment letter + NDA
     "onboarding_policies_pending",     # Candidate: please acknowledge policies
     "onboarding_induction_ready",      # Candidate: your induction document
+    "onboarding_esign_stalled",        # HR: signing envelope >48h without completion
 ]
 
 

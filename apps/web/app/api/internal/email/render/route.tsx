@@ -142,6 +142,11 @@ import {
   onboardingInductionReadySubject,
   type OnboardingInductionReadyEmailProps,
 } from "@/emails/onboarding-induction-ready";
+import {
+  OnboardingEsignStalledEmail,
+  onboardingEsignStalledSubject,
+  type OnboardingEsignStalledEmailProps,
+} from "@/emails/onboarding-esign-stalled";
 
 /**
  * Server-to-server email rendering. The FastAPI Inngest worker calls this
@@ -272,6 +277,10 @@ const TEMPLATES = {
     Component: OnboardingInductionReadyEmail,
     subject: onboardingInductionReadySubject,
   } satisfies Template<OnboardingInductionReadyEmailProps>,
+  onboarding_esign_stalled: {
+    Component: OnboardingEsignStalledEmail,
+    subject: onboardingEsignStalledSubject,
+  } satisfies Template<OnboardingEsignStalledEmailProps>,
 };
 
 type TemplateName = keyof typeof TEMPLATES;

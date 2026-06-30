@@ -174,8 +174,10 @@ async def find_outdated_documents(
     org_id: str,
     cutoff_days: int,
 ) -> list[dict[str, Any]]:
-    """List documents whose `updated_at` is older than ``cutoff_days``.
+    """List documents whose `created_at` is older than ``cutoff_days``.
 
+    The schema doesn't carry an updated_at on documents — created_at is the
+    closest proxy (version uploads create new rows via document_versions).
     Excludes documents still pending/processing (no point flagging
     half-ingested files as 'outdated') and documents soft-deleted via the
     is_archived flag where present.
@@ -186,11 +188,11 @@ async def find_outdated_documents(
     def _run() -> list[dict[str, Any]]:
         res = (
             svc.table("documents")
-            .select("id, name, updated_at, source, status")
+            .select("id, name, created_at, source, status")
             .eq("org_id", org_id)
             .eq("status", "ready")
-            .lte("updated_at", cutoff)
-            .order("updated_at", desc=False)
+            .lte("created_at", cutoff)
+            .order("created_at", desc=False)
             .limit(MAX_OUTDATED_RESULTS)
             .execute()
         )
@@ -201,7 +203,7 @@ async def find_outdated_documents(
     out: list[dict[str, Any]] = []
     for r in rows:
         try:
-            updated = datetime.fromisoformat((r["updated_at"] or "").replace("Z", "+00:00"))
+            updated = datetime.fromisoformat((r["created_at"] or "").replace("Z", "+00:00"))
             age_days = max(0, (now - updated).days)
         except (KeyError, ValueError):
             age_days = None
@@ -209,7 +211,7 @@ async def find_outdated_documents(
             {
                 "id": r["id"],
                 "name": r.get("name"),
-                "updated_at": r.get("updated_at"),
+                "updated_at": r.get("created_at"),
                 "source": r.get("source"),
                 "age_days": age_days,
             }
