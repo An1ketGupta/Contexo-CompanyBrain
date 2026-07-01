@@ -579,35 +579,40 @@ def verify_webhook_signature(
 ) -> bool:
     """Verify a DocuSeal webhook signature.
 
-    DocuSeal's outbound webhook signing scheme is HMAC-SHA256 of the raw
-    request body using the configured WEBHOOK_SECRET, encoded as a lowercase
-    hex digest in the `X-Docuseal-Signature` header.
+    Our DocuSeal instance's webhook is configured in "Secret" mode (DocuSeal
+    admin → Webhooks → Security), not "HMAC" mode. In that mode DocuSeal
+    echoes the shared secret directly in the `X-Docuseal-Signature` header —
+    no digest, no timestamp — so the primary check is a constant-time
+    compare against the configured WEBHOOK_SECRET.
 
-    For defence against deployment surprises (the public docs don't pin the
-    exact header format), we also accept a plain constant-time compare
-    against the shared secret in case a particular DocuSeal version echoes
-    the secret directly. Both paths use hmac.compare_digest.
+    We also accept HMAC-SHA256 of the raw body (hex or base64) as a fallback,
+    in case the webhook is ever switched to "HMAC" mode. Note HMAC mode's
+    real header format is `<timestamp>.<sha256>`, which these two fallbacks
+    do NOT parse — they only match a bare digest with no timestamp prefix.
+    If you switch to HMAC mode, update this function to split on the `.` and
+    verify against DocuSeal's actual signed-payload construction.
     """
     cfg = _config()
     secret = cfg.get("webhook_secret")
     if not secret or not signature_header:
         return False
     secret_bytes = secret.encode("utf-8")
+    received = signature_header.strip()
 
-    # Primary: HMAC-SHA256 hex digest.
-    expected_hex = hmac.new(secret_bytes, body, hashlib.sha256).hexdigest()
-    if hmac.compare_digest(expected_hex, signature_header.strip().lower()):
+    # Primary: plain shared-secret echo ("Secret" mode — what we're configured for).
+    if hmac.compare_digest(secret, received):
         return True
 
-    # Fallback: some DocuSeal versions sign with base64 instead of hex.
+    # Fallback: HMAC-SHA256 hex digest (bare, no timestamp prefix).
+    expected_hex = hmac.new(secret_bytes, body, hashlib.sha256).hexdigest()
+    if hmac.compare_digest(expected_hex, received.lower()):
+        return True
+
+    # Fallback: HMAC-SHA256 base64 digest (bare, no timestamp prefix).
     expected_b64 = base64.b64encode(
         hmac.new(secret_bytes, body, hashlib.sha256).digest()
     ).decode("ascii")
-    if hmac.compare_digest(expected_b64, signature_header.strip()):
-        return True
-
-    # Last resort: shared-secret echo. Rare but documented in some forks.
-    if hmac.compare_digest(secret, signature_header.strip()):
+    if hmac.compare_digest(expected_b64, received):
         return True
 
     return False
