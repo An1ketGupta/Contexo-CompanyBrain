@@ -321,24 +321,17 @@ class Settings(BaseSettings):
     # different domain (e.g. a subdomain for unauthenticated public flows).
     bgv_public_url: str = ""
 
-    # ── DocuSeal (self-hosted e-sign for the onboarding LOI flow) ──────────
-    # DocuSeal runs on Fly.io at sign.nirnayaiq.com — see infra/docuseal/.
-    # When all three are set the Onboarding v2 agent uses DocuSeal embedded
-    # signing instead of plain email-with-PDF. Missing keys disable the
-    # integration cleanly — the agent falls back to email + Settings UI
-    # shows "Configure e-signing" to enable.
-    #
-    # Three env vars cover the whole integration:
-    #
-    #   DOCUSEAL_BASE_URL       — https://sign.nirnayaiq.com (no trailing slash)
-    #   DOCUSEAL_API_KEY        — Static X-Auth-Token header; rotate via the
-    #                             DocuSeal admin → API page
-    #   DOCUSEAL_WEBHOOK_SECRET — Shared secret matching DocuSeal's own
-    #                             WEBHOOK_SECRET env var; used to HMAC-verify
-    #                             every inbound /docuseal/webhook request
-    docuseal_base_url: str = ""
-    docuseal_api_key: str = ""
-    docuseal_webhook_secret: str = ""
+    # ── In-house e-sign service (apps/esign) ────────────────────────────────
+    # Replaces DocuSeal (removed — see git history for the old integration).
+    # apps/esign is a separate FastAPI service (deployed on Render) that
+    # signs the already-rendered onboarding PDF directly — no per-org
+    # template-building step, no webhook/HMAC hop (it writes
+    # onboarding_signing_envelopes/onboarding_documents directly via a
+    # shared Supabase service-role key and fires the completion Inngest
+    # event itself). Missing keys disable the integration cleanly — the
+    # onboarding agent falls back to the print/scan/email flow.
+    esign_service_url: str = ""
+    esign_api_key: str = ""
 
 
 class ProductionConfigError(RuntimeError):

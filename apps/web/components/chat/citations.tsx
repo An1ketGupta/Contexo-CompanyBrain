@@ -60,7 +60,7 @@ function OverdueBanner({ overdue }: { overdue: OverdueDoc[] }) {
   const first = overdue[0];
   const extra = overdue.length - 1;
   return (
-    <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-200">
+    <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber/20 bg-amber-tint px-3 py-2 text-xs text-amber">
       <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <div className="min-w-0 flex-1">
         {overdue.length === 1 ? (
@@ -224,7 +224,7 @@ function CitationCard({ group }: { group: CitationGroup }) {
                       <button
                         type="button"
                         onClick={() => openPreview(pg.page_number)}
-                        className="rounded-full bg-background px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground ring-1 ring-border/70 transition-colors hover:bg-primary/10 hover:text-primary hover:ring-primary/40"
+                        className="rounded-full bg-background px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground ring-1 ring-border/70 transition-colors hover:bg-brand-tint hover:text-brand hover:ring-brand/40"
                         aria-label={`Preview document at page ${pg.page_number}`}
                       >
                         Page {pg.page_number}
@@ -254,7 +254,7 @@ function CitationCard({ group }: { group: CitationGroup }) {
             <button
               type="button"
               onClick={() => openPreview()}
-              className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+              className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-brand hover:underline"
             >
               <ExternalLink className="h-3 w-3" />
               Preview document

@@ -60,15 +60,15 @@ export function ArchivedBanner({
   };
 
   return (
-    <div className="border-b border-amber-200/60 bg-amber-50 px-4 py-2.5 dark:border-amber-900/40 dark:bg-amber-950/40">
+    <div className="border-b border-amber/20 bg-amber-tint px-4 py-2.5">
       <div className="mx-auto flex max-w-3xl items-center gap-3">
         <Archive
-          className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-300"
+          className="h-4 w-4 shrink-0 text-amber"
           aria-hidden
         />
-        <p className="flex-1 text-sm text-amber-900 dark:text-amber-100">
+        <p className="flex-1 text-sm text-amber">
           <span className="font-medium">Archived {rel}.</span>{" "}
-          <span className="text-amber-800/80 dark:text-amber-200/80">
+          <span className="text-amber/80">
             {auto
               ? "Auto-archived for inactivity. Sending a message will restore it."
               : "Sending a message will restore it automatically."}
@@ -79,7 +79,7 @@ export function ArchivedBanner({
           variant="outline"
           onClick={handleRestore}
           disabled={restoring}
-          className="shrink-0 border-amber-300 bg-background/60 hover:bg-background"
+          className="shrink-0 border-amber/40 bg-background/60 hover:bg-background"
         >
           <ArchiveRestore className="h-3.5 w-3.5" />
           {restoring ? "Restoring…" : "Restore"}

@@ -207,7 +207,7 @@ export function OnboardingSources({
             <Skeleton className="h-16 w-full" />
           </div>
         ) : error ? (
-          <p className="text-sm text-red-600">
+          <p className="text-sm font-medium text-destructive">
             Couldn&apos;t load your published jobs. Refresh to retry.
           </p>
         ) : jobs.length === 0 ? (
@@ -415,7 +415,7 @@ function CandidateRow({
             {candidate.full_name || candidate.email || "Unnamed candidate"}
           </p>
           {candidate.looks_hired ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+            <span className="inline-flex items-center gap-1 rounded-full bg-success-tint px-2 py-0.5 text-[10px] font-bold text-success">
               <CheckCircle2 className="h-3 w-3" /> Likely hired
             </span>
           ) : null}

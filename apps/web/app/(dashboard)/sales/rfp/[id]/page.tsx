@@ -4,11 +4,11 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeader, StatusPill, type PillTone } from "@/components/actual/kit";
 
 type RfpStatus =
   | "extracting"
@@ -107,19 +107,19 @@ const STATUS_LABEL: Record<string, string> = {
   failed: "Failed",
 };
 
-const STATUS_BADGE: Record<string, string> = {
-  extracting: "bg-blue-100 text-blue-700",
-  extracted: "bg-blue-100 text-blue-700",
-  reviewed: "bg-amber-100 text-amber-700",
-  awaiting_requirements_review: "bg-amber-100 text-amber-700",
-  drafting: "bg-amber-100 text-amber-700",
-  generating: "bg-amber-100 text-amber-700",
-  awaiting_rep_review: "bg-purple-100 text-purple-700",
-  awaiting_legal_review: "bg-purple-100 text-purple-700",
-  legal_rejected: "bg-amber-100 text-amber-700",
-  finalizing: "bg-amber-100 text-amber-700",
-  ready: "bg-emerald-100 text-emerald-700",
-  failed: "bg-red-100 text-red-700",
+const STATUS_TONE: Record<string, PillTone> = {
+  extracting: "blue",
+  extracted: "blue",
+  reviewed: "amber",
+  awaiting_requirements_review: "amber",
+  drafting: "amber",
+  generating: "amber",
+  awaiting_rep_review: "violet",
+  awaiting_legal_review: "violet",
+  legal_rejected: "amber",
+  finalizing: "amber",
+  ready: "green",
+  failed: "red",
 };
 
 const POLLING_STATUSES = new Set<RfpStatus>([
@@ -203,7 +203,7 @@ export default function RfpDetailPage() {
   if (error || !data || !rfp) {
     return (
       <div className="mx-auto max-w-3xl p-6 md:p-8">
-        <div className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div className="rounded border border-destructive/40 bg-destructive-soft p-4 text-sm text-destructive">
           Failed to load RFP.
         </div>
       </div>
@@ -214,47 +214,48 @@ export default function RfpDetailPage() {
   const stage = inferStage(status);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
-      <header className="flex items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-xl font-semibold tracking-tight">
-            {rfp.title || rfp.source_filename || "RFP"}
-          </h1>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <Badge className={STATUS_BADGE[status ?? ""] ?? ""}>
+    <div className="mx-auto max-w-5xl space-y-8 p-6 md:p-8">
+      <PageHeader
+        eyebrow="Sales"
+        title={rfp.title || rfp.source_filename || "RFP"}
+        description={
+          <span className="flex flex-wrap items-center gap-2">
+            <StatusPill tone={STATUS_TONE[status ?? ""] ?? "gray"}>
               {STATUS_LABEL[status ?? ""] ?? status}
-            </Badge>
+            </StatusPill>
             {rfp.gap_count > 0 && (
-              <Badge className="bg-amber-100 text-amber-700">
+              <StatusPill tone="amber">
                 {rfp.gap_count} gap{rfp.gap_count === 1 ? "" : "s"}
-              </Badge>
+              </StatusPill>
             )}
             {rfp.legal_required && status !== "ready" && (
-              <Badge variant="outline">Legal review required</Badge>
+              <StatusPill tone="gray">Legal review required</StatusPill>
             )}
-          </div>
-        </div>
-        {isReady && (
-          <div className="flex gap-2">
-            <a href={`/api/sales/rfp/${rfp.id}/download?kind=filled`} download>
-              <Button variant="outline">Download filled original</Button>
-            </a>
-            <a href={`/api/sales/rfp/${rfp.id}/download?kind=summary`} download>
-              <Button>Download summary DOCX</Button>
-            </a>
-          </div>
-        )}
-      </header>
+          </span>
+        }
+        actions={
+          isReady ? (
+            <>
+              <a href={`/api/sales/rfp/${rfp.id}/download?kind=filled`} download>
+                <Button variant="outline">Download filled original</Button>
+              </a>
+              <a href={`/api/sales/rfp/${rfp.id}/download?kind=summary`} download>
+                <Button>Download summary DOCX</Button>
+              </a>
+            </>
+          ) : undefined
+        }
+      />
 
       <StageStepper current={stage} legalRequired={rfp.legal_required} />
 
       {rfp.error_message && (
-        <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded border border-destructive/40 bg-destructive-soft p-3 text-sm text-destructive">
           {rfp.error_message}
         </div>
       )}
       {actionError && (
-        <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded border border-destructive/40 bg-destructive-soft p-3 text-sm text-destructive">
           {actionError}
         </div>
       )}
@@ -352,18 +353,18 @@ function StageStepper({ current, legalRequired }: { current: Stage; legalRequire
           <li key={step.key} className="flex items-center gap-2">
             <span
               className={
-                "flex h-6 w-6 items-center justify-center rounded-full border " +
+                "flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold " +
                 (isDone
-                  ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                  ? "bg-success text-white"
                   : isCurrent
-                    ? "border-blue-300 bg-blue-50 text-blue-700"
-                    : "border-zinc-300 bg-zinc-50 text-zinc-500")
+                    ? "bg-brand text-white"
+                    : "bg-muted text-muted-foreground")
               }
             >
               {isDone ? "✓" : idx + 1}
             </span>
-            <span className={isCurrent ? "font-medium" : "text-muted-foreground"}>{step.label}</span>
-            {idx < steps.length - 1 && <span className="mx-1 text-zinc-300">›</span>}
+            <span className={isCurrent ? "font-bold" : "text-muted-foreground"}>{step.label}</span>
+            {idx < steps.length - 1 && <span className="mx-1 text-border">›</span>}
           </li>
         );
       })}
@@ -377,8 +378,8 @@ function StageStepper({ current, legalRequired }: { current: Stage; legalRequire
 
 function Spinner({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-3 rounded border bg-amber-50 p-4 text-sm text-amber-800">
-      <span className="inline-block h-3 w-3 animate-pulse rounded-full bg-amber-500" />
+    <div className="flex items-center gap-3 rounded-2xl border border-border bg-amber-tint p-4 text-sm font-medium text-amber">
+      <span className="inline-block h-3 w-3 animate-pulse rounded-full bg-amber" />
       {label}
     </div>
   );
@@ -463,7 +464,7 @@ function RequirementsReview({
         {requirements.map((r) => {
           const edit = edits.get(r.id) ?? { text: r.requirement_text, category: r.category };
           return (
-            <li key={r.id} className="rounded border bg-white p-3">
+            <li key={r.id} className="rounded-xl border border-border bg-card p-3">
               <div className="flex items-start gap-3">
                 <div className="w-12 shrink-0 pt-2 text-xs font-medium text-muted-foreground">
                   {r.external_ref || `#${r.ordinal + 1}`}
@@ -507,7 +508,7 @@ function RequirementsReview({
         })}
       </ul>
 
-      <div className="rounded border border-dashed bg-zinc-50 p-3">
+      <div className="rounded border border-dashed bg-muted/40 p-3">
         <p className="mb-2 text-xs text-muted-foreground">Add a missed requirement</p>
         <div className="flex gap-2">
           <Input
@@ -586,7 +587,7 @@ function AnswerReview({
       </ul>
 
       {mode === "legal" && (
-        <div className="space-y-3 rounded border bg-zinc-50 p-4">
+        <div className="space-y-3 rounded border bg-muted/40 p-4">
           <p className="text-sm font-medium">Legal decision</p>
           <Textarea
             placeholder="Notes for the rep (required if rejecting)…"
@@ -655,7 +656,7 @@ function AnswerCard({
   return (
     <li
       className={
-        "rounded border bg-white p-4 " +
+        "rounded-xl border border-border bg-card p-4 " +
         (isRejected ? "border-amber-400 ring-1 ring-amber-200" : "")
       }
     >
@@ -664,12 +665,12 @@ function AnswerCard({
           <p className="text-xs font-semibold text-muted-foreground">
             {requirement.external_ref || `R${requirement.ordinal + 1}`}
             {requirement.category && (
-              <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-600">
+              <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
                 {requirement.category}
               </span>
             )}
             {requirement.source_sheet && requirement.source_row_index && (
-              <span className="ml-2 text-zinc-400">
+              <span className="ml-2 text-muted-foreground">
                 · {requirement.source_sheet} row {requirement.source_row_index}
               </span>
             )}
@@ -677,25 +678,19 @@ function AnswerCard({
           <p className="mt-1 text-sm">{requirement.requirement_text}</p>
         </div>
         {band && (
-          <Badge
-            className={
-              band === "high"
-                ? "bg-emerald-100 text-emerald-700"
-                : band === "medium"
-                  ? "bg-amber-100 text-amber-700"
-                  : "bg-red-100 text-red-700"
-            }
+          <StatusPill
+            tone={band === "high" ? "green" : band === "medium" ? "amber" : "red"}
           >
             {band} confidence
-          </Badge>
+          </StatusPill>
         )}
       </div>
 
-      <div className={isGap ? "rounded border border-red-200 bg-red-50 p-3" : "rounded bg-zinc-50 p-3"}>
+      <div className={isGap ? "rounded border border-destructive/40 bg-destructive-soft p-3" : "rounded bg-muted/40 p-3"}>
         {editing ? (
           <Textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={5} />
         ) : (
-          <p className={"whitespace-pre-wrap text-sm " + (isGap ? "text-red-900" : "")}>
+          <p className={"whitespace-pre-wrap text-sm " + (isGap ? "text-destructive" : "")}>
             {answer?.answer_text ||
               (isGap
                 ? `⚠ ${answer?.flag_message || "Gap — flagged for review."}`
@@ -787,11 +782,11 @@ function ReadyView({
           const a = answersByReq.get(r.id);
           const isGap = a?.status === "gap" || a?.status === "rejected";
           return (
-            <li key={r.id} className="rounded border bg-white p-4">
+            <li key={r.id} className="rounded-xl border border-border bg-card p-4">
               <p className="text-xs font-semibold text-muted-foreground">
                 {r.external_ref || `R${r.ordinal + 1}`}
                 {r.category && (
-                  <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-600">
+                  <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
                     {r.category}
                   </span>
                 )}
@@ -800,7 +795,7 @@ function ReadyView({
               <div
                 className={
                   "mt-2 rounded p-3 text-sm " +
-                  (isGap ? "border border-red-200 bg-red-50 text-red-900" : "bg-zinc-50")
+                  (isGap ? "border border-destructive/40 bg-destructive-soft text-destructive" : "bg-muted/40")
                 }
               >
                 {a?.answer_text ||

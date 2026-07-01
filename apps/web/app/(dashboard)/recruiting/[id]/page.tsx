@@ -36,6 +36,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  StatusPill as KitStatusPill,
+  type PillTone,
+} from "@/components/actual/kit";
 import { NotionParentPicker } from "@/components/recruiting/notion-parent-picker";
 import { SlackChannelPicker } from "@/components/recruiting/slack-channel-picker";
 import { StartOnboardingDialog } from "@/components/onboarding/start-onboarding-dialog";
@@ -507,7 +511,7 @@ export default function RequisitionDetailPage() {
   if (error || !data) {
     return (
       <div className="mx-auto max-w-3xl p-6 md:p-8">
-        <div className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div className="rounded-2xl border border-destructive/30 bg-destructive-soft p-4 text-sm font-medium text-destructive">
           Failed to load requisition.
         </div>
       </div>
@@ -534,7 +538,7 @@ export default function RequisitionDetailPage() {
                 ))}
               </div>
             </div>
-            <h1 className="text-2xl font-semibold leading-tight tracking-tight">
+            <h1 className="text-3xl font-extrabold leading-tight tracking-tight">
               {data.role_request}
             </h1>
           </div>
@@ -553,7 +557,7 @@ export default function RequisitionDetailPage() {
                 variant="ghost"
                 onClick={handleDelete}
                 disabled={deleting}
-                className="text-muted-foreground hover:text-red-600"
+                className="text-muted-foreground hover:text-destructive"
               >
                 {deleting ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -596,13 +600,13 @@ export default function RequisitionDetailPage() {
         )}
 
         {data.error_message && (
-          <div className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="mt-3 rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm font-medium text-destructive">
             {data.error_message}
           </div>
         )}
         {data.grounded === false && (
-          <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-            <div className="font-medium">No company context found</div>
+          <div className="mt-3 rounded-xl border border-amber/30 bg-amber-tint p-3 text-sm text-amber">
+            <div className="font-bold">No company context found</div>
             <p className="mt-1">
               No matching documents in your KB for this role. The JD variants
               below are model-generated and may contain plausible-sounding but
@@ -652,7 +656,7 @@ export default function RequisitionDetailPage() {
         </div>
 
         {activeVariant && (
-          <div className="rounded-lg border border-border bg-card p-6 sm:p-8">
+          <div className="rounded-2xl border border-border bg-card p-6 sm:p-8">
             <div className="prose prose-sm dark:prose-invert mx-auto max-w-3xl">
               <Markdown>{activeVariant.text}</Markdown>
             </div>
@@ -662,8 +666,8 @@ export default function RequisitionDetailPage() {
 
       {/* Publish form */}
       {!isPublished && (
-        <section className="rounded border border-border bg-card p-6">
-          <h2 className="mb-4 text-sm font-medium">Publish</h2>
+        <section className="rounded-2xl border border-border bg-card p-6">
+          <h2 className="mb-4 text-base font-extrabold tracking-tight">Publish</h2>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2 md:col-span-2">
               <Label>Posting destinations</Label>
@@ -815,7 +819,7 @@ export default function RequisitionDetailPage() {
                       {label}
                     </Label>
                     <select
-                      className="w-full rounded border border-input bg-background px-3 py-2 text-sm"
+                      className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
                       value={
                         p === "naukri"
                           ? naukriRoleCategory?.id ?? ""
@@ -854,7 +858,7 @@ export default function RequisitionDetailPage() {
               Role Category, Industry) plus optional experience band + key
               skills. Backend rejects the publish if these aren't set. */}
           {selectedAts.has("naukri") && (
-            <div className="mt-5 space-y-3 rounded border border-dashed border-border bg-muted/20 p-4">
+            <div className="mt-5 space-y-3 rounded-xl border border-dashed border-border bg-muted/40 p-4">
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70">
                   Naukri taxonomy
@@ -878,11 +882,11 @@ export default function RequisitionDetailPage() {
                   wasn't warmed. Show actionable guidance instead of three
                   silently-empty selects. */}
               {naukriTaxonomyEmpty && !naukriConnected && (
-                <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:border-amber-500/40 dark:bg-amber-500/10">
-                  <p className="font-medium text-amber-900 dark:text-amber-200">
+                <div className="rounded-xl border border-amber/30 bg-amber-tint px-3 py-2 text-sm">
+                  <p className="font-bold text-amber">
                     Connect Naukri to load the taxonomy
                   </p>
-                  <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
+                  <p className="mt-1 text-xs text-amber/90">
                     The Functional Area, Role Category, and Industry lists
                     come from Naukri at connect time. Until you add an API
                     key in Settings → Integrations, these dropdowns will be
@@ -890,18 +894,18 @@ export default function RequisitionDetailPage() {
                   </p>
                   <a
                     href="/settings/integrations"
-                    className="mt-2 inline-block text-xs font-medium text-amber-900 underline hover:no-underline dark:text-amber-200"
+                    className="mt-2 inline-block text-xs font-bold text-amber underline hover:no-underline"
                   >
                     Open Settings → Integrations →
                   </a>
                 </div>
               )}
               {naukriTaxonomyEmpty && naukriConnected && (
-                <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:border-amber-500/40 dark:bg-amber-500/10">
-                  <p className="font-medium text-amber-900 dark:text-amber-200">
+                <div className="rounded-xl border border-amber/30 bg-amber-tint px-3 py-2 text-sm">
+                  <p className="font-bold text-amber">
                     Naukri is connected, but the taxonomy cache is empty
                   </p>
-                  <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
+                  <p className="mt-1 text-xs text-amber/90">
                     The connect step warms the cache automatically — this
                     usually means the Naukri taxonomy call failed (e.g.
                     network blip or mock server wasn&apos;t running).
@@ -921,7 +925,7 @@ export default function RequisitionDetailPage() {
                       toast.success("Naukri taxonomy refreshed");
                       mutateNaukriStatus();
                     }}
-                    className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-900 underline hover:no-underline dark:text-amber-200"
+                    className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-amber underline hover:no-underline"
                   >
                     Refresh mapping cache
                   </button>
@@ -932,7 +936,7 @@ export default function RequisitionDetailPage() {
                 <div className="space-y-1">
                   <Label className="text-xs">Functional Area</Label>
                   <select
-                    className="w-full rounded border border-input bg-background px-3 py-2 text-sm"
+                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
                     value={naukriFunctionalArea?.id ?? ""}
                     onChange={(e) => {
                       const opt = (naukriFunctionalAreas ?? []).find(
@@ -951,7 +955,7 @@ export default function RequisitionDetailPage() {
                 <div className="space-y-1">
                   <Label className="text-xs">Industry Type</Label>
                   <select
-                    className="w-full rounded border border-input bg-background px-3 py-2 text-sm"
+                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
                     value={naukriIndustry?.id ?? ""}
                     onChange={(e) => {
                       const opt = (naukriIndustries ?? []).find(
@@ -1017,7 +1021,7 @@ export default function RequisitionDetailPage() {
           )}
 
           {publishError && (
-            <div className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm font-medium text-destructive">
               {publishError}
             </div>
           )}
@@ -1087,15 +1091,15 @@ export default function RequisitionDetailPage() {
                 ) : (
                   <div
                     key={p.platform}
-                    className="rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-950/40"
+                    className="rounded-2xl border border-destructive/30 bg-destructive-soft p-4"
                   >
                     <div className="flex items-center gap-2">
                       <PlatformIcon platform={p.platform} />
-                      <span className="text-xs font-medium text-red-700 dark:text-red-300">
+                      <span className="text-xs font-bold text-destructive">
                         {platformLabel(p.platform)} — publish failed
                       </span>
                     </div>
-                    <div className="mt-2 break-all text-sm text-red-800 dark:text-red-200">
+                    <div className="mt-2 break-all text-sm text-destructive">
                       {p.error}
                     </div>
                   </div>
@@ -1113,7 +1117,7 @@ export default function RequisitionDetailPage() {
 
           <section className="space-y-3">
             <SectionHeading icon={Users}>Candidate sync</SectionHeading>
-            <div className="rounded-lg border border-border bg-card p-5">
+            <div className="rounded-2xl border border-border bg-card p-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm text-foreground">
@@ -1162,7 +1166,7 @@ export default function RequisitionDetailPage() {
               </div>
 
               {!data.notion_candidates_db_id && (
-                <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+                <div className="mt-3 rounded-xl border border-amber/30 bg-amber-tint px-3 py-2 text-xs text-amber">
                   This requisition was Published before candidate sync was
                   available. Republish to add a Notion candidate database.
                 </div>
@@ -1188,7 +1192,7 @@ export default function RequisitionDetailPage() {
                               {platform}
                             </span>
                             {info.error ? (
-                              <span className="text-red-600 dark:text-red-300">
+                              <span className="font-medium text-destructive">
                                 {info.error}
                               </span>
                             ) : (
@@ -1206,7 +1210,7 @@ export default function RequisitionDetailPage() {
               )}
 
               {data.candidates_last_sync_error && !syncSummary && (
-                <div className="mt-3 break-words rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
+                <div className="mt-3 break-words rounded-xl border border-destructive/30 bg-destructive-soft px-3 py-2 text-xs font-medium text-destructive">
                   Last sync had errors: {data.candidates_last_sync_error}
                 </div>
               )}
@@ -1214,17 +1218,17 @@ export default function RequisitionDetailPage() {
           </section>
 
           {data.slack_post_error && (
-            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-500/40 dark:bg-amber-500/10">
-              <div className="text-xs font-medium text-amber-900 dark:text-amber-200">
+            <div className="rounded-2xl border border-amber/30 bg-amber-tint p-4">
+              <div className="text-xs font-bold text-amber">
                 Slack announcement didn&apos;t post
               </div>
-              <div className="mt-1 text-sm text-amber-800 dark:text-amber-200">
+              <div className="mt-1 text-sm text-amber">
                 {data.slack_post_error === "slack_not_in_channel"
                   ? "The bot isn't a member of the channel. Invite it (/invite @NirnayaIQ) and republish from a new requisition."
                   : data.slack_post_error}
               </div>
               {data.slack_channel && (
-                <div className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                <div className="mt-2 text-xs text-amber/90">
                   Channel id: <code>{data.slack_channel}</code>
                 </div>
               )}
@@ -1236,7 +1240,7 @@ export default function RequisitionDetailPage() {
               <SectionHeading icon={Search}>
                 LinkedIn search shortcuts
               </SectionHeading>
-              <div className="rounded-lg border border-border bg-card p-4">
+              <div className="rounded-2xl border border-border bg-card p-4">
                 <TooltipProvider delayDuration={150}>
                   <ul className="space-y-1 text-sm">
                     {data.linkedin_search_urls.map((s, i) => (
@@ -1254,11 +1258,11 @@ export default function RequisitionDetailPage() {
                 <SectionHeading icon={Search}>
                   Naukri Resdex search shortcuts
                 </SectionHeading>
-                <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
+                <span className="rounded-full bg-brand-tint px-2 py-0.5 text-[10px] font-bold text-brand">
                   India · Resdex
                 </span>
               </div>
-              <div className="rounded-lg border border-border bg-card p-4">
+              <div className="rounded-2xl border border-border bg-card p-4">
                 <p className="mb-3 text-[11px] text-muted-foreground">
                   Pre-filtered candidate-search URLs tuned for the Indian
                   market. Click to land in Resdex with the filters applied —
@@ -1285,7 +1289,7 @@ export default function RequisitionDetailPage() {
                 {data.sourcing_templates.map((t, i) => (
                   <li
                     key={i}
-                    className="rounded-lg border border-border bg-card p-4 text-foreground"
+                    className="rounded-2xl border border-border bg-card p-4 text-foreground"
                   >
                     {t.subject && (
                       <div className="text-xs font-medium text-foreground">
@@ -1329,7 +1333,7 @@ function LinkedinSearchRow({ search }: { search: LinkedinSearch }) {
           href={search.url}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-1.5 text-sm font-semibold text-foreground hover:text-blue-600 hover:underline"
+          className="inline-flex items-center gap-1.5 text-sm font-semibold text-foreground hover:text-brand hover:underline"
         >
           {search.label}
           <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
@@ -1346,7 +1350,7 @@ function LinkedinSearchRow({ search }: { search: LinkedinSearch }) {
             aria-label="Copy LinkedIn search URL"
           >
             {copied ? (
-              <Check className="h-3.5 w-3.5 text-emerald-600" />
+              <Check className="h-3.5 w-3.5 text-success" />
             ) : (
               <Copy className="h-3.5 w-3.5" />
             )}
@@ -1381,7 +1385,7 @@ function NaukriSearchRow({ search }: { search: NaukriSearch }) {
           href={search.url}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-1 font-medium text-indigo-600 hover:underline"
+          className="inline-flex items-center gap-1 font-semibold text-brand hover:underline"
         >
           {search.label}
           <ExternalLink className="h-3 w-3" />
@@ -1406,7 +1410,7 @@ function NaukriSearchRow({ search }: { search: NaukriSearch }) {
             aria-label="Copy Naukri search URL"
           >
             {copied ? (
-              <Check className="h-3.5 w-3.5 text-emerald-600" />
+              <Check className="h-3.5 w-3.5 text-success" />
             ) : (
               <Copy className="h-3.5 w-3.5" />
             )}
@@ -1424,11 +1428,11 @@ const PLATFORM_STYLE: Record<
   PlatformKey,
   { label: string; bg: string; text: string }
 > = {
-  greenhouse: { label: "Greenhouse", bg: "bg-emerald-100 dark:bg-emerald-500/20", text: "text-emerald-700 dark:text-emerald-300" },
-  lever: { label: "Lever", bg: "bg-violet-100 dark:bg-violet-500/20", text: "text-violet-700 dark:text-violet-300" },
-  ashby: { label: "Ashby", bg: "bg-orange-100 dark:bg-orange-500/20", text: "text-orange-700 dark:text-orange-300" },
-  naukri: { label: "Naukri", bg: "bg-blue-100 dark:bg-blue-500/20", text: "text-blue-700 dark:text-blue-300" },
-  notion: { label: "Notion", bg: "bg-zinc-200 dark:bg-zinc-700", text: "text-zinc-700 dark:text-zinc-200" },
+  greenhouse: { label: "Greenhouse", bg: "bg-success-tint", text: "text-success" },
+  lever: { label: "Lever", bg: "bg-violet-tint", text: "text-violet" },
+  ashby: { label: "Ashby", bg: "bg-amber-tint", text: "text-amber" },
+  naukri: { label: "Naukri", bg: "bg-brand-tint", text: "text-brand" },
+  notion: { label: "Notion", bg: "bg-muted", text: "text-muted-foreground" },
 };
 
 function platformLabel(p: PlatformKey): string {
@@ -1461,9 +1465,9 @@ function PlatformChip({ platform }: { platform: AtsPlatform }) {
 
 function StatusPill({ status }: { status: "draft" | "published" | "failed" }) {
   const map = {
-    published: { dot: "bg-emerald-500", label: "Published", text: "text-emerald-700 dark:text-emerald-300", bg: "bg-emerald-50 dark:bg-emerald-500/10" },
-    failed: { dot: "bg-red-500", label: "Failed", text: "text-red-700 dark:text-red-300", bg: "bg-red-50 dark:bg-red-500/10" },
-    draft: { dot: "bg-zinc-400", label: "Draft", text: "text-zinc-700 dark:text-zinc-300", bg: "bg-zinc-100 dark:bg-zinc-800" },
+    published: { label: "Published", tone: "green" as PillTone },
+    failed: { label: "Failed", tone: "red" as PillTone },
+    draft: { label: "Draft", tone: "gray" as PillTone },
   } as const;
   // Tolerate any unexpected status (e.g. legacy 'Published' rows from before
   // migration 072) by folding case and falling back to the draft style.
@@ -1471,14 +1475,7 @@ function StatusPill({ status }: { status: "draft" | "published" | "failed" }) {
     ? status.toLowerCase()
     : "draft") as keyof typeof map;
   const s = map[key] ?? map.draft;
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${s.bg} ${s.text}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
-      {s.label}
-    </span>
-  );
+  return <KitStatusPill tone={s.tone}>{s.label}</KitStatusPill>;
 }
 
 function MetaItem({
@@ -1504,7 +1501,7 @@ function SectionHeading({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+    <div className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
       <Icon className="h-3.5 w-3.5" />
       <span>{children}</span>
     </div>
@@ -1539,7 +1536,7 @@ function PostingCard({
       href={url}
       target="_blank"
       rel="noreferrer"
-      className="group flex items-center gap-3 rounded-lg border border-border bg-card p-4 transition hover:border-foreground/30 hover:bg-accent/30"
+      className="group flex items-center gap-3 rounded-2xl border border-border bg-card p-4 transition hover:border-foreground/30 hover:bg-accent/30"
     >
       <PlatformIcon platform={platform} />
       <div className="min-w-0 flex-1">
@@ -1557,7 +1554,7 @@ function PostingCard({
           aria-label="Copy URL"
         >
           {copied ? (
-            <Check className="h-3.5 w-3.5 text-emerald-600" />
+            <Check className="h-3.5 w-3.5 text-success" />
           ) : (
             <Copy className="h-3.5 w-3.5" />
           )}
@@ -1579,16 +1576,16 @@ function StatTile({
 }) {
   const tone =
     accent === "emerald"
-      ? "text-emerald-700 dark:text-emerald-300"
+      ? "text-success"
       : accent === "blue"
-        ? "text-blue-700 dark:text-blue-300"
+        ? "text-brand"
         : "text-foreground";
   return (
-    <div className="rounded-md border border-border bg-muted/30 px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+    <div className="rounded-xl border border-border bg-muted/40 px-3 py-2.5">
+      <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
         {label}
       </div>
-      <div className={`mt-0.5 text-lg font-semibold ${tone}`}>{value}</div>
+      <div className={`mt-1 text-xl font-extrabold tracking-tight ${tone}`}>{value}</div>
     </div>
   );
 }
@@ -1645,8 +1642,8 @@ function EditRequisitionForm({
   };
 
   return (
-    <section className="rounded border border-border bg-card p-6">
-      <h2 className="mb-4 text-sm font-medium">Edit requisition</h2>
+    <section className="rounded-2xl border border-border bg-card p-6">
+      <h2 className="mb-4 text-base font-extrabold tracking-tight">Edit requisition</h2>
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-2 md:col-span-2">
           <Label htmlFor="role-edit">Role request</Label>
@@ -1732,10 +1729,10 @@ function NotionParentField({
 
   if (effective && overridden) {
     return (
-      <div className="flex items-center justify-between rounded border border-border bg-muted/30 px-3 py-2 text-sm">
+      <div className="flex items-center justify-between rounded-xl border border-border bg-muted/40 px-3 py-2 text-sm">
         <div className="min-w-0">
           <span className="truncate font-medium">{effective.title}</span>
-          <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
+          <span className="ml-2 rounded-full bg-amber-tint px-2 py-0.5 text-[10px] font-bold text-amber">
             this requisition only
           </span>
         </div>
@@ -1761,7 +1758,7 @@ function NotionParentField({
 
   if (effective) {
     return (
-      <div className="flex items-center justify-between rounded border border-border bg-muted/30 px-3 py-2 text-sm">
+      <div className="flex items-center justify-between rounded-xl border border-border bg-muted/40 px-3 py-2 text-sm">
         <div className="min-w-0">
           <span className="truncate font-medium">{effective.title}</span>
           <span className="ml-2 text-xs text-muted-foreground">org default</span>
@@ -1779,11 +1776,11 @@ function NotionParentField({
 
   if (accessibilityError) {
     return (
-      <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:border-amber-500/40 dark:bg-amber-500/10">
-        <p className="font-medium text-amber-900 dark:text-amber-200">
+      <div className="rounded-xl border border-amber/30 bg-amber-tint px-3 py-2 text-sm">
+        <p className="font-bold text-amber">
           Default Notion parent is no longer accessible
         </p>
-        <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
+        <p className="mt-1 text-xs text-amber/90">
           {accessibilityError}. The tracker won&apos;t be created unless you
           pick a different parent.
         </p>
@@ -1840,11 +1837,11 @@ function SlackChannelField({
 
   if (effective && overridden) {
     return (
-      <div className="flex items-center justify-between rounded border border-border bg-muted/30 px-3 py-2 text-sm">
+      <div className="flex items-center justify-between rounded-xl border border-border bg-muted/40 px-3 py-2 text-sm">
         <div className="min-w-0 flex items-center gap-1">
           <span className="text-muted-foreground">#</span>
           <span className="truncate font-medium">{effective.name}</span>
-          <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
+          <span className="ml-2 rounded-full bg-amber-tint px-2 py-0.5 text-[10px] font-bold text-amber">
             this requisition only
           </span>
         </div>
@@ -1870,7 +1867,7 @@ function SlackChannelField({
 
   if (effective) {
     return (
-      <div className="flex items-center justify-between rounded border border-border bg-muted/30 px-3 py-2 text-sm">
+      <div className="flex items-center justify-between rounded-xl border border-border bg-muted/40 px-3 py-2 text-sm">
         <div className="min-w-0 flex items-center gap-1">
           <span className="text-muted-foreground">#</span>
           <span className="truncate font-medium">{effective.name}</span>
@@ -1889,11 +1886,11 @@ function SlackChannelField({
 
   if (accessibilityError) {
     return (
-      <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:border-amber-500/40 dark:bg-amber-500/10">
-        <p className="font-medium text-amber-900 dark:text-amber-200">
+      <div className="rounded-xl border border-amber/30 bg-amber-tint px-3 py-2 text-sm">
+        <p className="font-bold text-amber">
           Default Slack channel is no longer reachable
         </p>
-        <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
+        <p className="mt-1 text-xs text-amber/90">
           {accessibilityError}. The announcement won&apos;t post unless you
           pick a different channel.
         </p>

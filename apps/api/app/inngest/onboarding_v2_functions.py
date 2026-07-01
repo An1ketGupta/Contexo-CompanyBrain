@@ -19,6 +19,7 @@ independently.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -162,14 +163,75 @@ async def onboarding_v2_template_uploaded(ctx: inngest.Context) -> dict[str, Any
 )
 async def onboarding_v2_esign_completed(ctx: inngest.Context) -> dict[str, Any]:
     """The candidate completed the AL+NDA signing envelope. Kick the agent
-    so it transitions to the policies step. The webhook handler already
-    updated onboarding_documents.sign_status to signed_by_candidate."""
+    so it transitions to the policies step. apps/esign already updated
+    onboarding_documents.sign_status to signed_by_candidate directly (no
+    webhook hop — see apps/esign/app/routers/public_sign.py)."""
     data = ctx.event.data
     run_id = data.get("onboarding_run_id")
     org_id = data.get("org_id")
     if not run_id or not org_id:
         return {"status": "skipped"}
     return await _drive_agent(run_id=run_id, org_id=org_id)
+
+
+_SIGN_DOCUMENT_LABELS: dict[tuple[str, ...], str] = {
+    ("loi",): "Letter of Intent",
+    ("appointment_letter", "nda"): "Appointment Letter + NDA",
+}
+
+
+@_inngest_client.create_function(
+    fn_id="onboarding-v2-esign-signer-turn",
+    trigger=inngest.TriggerEvent(event="esign/signer_turn"),
+    retries=2,
+)
+async def onboarding_v2_esign_signer_turn(ctx: inngest.Context) -> dict[str, Any]:
+    """apps/esign fires this once a signer completes and another signer is
+    next in a routed envelope (e.g. HR signed the LOI, candidate is up).
+    This is the one piece of orchestration apps/esign delegates back to
+    apps/api — sending email stays centralised here (Resend creds, existing
+    templates/dispatcher) rather than duplicated in the signing service."""
+    from app.config import get_settings
+
+    data = ctx.event.data
+    signer_email = data.get("signer_email")
+    signer_name = data.get("signer_name")
+    envelope_id = data.get("envelope_id")
+    signing_url = data.get("signing_url")
+    if not signer_email or not envelope_id or not signing_url:
+        return {"status": "skipped", "reason": "missing_required_fields"}
+
+    settings = get_settings()
+    kinds = tuple(data.get("document_kinds") or ())
+    document_label = _SIGN_DOCUMENT_LABELS.get(kinds, "your document")
+
+    # Resolve HR's user_id from onboarding_runs for dedupe/analytics — the
+    # candidate signer has none, which send_email_event already handles.
+    svc = get_service_client()
+    run_row = await asyncio.to_thread(
+        lambda: svc.table("onboarding_runs")
+        .select("triggered_by_user_id, candidate_email")
+        .eq("id", data.get("run_id"))
+        .maybe_single()
+        .execute()
+    )
+    is_hr = (run_row.data or {}).get("triggered_by_user_id") if run_row else None
+    user_id = is_hr if signer_email != (run_row.data or {}).get("candidate_email") else None
+
+    await send_email_event(
+        event_type="onboarding_sign_your_turn",
+        to=signer_email,
+        user_id=user_id,
+        org_id=data.get("org_id"),
+        dedupe_key=f"sign-your-turn-{envelope_id}-{signer_email}",
+        data={
+            "recipient_name": signer_name or signer_email,
+            "document_label": document_label,
+            "signing_url": signing_url,
+            "app_url": settings.app_url.rstrip("/"),
+        },
+    )
+    return {"status": "ok"}
 
 
 @_inngest_client.create_function(
@@ -383,7 +445,8 @@ async def onboarding_v2_esign_timeout_watch(
 
     We deliberately do NOT auto-void — the candidate may still be in the
     process of signing. HR can decide whether to chase the candidate or void
-    from DocuSeal and restart the signing step manually."""
+    the envelope (POST /runs/{id}/cancel) and restart the signing step
+    manually."""
     from datetime import timedelta
 
     from app.config import get_settings
@@ -462,6 +525,7 @@ FUNCTIONS = [
     onboarding_v2_policy_ack,
     onboarding_v2_template_uploaded,
     onboarding_v2_esign_completed,
+    onboarding_v2_esign_signer_turn,
     onboarding_v2_resume,
     onboarding_v2_bgv_reminders,
     onboarding_v2_candidate_refs_reminders,

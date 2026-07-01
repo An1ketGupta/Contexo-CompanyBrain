@@ -2,10 +2,13 @@
 
 import { useState } from "react";
 
+import { ExternalLink, Loader2, Presentation, Sparkles } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeader } from "@/components/actual/kit";
 
 interface Sections {
   executive_summary: string;
@@ -60,16 +63,14 @@ export default function ExecBriefingPage() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-6 md:p-8">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Executive briefing</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Synthesize a structured briefing across your KB, drop it into a
-          Google Doc, and email the link to recipients.
-        </p>
-      </header>
+    <div className="mx-auto max-w-4xl space-y-8 p-6 md:p-8">
+      <PageHeader
+        eyebrow="Talent & Exec"
+        title="Executive briefing"
+        description="Synthesize a structured briefing across your KB, drop it into a Google Doc, and email the link to recipients."
+      />
 
-      <section className="rounded border bg-white p-6">
+      <section className="rounded-2xl border border-border bg-card p-6">
         <div className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="request">Request</Label>
@@ -92,13 +93,18 @@ export default function ExecBriefingPage() {
           </div>
 
           {error && (
-            <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <div className="rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm font-medium text-destructive">
               {error}
             </div>
           )}
 
           <div className="flex justify-end">
             <Button onClick={submit} disabled={generating || request.trim().length < 10}>
+              {generating ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
               {generating ? "Generating…" : "Generate briefing"}
             </Button>
           </div>
@@ -106,16 +112,22 @@ export default function ExecBriefingPage() {
       </section>
 
       {result && (
-        <section className="space-y-3 rounded border bg-white p-6">
-          <h2 className="text-sm font-semibold">Briefing ready</h2>
+        <section className="space-y-5 rounded-2xl border border-border bg-card p-6">
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-tint text-brand">
+              <Presentation className="h-4 w-4" />
+            </div>
+            <h2 className="text-base font-extrabold tracking-tight">Briefing ready</h2>
+          </div>
           {result.google_doc_url && (
             <a
               href={result.google_doc_url}
               target="_blank"
               rel="noreferrer"
-              className="block rounded border border-blue-200 bg-blue-50 p-3 text-blue-700 hover:bg-blue-100"
+              className="flex items-center justify-between rounded-xl border border-brand/30 bg-brand-tint p-3 text-sm font-bold text-brand transition-colors hover:bg-brand/10"
             >
-              Open Google Doc ↗
+              Open Google Doc
+              <ExternalLink className="h-4 w-4" />
             </a>
           )}
           <SectionBlock title="Executive summary" text={result.sections?.executive_summary} />
@@ -133,10 +145,10 @@ function SectionBlock({ title, text }: { title: string; text?: string }) {
   if (!text) return null;
   return (
     <div>
-      <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      <h3 className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
         {title}
       </h3>
-      <p className="mt-1 whitespace-pre-wrap text-sm leading-6">{text}</p>
+      <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-body">{text}</p>
     </div>
   );
 }

@@ -75,6 +75,7 @@ from app.services.agents.onboarding_v2.pre_join import (
     ensure_pre_join_user,
     send_magic_link,
 )
+from app.services.agents.onboarding_v2.template_vars import SIGNATURE_BLOCK_MARKERS
 from app.services.email import send_email_event
 from app.services.pdf import (
     PdfRenderError,
@@ -258,6 +259,9 @@ class OnboardingV2Agent(BaseAgent):
             "company_address": branding["registered_address"],
             "today_date": today,
             "jurisdiction": branding["jurisdiction"],
+            # Sentinel markers apps/esign's pdf_sign.py searches for to place
+            # each signer's signature — see SIGNATURE_BLOCK_MARKERS.
+            **SIGNATURE_BLOCK_MARKERS,
         }
 
     # ── Main dispatcher ────────────────────────────────────────────────────

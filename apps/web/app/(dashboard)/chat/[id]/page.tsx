@@ -139,9 +139,9 @@ export default function ChatConversationPage({
     if (!el) return;
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     // Brief ring flash so the admin can see which row the email pointed at.
-    el.classList.add("ring-2", "ring-amber-400/70", "rounded-md");
+    el.classList.add("ring-2", "ring-brand/70", "rounded-md");
     const timer = window.setTimeout(() => {
-      el.classList.remove("ring-2", "ring-amber-400/70", "rounded-md");
+      el.classList.remove("ring-2", "ring-brand/70", "rounded-md");
     }, 2400);
     return () => window.clearTimeout(timer);
   }, [loading, messages.length]);

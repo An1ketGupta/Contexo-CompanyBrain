@@ -220,7 +220,7 @@ export function PostSlackDialog({
                             {c.name}
                           </span>
                           {!c.is_member && (
-                            <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                            <span className="rounded bg-amber-tint px-1.5 py-0.5 text-[10px] font-medium text-amber">
                               Invite bot
                             </span>
                           )}

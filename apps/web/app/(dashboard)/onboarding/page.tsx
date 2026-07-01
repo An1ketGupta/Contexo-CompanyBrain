@@ -17,6 +17,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader, StatusPill, type PillTone } from "@/components/actual/kit";
 import {
   OnboardingSources,
   type SourcesResponse,
@@ -98,30 +99,11 @@ const STATUS_LABELS: Record<string, string> = {
 const TERMINAL = new Set(["completed", "cancelled", "failed"]);
 const BLOCKED = new Set(["blocked_missing_template", "failed"]);
 
-function statusStyle(status: string): { dot: string; text: string; bg: string } {
-  if (status === "completed")
-    return {
-      dot: "bg-emerald-500",
-      text: "text-emerald-700 dark:text-emerald-300",
-      bg: "bg-emerald-50 dark:bg-emerald-500/10",
-    };
-  if (BLOCKED.has(status))
-    return {
-      dot: "bg-red-500",
-      text: "text-red-700 dark:text-red-300",
-      bg: "bg-red-50 dark:bg-red-500/10",
-    };
-  if (status === "cancelled")
-    return {
-      dot: "bg-zinc-400",
-      text: "text-zinc-700 dark:text-zinc-300",
-      bg: "bg-zinc-100 dark:bg-zinc-800",
-    };
-  return {
-    dot: "bg-blue-500",
-    text: "text-blue-700 dark:text-blue-300",
-    bg: "bg-blue-50 dark:bg-blue-500/10",
-  };
+function statusStyle(status: string): { tone: PillTone; stripe: string } {
+  if (status === "completed") return { tone: "green", stripe: "bg-success" };
+  if (BLOCKED.has(status)) return { tone: "red", stripe: "bg-destructive" };
+  if (status === "cancelled") return { tone: "gray", stripe: "bg-border" };
+  return { tone: "blue", stripe: "bg-brand" };
 }
 
 function relativeTime(iso: string): string {
@@ -224,39 +206,35 @@ const missingCount = templates
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            Onboarding
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            LOI → BGV → Appointment + NDA → Policies → Induction — driven by the
-            Onboarding agent.
-          </p>
-        </div>
-      </header>
+      <div className="mb-8">
+        <PageHeader
+          eyebrow="Talent"
+          title="Onboarding"
+          description="LOI → BGV → Appointment + NDA → Policies → Induction — driven by the Onboarding agent."
+        />
+      </div>
 
       {/* ── Templates setup ─────────────────────────────────────── */}
-      <div className="mb-6 rounded-lg border border-border bg-background">
+      <div className="mb-6 rounded-2xl border border-border bg-card">
         <button
           onClick={() => setTemplatesOpen((o) => !o)}
-          className="flex w-full items-center justify-between px-4 py-3 text-left"
+          className="flex w-full items-center justify-between px-5 py-4 text-left"
         >
           <div className="flex items-center gap-2">
             {allConfigured ? (
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <CheckCircle2 className="h-4 w-4 text-success" />
             ) : (
-              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              <AlertTriangle className="h-4 w-4 text-amber" />
             )}
-            <span className="text-sm font-medium text-foreground">
+            <span className="text-sm font-bold text-foreground">
               Document templates
             </span>
             {!allConfigured && missingCount > 0 ? (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
+              <span className="rounded-full bg-amber-tint px-2 py-0.5 text-[10px] font-bold text-amber">
                 {missingCount} missing
               </span>
             ) : allConfigured ? (
-              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200">
+              <span className="rounded-full bg-success-tint px-2 py-0.5 text-[10px] font-bold text-success">
                 All set
               </span>
             ) : null}
@@ -269,9 +247,9 @@ const missingCount = templates
         </button>
 
         {templatesOpen ? (
-          <div className="border-t border-border px-4 pb-4 pt-3">
+          <div className="border-t border-border px-5 pb-5 pt-4">
             {tagError ? (
-              <div className="mb-3 rounded-md border border-red-300/60 bg-red-50 p-2.5 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
+              <div className="mb-3 rounded-xl border border-destructive/30 bg-destructive-soft p-2.5 text-xs font-medium text-destructive">
                 {tagError}
               </div>
             ) : null}
@@ -300,7 +278,7 @@ const missingCount = templates
       </div>
 
       {/* ── Runs list ──────────────────────────────────────────── */}
-      <h2 className="mb-2 text-sm font-semibold text-foreground">
+      <h2 className="mb-3 font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
         Onboarding runs
       </h2>
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -316,14 +294,14 @@ const missingCount = templates
             key={f.key}
             onClick={() => setFilter(f.key)}
             className={
-              "rounded-full border px-3 py-1 text-xs font-medium transition-colors " +
+              "rounded-full border px-3 py-1 text-xs font-semibold transition-colors " +
               (filter === f.key
-                ? "border-foreground bg-foreground text-background"
-                : "border-border text-foreground hover:bg-muted")
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border text-muted-foreground hover:bg-muted hover:text-foreground")
             }
           >
             {f.label}
-            <span className="ml-1.5 text-muted-foreground">
+            <span className={filter === f.key ? "ml-1.5 opacity-70" : "ml-1.5 text-muted-foreground"}>
               {counts[f.key]}
             </span>
           </button>
@@ -333,20 +311,22 @@ const missingCount = templates
       {isLoading ? (
         <div className="space-y-3">
           {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-24 w-full" />
+            <Skeleton key={i} className="h-24 w-full rounded-2xl" />
           ))}
         </div>
       ) : error ? (
-        <div className="rounded-lg border border-red-300/60 bg-red-50 p-6 text-sm text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
+        <div className="rounded-2xl border border-destructive/30 bg-destructive-soft p-6 text-sm font-medium text-destructive">
           Couldn&apos;t load runs. {String(error)}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 px-6 py-12 text-center">
-          <Users className="mb-3 h-10 w-10 text-muted-foreground" />
-          <p className="text-sm font-medium text-foreground">
+        <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-background px-6 py-12 text-center">
+          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
+            <Users className="h-5 w-5" />
+          </div>
+          <p className="text-sm font-bold text-foreground">
             {filter === "all" ? "No onboarding runs yet" : `No ${filter} runs`}
           </p>
-          <p className="mt-1 max-w-md text-xs text-muted-foreground">
+          <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
             {filter === "all"
               ? "Pick a candidate from the section above, or add one manually."
               : "Switch filter to see runs in other states."}
@@ -360,30 +340,23 @@ const missingCount = templates
               <li key={r.id}>
                 <Link
                   href={`/onboarding/${r.id}`}
-                  className="group flex items-stretch gap-4 rounded-lg border border-border bg-background p-4 transition-colors hover:bg-muted/40"
+                  className="group flex items-stretch gap-4 rounded-2xl border border-border bg-card p-4 transition-colors hover:bg-muted/40"
                 >
-                  <div className={"w-1 shrink-0 rounded-full " + meta.dot} />
+                  <div className={"w-1 shrink-0 rounded-full " + meta.stripe} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-medium text-foreground">
+                      <p className="truncate text-sm font-bold text-foreground">
                         {r.candidate_name}
                       </p>
-                      <span
-                        className={
-                          "rounded-full px-2 py-0.5 text-[10px] font-medium " +
-                          meta.bg +
-                          " " +
-                          meta.text
-                        }
-                      >
+                      <StatusPill tone={meta.tone}>
                         {STATUS_LABELS[r.status] || r.status}
-                      </span>
+                      </StatusPill>
                     </div>
                     <p className="mt-0.5 truncate text-xs text-muted-foreground">
                       {r.role_title} · starts {r.start_date}
                     </p>
                     {r.blocked_reason ? (
-                      <p className="mt-1 truncate text-xs text-red-600">
+                      <p className="mt-1 truncate text-xs font-medium text-destructive">
                         {r.blocked_reason}
                       </p>
                     ) : null}
@@ -570,17 +543,17 @@ function TemplateSlot({
   }
 
   return (
-    <div className="rounded-md border border-border bg-muted/20 p-3">
+    <div className="rounded-xl border border-border bg-muted/40 p-3.5">
       {/* Header */}
       <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-xs font-medium text-foreground">{label}</p>
+        <p className="text-xs font-bold text-foreground">{label}</p>
         {current ? (
-          <span className="flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-300">
+          <span className="flex items-center gap-1 text-[10px] font-bold text-success">
             <CheckCircle2 className="h-3 w-3" />
             Configured
           </span>
         ) : (
-          <span className="flex items-center gap-1 text-[10px] text-red-600 dark:text-red-400">
+          <span className="flex items-center gap-1 text-[10px] font-bold text-destructive">
             <XCircle className="h-3 w-3" />
             Not set
           </span>
@@ -596,7 +569,7 @@ function TemplateSlot({
 
       {/* Error */}
       {uploadError ? (
-        <p className="mb-2 text-[11px] text-red-600">{uploadError}</p>
+        <p className="mb-2 text-[11px] font-medium text-destructive">{uploadError}</p>
       ) : null}
 
       {/* Upload button */}

@@ -136,7 +136,7 @@ export function ShareButton({ messageId }: { messageId: string }) {
           {busy ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : justCopied ? (
-            <Check className="h-3.5 w-3.5 text-emerald-600" />
+            <Check className="h-3.5 w-3.5 text-success" />
           ) : (
             <Share2 className="h-3.5 w-3.5" />
           )}

@@ -20,6 +20,10 @@ import { REQUEST_ID_HEADER, coerceRequestId } from "@/lib/request-id";
 
 export const API_URL = process.env.API_URL ?? "http://localhost:8000";
 
+// apps/esign — the in-house signing service. Separate deploy target
+// (Render), so it gets its own base URL rather than living under API_URL.
+export const ESIGN_API_URL = process.env.ESIGN_API_URL ?? "http://localhost:8001";
+
 export async function getAccessToken(): Promise<string | null> {
   const supabase = await createClient();
   const { data } = await supabase.auth.getSession();
@@ -138,12 +142,12 @@ export async function proxyPostJson(
 export async function proxyPublicJson(
   request: NextRequest | Request,
   path: string,
-  options: { method?: "GET" | "POST"; body?: unknown } = {},
+  options: { method?: "GET" | "POST"; body?: unknown; baseUrl?: string } = {},
 ): Promise<NextResponse> {
   const requestId = coerceRequestId(request.headers.get(REQUEST_ID_HEADER));
-  const { method = "GET", body } = options;
+  const { method = "GET", body, baseUrl = API_URL } = options;
 
-  const upstream = await fetch(`${API_URL}${path}`, {
+  const upstream = await fetch(`${baseUrl}${path}`, {
     method,
     headers: {
       [REQUEST_ID_HEADER]: requestId,
@@ -231,6 +235,7 @@ export async function proxyDownload(
 export async function proxyPublicPostJson(
   request: NextRequest,
   path: string,
+  options: { baseUrl?: string } = {},
 ): Promise<NextResponse> {
   const requestId = coerceRequestId(request.headers.get(REQUEST_ID_HEADER));
   let body: unknown;
@@ -246,5 +251,5 @@ export async function proxyPublicPostJson(
       { status: 400, headers: { [REQUEST_ID_HEADER]: requestId } },
     );
   }
-  return proxyPublicJson(request, path, { method: "POST", body });
+  return proxyPublicJson(request, path, { method: "POST", body, baseUrl: options.baseUrl });
 }

@@ -22,11 +22,11 @@ export function DocumentStatusBanner() {
 
   if (status.total === 0) {
     return (
-      <div className="mx-4 mt-3 flex items-start gap-3 rounded-lg border border-amber-300/50 bg-amber-50 px-3 py-2.5 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200 md:mx-6">
+      <div className="mx-4 mt-3 flex items-start gap-3 rounded-xl border border-amber/20 bg-amber-tint px-3 py-2.5 text-amber md:mx-6">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">Your knowledge base is empty.</p>
-          <p className="mt-0.5 text-xs text-amber-800/80 dark:text-amber-200/70">
+          <p className="mt-0.5 text-xs text-amber/80">
             Upload documents first — without them, answers will be generic.
           </p>
         </div>

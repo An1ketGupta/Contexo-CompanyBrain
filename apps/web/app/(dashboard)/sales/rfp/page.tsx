@@ -2,12 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import useSWR from "swr";
+import { ChevronRight, FileSpreadsheet, Loader2, Upload } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  PageHeader,
+  Stat,
+  StatGrid,
+  StatusPill,
+  type PillTone,
+} from "@/components/actual/kit";
 
 interface RfpRow {
   id: string;
@@ -24,22 +31,22 @@ const fetcher = async (url: string): Promise<{ rfps: RfpRow[] }> => {
   return res.json();
 };
 
-const STATUS_COLORS: Record<string, string> = {
+const STATUS_TONE: Record<string, PillTone> = {
   // legacy
-  extracted: "bg-blue-100 text-blue-700",
-  reviewed: "bg-amber-100 text-amber-700",
-  generating: "bg-amber-100 text-amber-700",
+  extracted: "blue",
+  reviewed: "amber",
+  generating: "amber",
   // agent v2
-  extracting: "bg-blue-100 text-blue-700",
-  awaiting_requirements_review: "bg-amber-100 text-amber-700",
-  drafting: "bg-amber-100 text-amber-700",
-  awaiting_rep_review: "bg-purple-100 text-purple-700",
-  awaiting_legal_review: "bg-purple-100 text-purple-700",
-  legal_rejected: "bg-amber-100 text-amber-700",
-  finalizing: "bg-amber-100 text-amber-700",
+  extracting: "blue",
+  awaiting_requirements_review: "amber",
+  drafting: "amber",
+  awaiting_rep_review: "violet",
+  awaiting_legal_review: "violet",
+  legal_rejected: "amber",
+  finalizing: "amber",
   // terminal
-  ready: "bg-emerald-100 text-emerald-700",
-  failed: "bg-red-100 text-red-700",
+  ready: "green",
+  failed: "red",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -57,6 +64,12 @@ const STATUS_LABEL: Record<string, string> = {
   generating: "Drafting",
 };
 
+const IN_REVIEW = new Set([
+  "awaiting_requirements_review",
+  "awaiting_rep_review",
+  "awaiting_legal_review",
+]);
+
 export default function RfpListPage() {
   const router = useRouter();
   const { data, error, isLoading, mutate } = useSWR<{ rfps: RfpRow[] }>(
@@ -67,6 +80,17 @@ export default function RfpListPage() {
 
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const rfps = useMemo(() => data?.rfps ?? [], [data]);
+  const stats = useMemo(
+    () => ({
+      total: rfps.length,
+      ready: rfps.filter((r) => r.status === "ready").length,
+      inReview: rfps.filter((r) => IN_REVIEW.has(r.status)).length,
+      gaps: rfps.reduce((n, r) => n + (r.gap_count || 0), 0),
+    }),
+    [rfps],
+  );
 
   const handleUpload = async (file: File) => {
     setUploadError(null);
@@ -90,35 +114,50 @@ export default function RfpListPage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">RFP responses</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Upload an RFP (XLSX, DOCX, or PDF). The agent extracts requirements, drafts answers from
-            your KB, runs through rep + legal review, then exports the answers back into the
-            buyer&apos;s original file.
-          </p>
-        </div>
-        <label className="cursor-pointer">
-          <input
-            type="file"
-            accept=".xlsx,.pdf,.docx,.doc,.txt,.md,.csv"
-            className="hidden"
-            disabled={uploading}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) handleUpload(f);
-            }}
-          />
-          <Button asChild>
-            <span>{uploading ? "Uploading…" : "Upload RFP"}</span>
-          </Button>
-        </label>
-      </header>
+    <div className="mx-auto max-w-5xl space-y-8 p-6 md:p-8">
+      <PageHeader
+        eyebrow="Sales"
+        title="RFP responses"
+        description="Upload an RFP (XLSX, DOCX, or PDF). The agent extracts requirements, drafts answers from your KB, runs rep + legal review, then exports back into the buyer's original file."
+        actions={
+          <label className="cursor-pointer">
+            <input
+              type="file"
+              accept=".xlsx,.pdf,.docx,.doc,.txt,.md,.csv"
+              className="hidden"
+              disabled={uploading}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleUpload(f);
+              }}
+            />
+            <Button asChild>
+              <span>
+                {uploading ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Upload className="size-4" />
+                )}
+                {uploading ? "Uploading…" : "Upload RFP"}
+              </span>
+            </Button>
+          </label>
+        }
+      />
+
+      <StatGrid>
+        <Stat label="Total RFPs" value={stats.total} />
+        <Stat label="Ready" value={stats.ready} tone="up" />
+        <Stat label="In review" value={stats.inReview} />
+        <Stat
+          label="Open gaps"
+          value={stats.gaps}
+          tone={stats.gaps > 0 ? "down" : "flat"}
+        />
+      </StatGrid>
 
       {uploadError && (
-        <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded-2xl border border-destructive/40 bg-destructive-soft p-3 text-sm text-destructive">
           {uploadError}
         </div>
       )}
@@ -126,48 +165,60 @@ export default function RfpListPage() {
       {isLoading ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className="h-16 w-full" />
+            <Skeleton key={i} className="h-[70px] w-full rounded-2xl" />
           ))}
         </div>
       ) : error ? (
-        <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded-2xl border border-destructive/40 bg-destructive-soft p-3 text-sm text-destructive">
           Failed to load RFPs.
         </div>
-      ) : !data?.rfps?.length ? (
-        <div className="rounded border border-dashed p-8 text-center text-sm text-muted-foreground">
-          No RFPs uploaded yet.
-        </div>
+      ) : !rfps.length ? (
+        <EmptyState />
       ) : (
-        <ul className="space-y-3">
-          {data.rfps.map((r) => (
-            <li
+        <div className="overflow-hidden rounded-2xl border border-border bg-card">
+          {rfps.map((r) => (
+            <Link
               key={r.id}
-              className="rounded border bg-white p-4 transition hover:bg-zinc-50"
+              href={`/sales/rfp/${r.id}`}
+              className="flex items-center gap-4 border-b border-border px-5 py-4 transition-colors last:border-b-0 hover:bg-muted/40"
             >
-              <Link href={`/sales/rfp/${r.id}`} className="block">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <h2 className="truncate font-medium">{r.source_filename}</h2>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {new Date(r.created_at).toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {r.gap_count > 0 && (
-                      <Badge className="bg-amber-100 text-amber-700">
-                        {r.gap_count} gaps
-                      </Badge>
-                    )}
-                    <Badge className={STATUS_COLORS[r.status] ?? ""}>
-                      {STATUS_LABEL[r.status] ?? r.status}
-                    </Badge>
-                  </div>
-                </div>
-              </Link>
-            </li>
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-tint text-brand">
+                <FileSpreadsheet className="size-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-bold text-foreground">
+                  {r.source_filename}
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {new Date(r.created_at).toLocaleString()}
+                </p>
+              </div>
+              {r.gap_count > 0 && (
+                <StatusPill tone="amber">{r.gap_count} gaps</StatusPill>
+              )}
+              <StatusPill tone={STATUS_TONE[r.status] ?? "gray"}>
+                {STATUS_LABEL[r.status] ?? r.status}
+              </StatusPill>
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+            </Link>
           ))}
-        </ul>
+        </div>
       )}
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="rounded-2xl border border-dashed border-border bg-background p-12 text-center">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
+        <Upload className="h-5 w-5" />
+      </div>
+      <p className="mt-3 text-sm font-bold">No RFPs uploaded yet</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Upload a buyer questionnaire and the agent takes it from extraction to a
+        finished response.
+      </p>
     </div>
   );
 }

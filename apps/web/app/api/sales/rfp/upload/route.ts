@@ -30,11 +30,12 @@ export async function POST(req: NextRequest): Promise<Response> {
       [REQUEST_ID_HEADER]: requestId,
       "Content-Type": contentType,
     },
-    // @ts-expect-error — Node fetch supports body: ReadableStream, types lag.
     body: req.body,
+    // `duplex: "half"` is required when streaming a request body. It's a valid
+    // RequestInit field at runtime (undici) but missing from lib.dom's type.
     duplex: "half",
     cache: "no-store",
-  });
+  } as RequestInit & { duplex: "half" });
 
   const data = await upstream.json().catch(() => ({}));
   const headers = new Headers();

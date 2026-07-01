@@ -269,10 +269,7 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this conversation?</AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmDelete?.title
-                ? `"${confirmDelete.title}" and all its messages will be permanently deleted.`
-                : "All messages in this conversation will be permanently deleted."}{" "}
-              This can't be undone.
+              This conversation and all its messages will be permanently deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

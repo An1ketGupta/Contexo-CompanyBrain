@@ -23,6 +23,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StatusPill, type PillTone } from "@/components/actual/kit";
 
 interface ReferenceRow {
   id: string;
@@ -450,7 +451,7 @@ export default function OnboardingDetailPage() {
   if (error || !data) {
     return (
       <div className="mx-auto max-w-5xl px-4 py-8">
-        <p className="text-sm text-red-600">
+        <p className="text-sm font-medium text-destructive">
           Couldn&apos;t load this onboarding run.{" "}
           <Link
             href="/onboarding"
@@ -473,7 +474,7 @@ export default function OnboardingDetailPage() {
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
       <Link
         href="/onboarding"
-        className="mb-4 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+        className="mb-4 inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
       >
         <ArrowLeft className="h-3.5 w-3.5" /> Back to onboarding
       </Link>
@@ -481,10 +482,11 @@ export default function OnboardingDetailPage() {
       <header className="mb-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+            <p className="mb-1 text-[13px] font-bold text-brand">Onboarding</p>
+            <h1 className="text-3xl font-extrabold tracking-tight text-foreground">
               {data.candidate_name}
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="mt-1.5 text-sm text-muted-foreground">
               {data.role_title} · starts {data.start_date}
             </p>
           </div>
@@ -515,47 +517,47 @@ export default function OnboardingDetailPage() {
           </div>
         </div>
 
-        <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium">
-          <span
-            className={
-              "h-1.5 w-1.5 rounded-full " +
+        <div className="mt-3">
+          <StatusPill
+            tone={
               (data.status === "completed"
-                ? "bg-emerald-500"
+                ? "green"
                 : isBlocked || data.status === "failed"
-                  ? "bg-red-500"
-                  : "bg-blue-500")
+                  ? "red"
+                  : "blue") as PillTone
             }
-          />
-          {STATUS_LABELS[data.status] || data.status}
+          >
+            {STATUS_LABELS[data.status] || data.status}
+          </StatusPill>
         </div>
       </header>
 
       {actionError ? (
-        <div className="mb-4 rounded-md border border-red-300/60 bg-red-50 p-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
+        <div className="mb-4 rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm font-medium text-destructive">
           {actionError}
         </div>
       ) : null}
 
       {isBlocked ? (
-        <div className="mb-6 rounded-lg border border-amber-300/60 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-500/10">
+        <div className="mb-6 rounded-2xl border border-amber/30 bg-amber-tint p-4">
           <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber" />
             <div className="flex-1">
-              <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
+              <p className="text-sm font-bold text-amber">
                 Upload your{" "}
                 {(data.blocked_template_kind || "")
                   .replace(/_/g, " ")
                   .toUpperCase()}{" "}
                 template to continue
               </p>
-              <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">
+              <p className="mt-1 text-xs text-amber/90">
                 The agent paused because no template is tagged for this kind.
                 Upload the DOCX to the knowledge base, then tag it from the
                 document page — the agent will resume automatically.
               </p>
               <Link
                 href="/onboarding/templates"
-                className="mt-2 inline-block text-xs font-medium text-amber-900 underline hover:no-underline dark:text-amber-50"
+                className="mt-2 inline-block text-xs font-bold text-amber underline hover:no-underline"
               >
                 Open templates →
               </Link>
@@ -565,14 +567,14 @@ export default function OnboardingDetailPage() {
       ) : null}
 
       {data.status !== "blocked_missing_template" && data.blocked_reason ? (
-        <div className="mb-6 rounded-lg border border-red-300/60 bg-red-50 p-4 dark:border-red-500/30 dark:bg-red-500/10">
+        <div className="mb-6 rounded-2xl border border-destructive/30 bg-destructive-soft p-4">
           <div className="flex items-start gap-3">
-            <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600 dark:text-red-400" />
+            <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
             <div className="flex-1">
-              <p className="text-sm font-medium text-red-900 dark:text-red-100">
+              <p className="text-sm font-bold text-destructive">
                 Agent failed
               </p>
-              <p className="mt-1 text-xs text-red-800 dark:text-red-200">
+              <p className="mt-1 text-xs text-destructive/90">
                 {data.blocked_reason}
               </p>
             </div>
@@ -581,7 +583,7 @@ export default function OnboardingDetailPage() {
       ) : null}
 
       {/* Summary card */}
-      <section className="mb-8 grid grid-cols-2 gap-x-6 gap-y-3 rounded-lg border border-border bg-background p-4 sm:grid-cols-4">
+      <section className="mb-8 grid grid-cols-2 gap-x-6 gap-y-3 rounded-2xl border border-border bg-card p-4 sm:grid-cols-4">
         <Field label="CTC" value={ctc} />
         <Field label="Designation" value={data.designation || data.role_title} />
         <Field
@@ -596,7 +598,7 @@ export default function OnboardingDetailPage() {
 
       {/* LOI section */}
       <SectionHeader icon={FileSignature} title="Letter of Intent" />
-      <div className="mb-6 rounded-lg border border-border bg-background p-4">
+      <div className="mb-6 rounded-2xl border border-border bg-card p-4">
         <LoiPanel
           data={data}
           busy={busy}
@@ -612,7 +614,7 @@ export default function OnboardingDetailPage() {
 
       {/* BGV section */}
       <SectionHeader icon={ShieldCheck} title="Background verification" />
-      <div className="mb-6 rounded-lg border border-border bg-background p-4">
+      <div className="mb-6 rounded-2xl border border-border bg-card p-4">
         <BgvPanel
           data={data}
           references={data.references}
@@ -625,7 +627,7 @@ export default function OnboardingDetailPage() {
 
       {/* Appointment + NDA section */}
       <SectionHeader icon={FileText} title="Appointment Letter + NDA" />
-      <div className="mb-6 rounded-lg border border-border bg-background p-4">
+      <div className="mb-6 rounded-2xl border border-border bg-card p-4">
         <BundlePanel
           data={data}
           busy={busy}
@@ -636,7 +638,7 @@ export default function OnboardingDetailPage() {
       {/* Policies + Induction */}
       <SectionHeader icon={CheckCircle2} title="Policies & Induction" />
       <div className="mb-6 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-lg border border-border bg-background p-4">
+        <div className="rounded-2xl border border-border bg-card p-4">
           <p className="text-sm font-medium">Policies</p>
           <p className="mt-1 text-xs text-muted-foreground">
             Assigned: {relativeTime(data.policies_assigned_at)}
@@ -644,7 +646,7 @@ export default function OnboardingDetailPage() {
             Acknowledged: {relativeTime(data.policies_acknowledged_at)}
           </p>
         </div>
-        <div className="rounded-lg border border-border bg-background p-4">
+        <div className="rounded-2xl border border-border bg-card p-4">
           <p className="text-sm font-medium">Induction</p>
           <p className="mt-1 text-xs text-muted-foreground">
             Sent: {relativeTime(data.induction_sent_at)}
@@ -666,7 +668,7 @@ export default function OnboardingDetailPage() {
 
       {/* Timeline */}
       <SectionHeader icon={Clock} title="Timeline" />
-      <div className="mb-12 rounded-lg border border-border bg-background p-4">
+      <div className="mb-12 rounded-2xl border border-border bg-card p-4">
         <ol className="space-y-3">
           {data.events.map((e) => (
             <li key={e.id} className="flex gap-3 text-xs">
@@ -698,8 +700,8 @@ function SectionHeader({
   title: string;
 }) {
   return (
-    <h2 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-      <Icon className="h-3.5 w-3.5" />
+    <h2 className="mb-3 flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+      <Icon className="h-3.5 w-3.5 text-brand" />
       {title}
     </h2>
   );
@@ -708,10 +710,10 @@ function SectionHeader({
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+      <p className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
         {label}
       </p>
-      <p className="mt-0.5 text-sm font-medium text-foreground">{value}</p>
+      <p className="mt-1 text-sm font-bold text-foreground">{value}</p>
     </div>
   );
 }
@@ -752,7 +754,7 @@ function LoiPanel({
             <span className="ml-2 text-xs text-muted-foreground">
               {loi.sign_status.replace(/_/g, " ")}
               {loi.hr_edit_revision > 0 ? (
-                <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
+                <span className="ml-2 rounded-full bg-amber-tint px-2 py-0.5 text-[10px] font-bold text-amber">
                   edited (rev {loi.hr_edit_revision})
                 </span>
               ) : null}
@@ -778,7 +780,7 @@ function LoiPanel({
       </div>
 
       {inReview ? (
-        <div className="space-y-3 rounded-md border border-amber-300/60 bg-amber-50/50 p-4 dark:border-amber-500/30 dark:bg-amber-500/5">
+        <div className="space-y-3 rounded-xl border border-amber/30 bg-amber-tint p-4">
           <div>
             <p className="text-sm font-medium">
               Review the LOI before sending for signature
@@ -858,7 +860,7 @@ function LoiPanel({
       ) : null}
 
       {awaitingSign ? (
-        <div className="rounded-md border border-dashed border-border bg-muted/30 p-4">
+        <div className="rounded-xl border border-dashed border-border bg-muted/40 p-4">
           <p className="text-sm">
             Print the draft, sign it, scan, then upload the signed PDF here.
           </p>
@@ -890,7 +892,7 @@ function LoiPanel({
       ) : null}
 
       {inEsign ? (
-        <div className="space-y-3 rounded-md border border-blue-300/60 bg-blue-50/40 p-4 dark:border-blue-500/30 dark:bg-blue-500/5">
+        <div className="space-y-3 rounded-xl border border-brand/30 bg-brand-tint p-4">
           <div>
             <p className="text-sm font-medium">Signing the LOI</p>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -901,13 +903,13 @@ function LoiPanel({
           </div>
 
           <dl className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-            <div className="flex items-center justify-between rounded border border-border bg-background px-3 py-2">
+            <div className="flex items-center justify-between rounded-lg border border-border bg-muted/40 px-3 py-2">
               <dt className="font-medium text-foreground">You (HR)</dt>
               <dd className="text-muted-foreground">
                 {esignStatus === "completed" ? "Signed ✓" : "Pending"}
               </dd>
             </div>
-            <div className="flex items-center justify-between rounded border border-border bg-background px-3 py-2">
+            <div className="flex items-center justify-between rounded-lg border border-border bg-muted/40 px-3 py-2">
               <dt className="font-medium text-foreground">
                 {data.candidate_name || "Candidate"}
               </dt>
@@ -980,31 +982,31 @@ function HrReferencesOverride({
   }
 
   return (
-    <div className="space-y-2 rounded-md border border-border bg-background p-3">
-      <p className="text-xs font-medium">Enter references on the candidate&apos;s behalf</p>
+    <div className="space-y-2 rounded-xl border border-border bg-card p-3">
+      <p className="text-xs font-bold">Enter references on the candidate&apos;s behalf</p>
       {refs.map((r, idx) => (
         <div key={idx} className="grid gap-2 sm:grid-cols-2">
           <input
             placeholder="Full name"
-            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            className="h-8 rounded-lg border border-input bg-background px-2 text-xs"
             value={r.name}
             onChange={(e) => update(idx, { name: e.target.value })}
           />
           <input
             placeholder="Email"
-            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            className="h-8 rounded-lg border border-input bg-background px-2 text-xs"
             value={r.email}
             onChange={(e) => update(idx, { email: e.target.value })}
           />
           <input
             placeholder="Phone (optional)"
-            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            className="h-8 rounded-lg border border-input bg-background px-2 text-xs"
             value={r.phone}
             onChange={(e) => update(idx, { phone: e.target.value })}
           />
           <input
             placeholder="Relationship (e.g. Manager at Acme)"
-            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            className="h-8 rounded-lg border border-input bg-background px-2 text-xs"
             value={r.relationship}
             onChange={(e) => update(idx, { relationship: e.target.value })}
           />
@@ -1086,7 +1088,7 @@ function BgvPanel({
             className={
               "text-xs " +
               (formExpired
-                ? "font-medium text-red-600 dark:text-red-400"
+                ? "font-medium text-destructive"
                 : "text-muted-foreground")
             }
           >
@@ -1146,7 +1148,7 @@ function BgvPanel({
         return (
           <li
             key={r.id}
-            className="flex items-start justify-between gap-3 rounded-md border border-border bg-muted/20 p-3"
+            className="flex items-start justify-between gap-3 rounded-xl border border-border bg-muted/40 p-3"
           >
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-foreground">
@@ -1166,7 +1168,7 @@ function BgvPanel({
                       : "Pending"}
               </p>
               {submitted ? (
-                <div className="mt-2 space-y-1 rounded border border-border bg-background p-2 text-xs">
+                <div className="mt-2 space-y-1 rounded-lg border border-border bg-card p-2 text-xs">
                   <p>
                     <strong>Worked together:</strong>{" "}
                     {r.response_worked_together_months ?? "—"} months ·{" "}
@@ -1197,10 +1199,10 @@ function BgvPanel({
             </div>
             <span
               className={
-                "rounded-full px-2 py-0.5 text-[10px] font-medium " +
+                "rounded-full px-2.5 py-0.5 text-[10px] font-bold " +
                 (submitted
-                  ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
-                  : "bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300")
+                  ? "bg-success-tint text-success"
+                  : "bg-brand-tint text-brand")
               }
             >
               {r.status}
@@ -1233,7 +1235,7 @@ function BundlePanel({
       </div>
 
       {awaitingApproval ? (
-        <div className="rounded-md border border-dashed border-border bg-muted/30 p-4">
+        <div className="rounded-xl border border-dashed border-border bg-muted/40 p-4">
           <p className="text-sm">
             Review both documents above. When you&apos;re ready, send the
             bundle to the candidate.
@@ -1271,14 +1273,14 @@ function DocCard({
   doc: DocumentRow | undefined;
 }) {
   return (
-    <div className="rounded-md border border-border bg-muted/20 p-3">
-      <p className="text-xs font-medium text-foreground">{label}</p>
+    <div className="rounded-xl border border-border bg-muted/40 p-3">
+      <p className="text-xs font-bold text-foreground">{label}</p>
       {doc ? (
         <>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             {doc.sign_status.replace(/_/g, " ")}
             {doc.esign_status ? (
-              <span className="ml-1 rounded bg-blue-100 px-1 py-0.5 text-[10px] uppercase tracking-wide text-blue-700 dark:bg-blue-500/20 dark:text-blue-300">
+              <span className="ml-1 rounded-full bg-brand-tint px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand">
                 Signing: {doc.esign_status}
               </span>
             ) : null}
@@ -1298,7 +1300,7 @@ function DocCard({
               href={doc.esign_signing_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="ml-2 mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-blue-700 underline hover:no-underline dark:text-blue-300"
+              className="ml-2 mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-brand underline hover:no-underline"
             >
               Open signing link <ExternalLink className="h-3 w-3" />
             </a>

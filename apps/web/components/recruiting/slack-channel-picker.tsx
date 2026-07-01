@@ -276,7 +276,7 @@ export function SlackChannelPicker({
                 </div>
               ) : channels.length === 0 ? (
                 <div className="space-y-3 p-4 text-sm">
-                  <div className="flex items-start gap-2 text-amber-700 dark:text-amber-300">
+                  <div className="flex items-start gap-2 text-amber">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     <span>
                       No channels found. Invite the NirnayaIQ bot to the
@@ -336,12 +336,12 @@ export function SlackChannelPicker({
                             )}
                             <span className="truncate font-medium">{c.name}</span>
                             {requiresManualInvite && (
-                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
+                              <span className="rounded-full bg-amber-tint px-2 py-0.5 text-[10px] font-bold text-amber">
                                 invite bot
                               </span>
                             )}
                             {willAutoJoin && !isJoining && (
-                              <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-800 dark:bg-blue-500/20 dark:text-blue-200">
+                              <span className="rounded-full bg-brand-tint px-2 py-0.5 text-[10px] font-bold text-brand">
                                 auto-join
                               </span>
                             )}
@@ -353,7 +353,7 @@ export function SlackChannelPicker({
                             )}
                           </div>
                           {isCurrent && (
-                            <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-success">
                               <CheckCircle2 className="h-3.5 w-3.5" />
                               current
                             </span>
@@ -367,11 +367,11 @@ export function SlackChannelPicker({
             </div>
 
             {scopeUpgradeNeeded && (
-              <div className="rounded border border-amber-300 bg-amber-50/60 p-3 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+              <div className="rounded-xl border border-amber/30 bg-amber-tint p-3 text-xs text-amber">
                 <p className="font-medium">Re-authorise Slack to enable auto-join.</p>
                 <p className="mt-1">
                   Your Slack install pre-dates the{" "}
-                  <code className="rounded bg-amber-100/80 px-1 py-0.5 text-amber-950 dark:bg-amber-500/20 dark:text-amber-100">
+                  <code className="rounded bg-amber/15 px-1 py-0.5 font-semibold text-amber">
                     channels:join
                   </code>{" "}
                   scope. Reconnect and the bot will join public channels for
@@ -396,18 +396,18 @@ export function SlackChannelPicker({
             )}
 
             {channels.some((c) => !c.is_member && c.is_private) && (
-              <div className="rounded border border-amber-300 bg-amber-50/60 p-3 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+              <div className="rounded-xl border border-amber/30 bg-amber-tint p-3 text-xs text-amber">
                 <p className="font-medium">
                   Private channels need a manual invite.
                 </p>
                 <p className="mt-1">
                   Public channels marked{" "}
-                  <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-medium text-blue-800 dark:bg-blue-500/20 dark:text-blue-200">
+                  <span className="rounded-full bg-brand-tint px-1.5 py-0.5 text-[10px] font-bold text-brand">
                     auto-join
                   </span>{" "}
                   add the bot for you when you click. For private channels,
                   open them in Slack and type{" "}
-                  <code className="rounded bg-amber-100/80 px-1 py-0.5 text-amber-950 dark:bg-amber-500/20 dark:text-amber-100">
+                  <code className="rounded bg-amber/15 px-1 py-0.5 font-semibold text-amber">
                     /invite @NirnayaIQ
                   </code>
                   , then hit refresh.
@@ -421,7 +421,7 @@ export function SlackChannelPicker({
                 type="button"
                 onClick={handleConnect}
                 disabled={connecting}
-                className="text-blue-600 hover:underline disabled:opacity-60"
+                className="font-semibold text-brand hover:underline disabled:opacity-60"
               >
                 Re-authorise Slack
               </button>

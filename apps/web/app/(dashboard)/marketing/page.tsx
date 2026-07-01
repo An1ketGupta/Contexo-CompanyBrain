@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { Loader2, Plus, Rocket, Sparkles } from "lucide-react";
@@ -20,6 +20,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  PageHeader,
+  Stat,
+  StatGrid,
+  StatusPill,
+  type PillTone,
+} from "@/components/actual/kit";
+import { cn } from "@/lib/utils";
 
 type Channel = "blog" | "linkedin" | "x" | "email" | "landing" | "ads";
 type Status = "draft" | "generating" | "ready" | "published" | "failed";
@@ -40,6 +48,14 @@ interface MarketingBrief {
 
 const ALL_CHANNELS: Channel[] = ["blog", "linkedin", "x", "email", "landing", "ads"];
 
+const STATUS_TONE: Record<Status, PillTone> = {
+  draft: "gray",
+  generating: "blue",
+  ready: "amber",
+  published: "green",
+  failed: "red",
+};
+
 const fetcher = async <T,>(url: string): Promise<T> => {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed (${res.status})`);
@@ -56,33 +72,47 @@ export default function MarketingBriefsPage() {
 
   const [open, setOpen] = useState(false);
 
+  const briefs = useMemo(() => data ?? [], [data]);
+  const stats = useMemo(() => {
+    const by = (s: Status) => briefs.filter((b) => b.status === s).length;
+    return {
+      total: briefs.length,
+      published: by("published"),
+      ready: by("ready"),
+      generating: by("generating"),
+    };
+  }, [briefs]);
+
   return (
-    <div className="container max-w-5xl mx-auto py-8 px-4">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold flex items-center gap-2">
-            <Rocket className="w-6 h-6" /> Marketing briefs
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            AI-generated positioning, messaging, channel drafts, and content briefs
-            grounded in your KB.
-          </p>
-        </div>
-        <Button onClick={() => setOpen(true)}>
-          <Plus className="w-4 h-4 mr-2" /> New brief
-        </Button>
-      </div>
+    <div className="mx-auto max-w-5xl space-y-8 p-6 md:p-8">
+      <PageHeader
+        eyebrow="Marketing"
+        title="Marketing briefs"
+        description="AI-generated positioning, messaging, channel drafts, and content briefs — grounded in your knowledge base and competitor context."
+        actions={
+          <Button onClick={() => setOpen(true)}>
+            <Plus className="size-4" /> New brief
+          </Button>
+        }
+      />
+
+      <StatGrid>
+        <Stat label="Total briefs" value={stats.total} />
+        <Stat label="Published" value={stats.published} tone="up" />
+        <Stat label="Ready to review" value={stats.ready} />
+        <Stat label="Generating" value={stats.generating} />
+      </StatGrid>
 
       {isLoading ? (
         <div className="space-y-3">
-          <Skeleton className="h-20 w-full" />
-          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-24 w-full rounded-2xl" />
+          <Skeleton className="h-24 w-full rounded-2xl" />
         </div>
-      ) : !data?.length ? (
+      ) : !briefs.length ? (
         <EmptyState onCreate={() => setOpen(true)} />
       ) : (
         <div className="space-y-3">
-          {data.map((b) => (
+          {briefs.map((b) => (
             <BriefRow
               key={b.id}
               brief={b}
@@ -107,15 +137,17 @@ export default function MarketingBriefsPage() {
 
 function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
-    <div className="border border-dashed rounded-lg p-12 text-center">
-      <Sparkles className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-      <h2 className="text-lg font-semibold mb-2">No marketing briefs yet</h2>
-      <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
-        Spin up a brief by telling the agent your objective. It will pull positioning,
-        voice, and competitor context from your KB and emit 5 editable artifacts.
+    <div className="rounded-2xl border border-dashed border-border bg-background p-12 text-center">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
+        <Rocket className="h-5 w-5" />
+      </div>
+      <p className="mt-3 text-sm font-bold">No marketing briefs yet</p>
+      <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
+        Spin up a brief by telling the agent your objective. It pulls positioning,
+        voice, and competitor context from your KB and emits 5 editable artifacts.
       </p>
-      <Button onClick={onCreate} size="lg">
-        <Plus className="w-4 h-4 mr-2" /> Create your first brief
+      <Button onClick={onCreate} size="lg" className="mt-5">
+        <Plus className="size-4" /> Create your first brief
       </Button>
     </div>
   );
@@ -135,50 +167,33 @@ function BriefRow({
         e.preventDefault();
         onClick();
       }}
-      className="block rounded-lg border bg-card hover:bg-accent/40 transition-colors p-4"
+      className="block rounded-2xl border border-border bg-card p-5 transition-colors hover:bg-muted/40"
     >
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <StatusBadge status={brief.status} />
-            <span className="text-xs text-muted-foreground">
-              {new Date(brief.created_at).toLocaleString()}
-            </span>
-          </div>
-          <p className="text-sm font-medium line-clamp-2">{brief.objective}</p>
-          <div className="flex flex-wrap gap-1.5 mt-2">
-            {brief.channels.map((c) => (
-              <span
-                key={c}
-                className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase tracking-wide"
-              >
-                {c}
-              </span>
-            ))}
-            {brief.competitors.length ? (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
-                vs {brief.competitors.join(", ")}
-              </span>
-            ) : null}
-          </div>
-        </div>
+      <div className="flex items-center gap-2">
+        <StatusPill tone={STATUS_TONE[brief.status]}>{brief.status}</StatusPill>
+        <span className="text-xs text-muted-foreground">
+          {new Date(brief.created_at).toLocaleString()}
+        </span>
+      </div>
+      <p className="mt-2.5 line-clamp-2 text-sm font-bold text-foreground">
+        {brief.objective}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {brief.channels.map((c) => (
+          <span
+            key={c}
+            className="rounded-full bg-muted px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground"
+          >
+            {c}
+          </span>
+        ))}
+        {brief.competitors.length ? (
+          <span className="rounded-full bg-amber-tint px-2.5 py-0.5 text-[10px] font-bold text-amber">
+            vs {brief.competitors.join(", ")}
+          </span>
+        ) : null}
       </div>
     </Link>
-  );
-}
-
-function StatusBadge({ status }: { status: Status }) {
-  const styles: Record<Status, string> = {
-    draft: "bg-muted text-muted-foreground",
-    generating: "bg-blue-100 text-blue-700",
-    ready: "bg-amber-100 text-amber-800",
-    published: "bg-green-100 text-green-800",
-    failed: "bg-red-100 text-red-800",
-  };
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded-full ${styles[status]}`}>
-      {status}
-    </span>
   );
 }
 
@@ -276,17 +291,18 @@ function NewBriefDialog({
           </div>
           <div>
             <Label>Channels</Label>
-            <div className="flex flex-wrap gap-2 mt-2">
+            <div className="mt-2 flex flex-wrap gap-2">
               {ALL_CHANNELS.map((c) => (
                 <button
                   key={c}
                   type="button"
                   onClick={() => toggleChannel(c)}
-                  className={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs font-semibold transition-colors",
                     channels.includes(c)
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "bg-background text-muted-foreground border-border hover:bg-muted"
-                  }`}
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-background text-muted-foreground hover:bg-muted",
+                  )}
                 >
                   {c}
                 </button>
@@ -310,9 +326,9 @@ function NewBriefDialog({
           </Button>
           <Button onClick={submit} disabled={submitting}>
             {submitting ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              <Loader2 className="size-4 animate-spin" />
             ) : (
-              <Sparkles className="w-4 h-4 mr-2" />
+              <Sparkles className="size-4" />
             )}
             Generate brief
           </Button>

@@ -13,7 +13,7 @@ export function KnowledgeGapBanner({ gap, onDismiss }: KnowledgeGapBannerProps) 
   if (!gap) return null;
 
   return (
-    <div className="mb-2 flex items-start gap-2 rounded-md border border-amber-300/60 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+    <div className="mb-2 flex items-start gap-2 rounded-xl border border-amber/20 bg-amber-tint p-3 text-sm text-amber">
       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
       <div className="flex-1">
         <p className="font-medium">Knowledge gap detected</p>

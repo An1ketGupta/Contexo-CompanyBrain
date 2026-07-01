@@ -24,16 +24,16 @@ export function CompetitorWarningBanner({
     <div
       role="alert"
       className={cn(
-        "mt-2 flex items-start gap-2.5 rounded-md border border-amber-300/70 bg-amber-50 p-2.5 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100",
+        "mt-2 flex items-start gap-2.5 rounded-xl border border-amber/20 bg-amber-tint p-2.5 text-xs text-amber",
         className,
       )}
     >
-      <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+      <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber" />
       <div className="min-w-0 flex-1 leading-5">
         <div className="font-medium">
           Competitor mention{matches.length > 1 ? "s" : ""} detected
         </div>
-        <div className="mt-0.5 text-amber-800 dark:text-amber-200/90">
+        <div className="mt-0.5 text-amber/90">
           This response references{" "}
           {orgTerms.length > 0 && (
             <>
@@ -54,7 +54,7 @@ export function CompetitorWarningBanner({
       <button
         type="button"
         onClick={() => setDismissed(true)}
-        className="tap -mr-1 -mt-1 inline-flex shrink-0 items-center justify-center rounded p-1 text-amber-700 transition-colors hover:bg-amber-100/70 dark:text-amber-300 dark:hover:bg-amber-500/20"
+        className="tap -mr-1 -mt-1 inline-flex shrink-0 items-center justify-center rounded p-1 text-amber transition-colors hover:bg-amber/15"
         aria-label="Dismiss warning"
       >
         <X className="h-3 w-3" />

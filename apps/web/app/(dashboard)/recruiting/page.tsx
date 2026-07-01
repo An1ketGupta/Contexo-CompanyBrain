@@ -16,6 +16,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader, StatusPill, type PillTone } from "@/components/actual/kit";
 import { NotionParentPicker } from "@/components/recruiting/notion-parent-picker";
 import { SlackChannelPicker } from "@/components/recruiting/slack-channel-picker";
 
@@ -59,37 +60,19 @@ interface SlackChannelStatus {
 type StatusKey = "all" | "draft" | "published" | "failed";
 
 const PLATFORM_STYLE: Record<string, { label: string; bg: string; text: string }> = {
-  greenhouse: { label: "Greenhouse", bg: "bg-emerald-100 dark:bg-emerald-500/20", text: "text-emerald-700 dark:text-emerald-300" },
-  lever: { label: "Lever", bg: "bg-violet-100 dark:bg-violet-500/20", text: "text-violet-700 dark:text-violet-300" },
-  ashby: { label: "Ashby", bg: "bg-orange-100 dark:bg-orange-500/20", text: "text-orange-700 dark:text-orange-300" },
-  naukri: { label: "Naukri", bg: "bg-blue-100 dark:bg-blue-500/20", text: "text-blue-700 dark:text-blue-300" },
+  greenhouse: { label: "Greenhouse", bg: "bg-success-tint", text: "text-success" },
+  lever: { label: "Lever", bg: "bg-violet-tint", text: "text-violet" },
+  ashby: { label: "Ashby", bg: "bg-amber-tint", text: "text-amber" },
+  naukri: { label: "Naukri", bg: "bg-brand-tint", text: "text-brand" },
 };
 
 const STATUS_META: Record<
   Exclude<StatusKey, "all">,
-  { label: string; dot: string; stripe: string; text: string; bg: string }
+  { label: string; tone: PillTone; stripe: string }
 > = {
-  draft: {
-    label: "Draft",
-    dot: "bg-zinc-400",
-    stripe: "bg-zinc-300 dark:bg-zinc-600",
-    text: "text-zinc-700 dark:text-zinc-300",
-    bg: "bg-zinc-100 dark:bg-zinc-800",
-  },
-  published: {
-    label: "Published",
-    dot: "bg-emerald-500",
-    stripe: "bg-emerald-500",
-    text: "text-emerald-700 dark:text-emerald-300",
-    bg: "bg-emerald-50 dark:bg-emerald-500/10",
-  },
-  failed: {
-    label: "Failed",
-    dot: "bg-red-500",
-    stripe: "bg-red-500",
-    text: "text-red-700 dark:text-red-300",
-    bg: "bg-red-50 dark:bg-red-500/10",
-  },
+  draft: { label: "Draft", tone: "gray", stripe: "bg-border" },
+  published: { label: "Published", tone: "green", stripe: "bg-success" },
+  failed: { label: "Failed", tone: "red", stripe: "bg-destructive" },
 };
 
 const fetcher = async <T,>(url: string): Promise<T> => {
@@ -174,21 +157,19 @@ export default function RecruitingPage() {
     slackStatus.accessible;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Recruiting</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Generate JD variants from your KB, publish to your ATS, set up the
-            hiring tracker.
-          </p>
-        </div>
-        <Button asChild>
-          <Link href="/recruiting/new">
-            <Plus className="mr-2 h-4 w-4" /> New requisition
-          </Link>
-        </Button>
-      </header>
+    <div className="mx-auto max-w-5xl space-y-8 p-6 md:p-8">
+      <PageHeader
+        eyebrow="Talent"
+        title="Recruiting"
+        description="Generate JD variants from your KB, publish to your ATS, set up the hiring tracker."
+        actions={
+          <Button asChild>
+            <Link href="/recruiting/new">
+              <Plus className="size-4" /> New requisition
+            </Link>
+          </Button>
+        }
+      />
 
       {needsSetup && (
         <NotionSetupCard
@@ -313,32 +294,32 @@ export default function RecruitingPage() {
       {isLoading ? (
         <div className="space-y-3">
           {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-20 w-full" />
+            <Skeleton key={i} className="h-20 w-full rounded-2xl" />
           ))}
         </div>
       ) : error ? (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+        <div className="rounded-2xl border border-destructive/30 bg-destructive-soft p-4 text-sm font-medium text-destructive">
           Failed to load requisitions.
         </div>
       ) : !data?.requisitions?.length ? (
-        <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border bg-card/40 p-12 text-center">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-            <Briefcase className="h-5 w-5 text-muted-foreground" />
+        <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border bg-background p-12 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
+            <Briefcase className="h-5 w-5" />
           </div>
           <div>
-            <p className="font-medium">No requisitions yet</p>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="text-sm font-bold">No requisitions yet</p>
+            <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
               Generate your first JD variant from your knowledge base.
             </p>
           </div>
-          <Button asChild size="sm">
+          <Button asChild size="lg" className="mt-1">
             <Link href="/recruiting/new">
-              <Plus className="mr-1.5 h-3.5 w-3.5" /> New requisition
+              <Plus className="size-4" /> New requisition
             </Link>
           </Button>
         </div>
       ) : visible.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border bg-card/40 p-8 text-center text-sm text-muted-foreground">
+        <div className="rounded-2xl border border-dashed border-border bg-background p-8 text-center text-sm text-muted-foreground">
           {query.trim()
             ? `No requisitions match "${query.trim()}".`
             : `No ${filter} requisitions.`}
@@ -375,24 +356,24 @@ function StatusRow({
       : "bg-[#4A154B] text-white";
 
   return (
-    <div className="group relative flex items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5 transition hover:border-foreground/25 hover:shadow-sm">
+    <div className="group relative flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 transition-colors hover:bg-muted/40">
       <div
-        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${accentClass}`}
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${accentClass}`}
         aria-hidden
       >
         <Icon className="h-4 w-4" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
             {label}
           </span>
-          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-success">
+            <span className="h-1.5 w-1.5 rounded-full bg-success" />
             Connected
           </span>
         </div>
-        <div className="mt-0.5 flex min-w-0 items-baseline gap-0.5 text-sm font-medium text-foreground">
+        <div className="mt-0.5 flex min-w-0 items-baseline gap-0.5 text-sm font-bold text-foreground">
           {valuePrefix && (
             <span className="text-muted-foreground">{valuePrefix}</span>
           )}
@@ -403,7 +384,7 @@ function StatusRow({
         type="button"
         onClick={onChange}
         aria-label={`Change ${label.toLowerCase()}`}
-        className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        className="inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         <Settings className="h-3 w-3" />
         Change
@@ -422,7 +403,7 @@ function RequisitionItem({ row }: { row: RequisitionRow }) {
       : [];
 
   return (
-    <li className="overflow-hidden rounded-lg border border-border bg-card transition hover:border-foreground/30 hover:bg-accent/40">
+    <li className="overflow-hidden rounded-2xl border border-border bg-card transition-colors hover:bg-muted/40">
       <Link href={`/recruiting/${row.id}`} className="flex">
         <span
           aria-hidden
@@ -430,7 +411,7 @@ function RequisitionItem({ row }: { row: RequisitionRow }) {
         />
         <div className="flex flex-1 items-center justify-between gap-4 p-4">
           <div className="min-w-0 flex-1">
-            <h2 className="truncate font-medium">{row.role_request}</h2>
+            <h2 className="truncate text-sm font-bold">{row.role_request}</h2>
             <p
               className="mt-0.5 text-xs text-muted-foreground"
               title={new Date(row.created_at).toLocaleString()}
@@ -462,7 +443,7 @@ function RequisitionItem({ row }: { row: RequisitionRow }) {
               return (
                 <span
                   key={p}
-                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${style.bg} ${style.text}`}
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${style.bg} ${style.text}`}
                 >
                   <span
                     aria-hidden
@@ -474,12 +455,7 @@ function RequisitionItem({ row }: { row: RequisitionRow }) {
                 </span>
               );
             })}
-            <span
-              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium ${statusMeta.bg} ${statusMeta.text}`}
-            >
-              <span className={`h-1.5 w-1.5 rounded-full ${statusMeta.dot}`} />
-              {statusMeta.label}
-            </span>
+            <StatusPill tone={statusMeta.tone}>{statusMeta.label}</StatusPill>
           </div>
         </div>
       </Link>
@@ -521,17 +497,17 @@ function SlackSetupCard({
     variant === "channel-broken" ? "Pick a different channel" : "Set up Slack";
 
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-border bg-card p-4">
+    <div className="flex items-start gap-3 rounded-2xl border border-border bg-card p-5">
       {variant === "channel-broken" ? (
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber" />
       ) : (
         <Settings className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
       )}
       <div className="min-w-0 flex-1">
-        <p className="font-medium">{headline}</p>
+        <p className="text-sm font-bold">{headline}</p>
         <p className="mt-1 text-sm text-muted-foreground">{body}</p>
         {variant === "channel-broken" && status.accessibility_error && (
-          <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+          <p className="mt-2 text-xs text-amber">
             {status.accessibility_error}
           </p>
         )}
@@ -582,17 +558,17 @@ function NotionSetupCard({
     variant === "parent-broken" ? "Pick a different parent" : "Set up Notion";
 
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-border bg-card p-4">
+    <div className="flex items-start gap-3 rounded-2xl border border-border bg-card p-5">
       {variant === "parent-broken" ? (
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber" />
       ) : (
         <Settings className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
       )}
       <div className="min-w-0 flex-1">
-        <p className="font-medium">{headline}</p>
+        <p className="text-sm font-bold">{headline}</p>
         <p className="mt-1 text-sm text-muted-foreground">{body}</p>
         {variant === "parent-broken" && status.accessibility_error && (
-          <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+          <p className="mt-2 text-xs text-amber">
             {status.accessibility_error}
           </p>
         )}

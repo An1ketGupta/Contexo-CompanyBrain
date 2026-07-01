@@ -23,6 +23,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  PageHeader,
+  StatusPill as KitStatusPill,
+  type PillTone,
+} from "@/components/actual/kit";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -156,33 +161,34 @@ export default function InterviewKitPage() {
   }
 
   return (
-    <div className="container max-w-5xl mx-auto py-8 px-4">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => router.push(`/recruiting/${requisitionId}`)}
-            className="mb-2"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to requisition
-          </Button>
-          <h1 className="text-2xl font-semibold">Interview Kit</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            AI-generated panels, rubric, and reference questions grounded in your company values.
-          </p>
-        </div>
-        {activeKit && activeKit.status === "ready" ? (
-          <Button onClick={generate} disabled={generating} variant="outline">
-            {generating ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <Sparkles className="w-4 h-4 mr-2" />
-            )}
-            Regenerate
-          </Button>
-        ) : null}
+    <div className="container mx-auto max-w-5xl space-y-8 px-4 py-8">
+      <div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => router.push(`/recruiting/${requisitionId}`)}
+          className="mb-3 -ml-2"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to requisition
+        </Button>
+        <PageHeader
+          eyebrow="Talent"
+          title="Interview kit"
+          description="AI-generated panels, rubric, and reference questions grounded in your company values."
+          actions={
+            activeKit && activeKit.status === "ready" ? (
+              <Button onClick={generate} disabled={generating} variant="outline">
+                {generating ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Sparkles className="size-4" />
+                )}
+                Regenerate
+              </Button>
+            ) : null
+          }
+        />
       </div>
 
       {!activeKit ? (
@@ -208,9 +214,11 @@ function EmptyState({
   generating: boolean;
 }) {
   return (
-    <div className="border border-dashed rounded-lg p-12 text-center">
-      <Sparkles className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-      <h2 className="text-lg font-semibold mb-2">Generate an interview kit</h2>
+    <div className="rounded-2xl border border-dashed border-border bg-background p-12 text-center">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
+        <Sparkles className="h-5 w-5" />
+      </div>
+      <h2 className="mb-2 text-lg font-extrabold tracking-tight">Generate an interview kit</h2>
       <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
         The AI will extract competencies from the JD, ground them in your company values from the
         KB, and emit a structured panel loop, scorecard rubric, and reference question set.
@@ -229,9 +237,9 @@ function EmptyState({
 
 function GeneratingState({ kit }: { kit: InterviewKit }) {
   return (
-    <div className="border rounded-lg p-12 text-center bg-muted/30">
-      <Loader2 className="w-12 h-12 mx-auto text-primary animate-spin mb-4" />
-      <h2 className="text-lg font-semibold mb-2">Generating interview kit…</h2>
+    <div className="rounded-2xl border border-border bg-card p-12 text-center">
+      <Loader2 className="w-12 h-12 mx-auto text-brand animate-spin mb-4" />
+      <h2 className="text-lg font-extrabold tracking-tight mb-2">Generating interview kit…</h2>
       <p className="text-sm text-muted-foreground max-w-md mx-auto">
         Extracting competencies → searching your knowledge base → drafting panels, rubric, and
         reference questions. Usually 30–60 seconds.
@@ -253,8 +261,8 @@ function FailedState({
   regenerating: boolean;
 }) {
   return (
-    <div className="border border-destructive/40 bg-destructive/5 rounded-lg p-8">
-      <h2 className="text-lg font-semibold mb-2 text-destructive">Generation failed</h2>
+    <div className="rounded-2xl border border-destructive/30 bg-destructive-soft p-8">
+      <h2 className="text-lg font-extrabold tracking-tight mb-2 text-destructive">Generation failed</h2>
       <p className="text-sm text-muted-foreground mb-4">
         {kit.error_message || "The agent could not finish generating the kit."}
       </p>
@@ -344,11 +352,11 @@ function KitEditor({ kit, onSaved }: { kit: InterviewKit; onSaved: () => void })
   return (
     <div className="space-y-8">
       {/* Header card */}
-      <div className="rounded-lg border bg-card p-5">
+      <div className="rounded-2xl border border-border bg-card p-5">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold">
+              <h2 className="text-lg font-extrabold tracking-tight">
                 {kit.role_title || "Interview Kit"}
               </h2>
               <StatusBadge status={kit.status} />
@@ -382,15 +390,15 @@ function KitEditor({ kit, onSaved }: { kit: InterviewKit; onSaved: () => void })
         </div>
         {kit.sources?.length ? (
           <div className="mt-4 pt-4 border-t">
-            <p className="text-xs font-medium text-muted-foreground mb-2">
+            <p className="mb-2 font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
               Grounded in {kit.sources.length} knowledge-base{" "}
-              {kit.sources.length === 1 ? "document" : "documents"}:
+              {kit.sources.length === 1 ? "document" : "documents"}
             </p>
             <div className="flex flex-wrap gap-1.5">
               {kit.sources.slice(0, 8).map((s) => (
                 <span
                   key={s.document_id}
-                  className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground"
+                  className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground"
                 >
                   {s.document_name}
                 </span>
@@ -496,18 +504,14 @@ function KitEditor({ kit, onSaved }: { kit: InterviewKit; onSaved: () => void })
 // ── Small atoms ─────────────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: InterviewKit["status"] }) {
-  const styles: Record<InterviewKit["status"], string> = {
-    draft: "bg-muted text-muted-foreground",
-    generating: "bg-blue-100 text-blue-700",
-    ready: "bg-amber-100 text-amber-800",
-    published: "bg-green-100 text-green-800",
-    failed: "bg-red-100 text-red-800",
+  const tone: Record<InterviewKit["status"], PillTone> = {
+    draft: "gray",
+    generating: "blue",
+    ready: "amber",
+    published: "green",
+    failed: "red",
   };
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded-full ${styles[status]}`}>
-      {status}
-    </span>
-  );
+  return <KitStatusPill tone={tone[status]}>{status}</KitStatusPill>;
 }
 
 function Section({
@@ -521,9 +525,9 @@ function Section({
 }) {
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 text-brand">
         {icon}
-        <h2 className="text-lg font-semibold">{title}</h2>
+        <h2 className="text-lg font-extrabold tracking-tight text-foreground">{title}</h2>
       </div>
       {children}
     </div>
@@ -540,7 +544,7 @@ function CompetencyRow({
   onRemove: () => void;
 }) {
   return (
-    <div className="rounded-lg border p-4 space-y-2">
+    <div className="rounded-2xl border border-border bg-card p-4 space-y-2">
       <div className="flex items-center gap-2">
         <Input
           value={competency.name}
@@ -552,7 +556,7 @@ function CompetencyRow({
           onChange={(e) =>
             onChange({ ...competency, kind: e.target.value as CompetencyKind })
           }
-          className="h-9 rounded-md border bg-background px-2 text-sm"
+          className="h-9 rounded-lg border border-input bg-background px-2 text-sm"
         >
           <option value="technical">technical</option>
           <option value="behavioral">behavioral</option>
@@ -603,7 +607,7 @@ function PanelCard({
     onChange({ ...panel, questions: panel.questions.filter((_, i) => i !== qi) });
   };
   return (
-    <div className="rounded-lg border bg-card">
+    <div className="rounded-2xl border border-border bg-card">
       <div className="border-b p-4 flex items-center gap-3 flex-wrap">
         <div className="flex-1 min-w-[200px]">
           <Label className="text-xs text-muted-foreground">Stage</Label>
@@ -648,7 +652,7 @@ function PanelCard({
         />
         <div className="space-y-3">
           {panel.questions.map((q, qi) => (
-            <div key={qi} className="rounded border p-3 space-y-2 bg-muted/30">
+            <div key={qi} className="rounded-xl border border-border p-3 space-y-2 bg-muted/40">
               <div className="flex items-start gap-2">
                 <Textarea
                   value={q.question}
@@ -677,7 +681,7 @@ function PanelCard({
                       kind: e.target.value as CompetencyKind,
                     })
                   }
-                  className="h-8 rounded-md border bg-background px-2 text-xs"
+                  className="h-8 rounded-lg border border-input bg-background px-2 text-xs"
                 >
                   <option value="technical">technical</option>
                   <option value="behavioral">behavioral</option>
@@ -737,7 +741,7 @@ function RubricCard({
   onChange: (r: CompetencyRubric) => void;
 }) {
   return (
-    <div className="rounded-lg border bg-card p-4">
+    <div className="rounded-2xl border border-border bg-card p-4">
       <Input
         value={row.competency}
         onChange={(e) => onChange({ ...row, competency: e.target.value })}
@@ -747,7 +751,7 @@ function RubricCard({
         {row.levels.map((lvl, li) => (
           <div
             key={li}
-            className="rounded border p-3 text-xs space-y-1 bg-muted/30"
+            className="rounded-xl border border-border p-3 text-xs space-y-1 bg-muted/40"
           >
             <div className="flex items-center justify-between">
               <span className="font-semibold">{lvl.score}</span>
@@ -801,7 +805,7 @@ function ReferenceCard({
   return (
     <div className="rounded-lg border bg-card p-4">
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-xs font-medium uppercase tracking-wide bg-muted px-2 py-0.5 rounded">
+        <span className="rounded-full bg-brand-tint px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-brand">
           {bank.relationship}
         </span>
       </div>
@@ -814,7 +818,7 @@ function ReferenceCard({
       />
       <div className="space-y-2">
         {bank.questions.map((q, qi) => (
-          <div key={qi} className="rounded border p-2 text-xs space-y-1 bg-muted/30">
+          <div key={qi} className="rounded-xl border border-border p-2 text-xs space-y-1 bg-muted/40">
             <Textarea
               value={q.question}
               onChange={(e) =>

@@ -25,9 +25,9 @@ export function SearchingIndicator({ searches }: SearchingIndicatorProps) {
           className="flex items-center gap-2 text-xs text-muted-foreground"
         >
           {s.status === "running" ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-brand" />
           ) : (
-            <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+            <Check className="h-3.5 w-3.5 text-success" />
           )}
           <Search className="h-3 w-3 shrink-0 opacity-60" />
           <span

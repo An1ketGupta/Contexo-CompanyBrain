@@ -7,11 +7,11 @@ import { Loader2, Send, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader, StatusPill, type PillTone } from "@/components/actual/kit";
 
 interface Step {
   id: string;
@@ -46,6 +46,22 @@ const fetcher = async <T,>(url: string): Promise<T> => {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed (${res.status})`);
   return res.json();
+};
+
+const STATUS_TONE: Record<string, PillTone> = {
+  draft: "gray",
+  scheduled: "blue",
+  active: "green",
+  completed: "gray",
+  cancelled: "red",
+};
+
+const STEP_TONE: Record<string, PillTone> = {
+  pending: "gray",
+  scheduled: "blue",
+  sent: "green",
+  failed: "red",
+  skipped: "gray",
 };
 
 export default function SequenceDetailPage() {
@@ -126,19 +142,22 @@ export default function SequenceDetailPage() {
   const { sequence, steps } = data;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 p-6 md:p-8">
-      <header className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="truncate text-2xl font-semibold tracking-tight">
-            {sequence.name}
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+    <div className="mx-auto max-w-3xl space-y-8 p-6 md:p-8">
+      <PageHeader
+        eyebrow="Outbound"
+        title={sequence.name}
+        description={
+          <>
             To {sequence.prospect_name ? `${sequence.prospect_name} · ` : ""}
             <span className="font-mono">{sequence.prospect_email}</span>
-          </p>
-        </div>
-        <Badge>{sequence.status}</Badge>
-      </header>
+          </>
+        }
+        actions={
+          <StatusPill tone={STATUS_TONE[sequence.status] ?? "gray"}>
+            {sequence.status}
+          </StatusPill>
+        }
+      />
 
       <div className="space-y-4">
         {steps.map((s) => (
@@ -194,15 +213,17 @@ function StepCard({
     subject !== step.subject || body !== step.body || offset !== step.send_offset_days;
 
   return (
-    <div className="rounded-md border bg-card p-4">
+    <div className="rounded-2xl border border-border bg-card p-5">
       <div className="mb-3 flex items-center justify-between gap-2 text-xs">
         <div className="flex items-center gap-2">
-          <span className="font-medium">Step {step.step_order + 1}</span>
+          <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+            Step {step.step_order + 1}
+          </span>
           <span className="text-muted-foreground">
             Sends {step.send_offset_days === 0 ? "immediately" : `+${step.send_offset_days} days`}
           </span>
         </div>
-        <Badge variant="outline">{step.status}</Badge>
+        <StatusPill tone={STEP_TONE[step.status] ?? "gray"}>{step.status}</StatusPill>
       </div>
       {editable ? (
         <div className="space-y-3">

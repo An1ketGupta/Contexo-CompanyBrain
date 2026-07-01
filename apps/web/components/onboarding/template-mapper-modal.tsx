@@ -86,9 +86,9 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 const CONFIDENCE_STYLE: Record<MappingItem["confidence"], string> = {
-  high: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200",
-  medium: "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200",
-  low: "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200",
+  high: "bg-success-tint text-success",
+  medium: "bg-amber-tint text-amber",
+  low: "bg-muted text-muted-foreground",
 };
 
 async function readJson<T = unknown>(res: Response): Promise<T> {
@@ -296,7 +296,7 @@ export function TemplateMapperModal({
       <DialogContent className="sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-violet-500" />
+            <Sparkles className="h-4 w-4 text-violet" />
             {stage === "saved"
               ? "Template saved"
               : stage === "done"
@@ -343,7 +343,7 @@ export function TemplateMapperModal({
                       (active
                         ? "text-foreground"
                         : done
-                          ? "text-emerald-600 dark:text-emerald-400"
+                          ? "text-success"
                           : "text-muted-foreground")
                     }
                   >
@@ -351,7 +351,7 @@ export function TemplateMapperModal({
                       className={
                         "flex h-4 w-4 items-center justify-center rounded-full text-[10px] " +
                         (done
-                          ? "bg-emerald-500 text-white"
+                          ? "bg-success text-white"
                           : active
                             ? "bg-foreground text-background"
                             : "bg-muted")
@@ -373,7 +373,7 @@ export function TemplateMapperModal({
 
         {/* Error */}
         {stage === "error" && error ? (
-          <div className="rounded-md border border-red-300/60 bg-red-50 p-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
+          <div className="rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm font-medium text-destructive">
             <div className="flex items-start gap-2">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <p>{error}</p>
@@ -383,7 +383,7 @@ export function TemplateMapperModal({
 
         {/* AI warning (analyzer failed but we kept going) */}
         {stage === "done" && analysis?.warning ? (
-          <div className="rounded-md border border-amber-300/60 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <div className="rounded-xl border border-amber/30 bg-amber-tint p-2.5 text-xs text-amber">
             {analysis.warning}
           </div>
         ) : null}
@@ -391,7 +391,7 @@ export function TemplateMapperModal({
         {/* Done — summary only, no sample-data preview */}
         {stage === "done" ? (
           <div className="space-y-3">
-            <div className="rounded-md border border-emerald-300/60 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
+            <div className="rounded-xl border border-success/30 bg-success-tint p-3 text-sm text-success">
               <div className="flex items-start gap-2">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
                 <div className="flex-1">
@@ -470,7 +470,7 @@ export function TemplateMapperModal({
         {/* Action-level errors (replace/save) — kept distinct from initial
             analyze/apply errors which use the larger banner above. */}
         {actionError ? (
-          <div className="rounded-md border border-amber-300/60 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <div className="rounded-xl border border-amber/30 bg-amber-tint p-2.5 text-xs text-amber">
             {actionError}
           </div>
         ) : null}

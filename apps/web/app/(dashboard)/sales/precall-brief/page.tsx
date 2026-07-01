@@ -1,11 +1,21 @@
 "use client";
 
 import { useState } from "react";
+import {
+  BookOpen,
+  DollarSign,
+  FileText,
+  Loader2,
+  ShieldQuestion,
+  Sparkles,
+  Target,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeader } from "@/components/actual/kit";
 
 interface Objection {
   objection: string;
@@ -60,15 +70,14 @@ export default function PrecallBriefPage() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-6 md:p-8">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Pre-call brief</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Pull a one-page brief grounded in your KB for an upcoming prospect call.
-        </p>
-      </header>
+    <div className="mx-auto max-w-4xl space-y-8 p-6 md:p-8">
+      <PageHeader
+        eyebrow="Sales"
+        title="Pre-call brief"
+        description="Pull a one-page brief grounded in your knowledge base for an upcoming prospect call — talking points, likely objections, and pricing posture in seconds."
+      />
 
-      <section className="rounded border bg-white p-6">
+      <section className="rounded-2xl border border-border bg-card p-6">
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-2">
             <Label htmlFor="name">Prospect name</Label>
@@ -76,6 +85,7 @@ export default function PrecallBriefPage() {
               id="name"
               value={prospectName}
               onChange={(e) => setProspectName(e.target.value)}
+              placeholder="e.g. Dana Ruiz"
             />
           </div>
           <div className="space-y-2">
@@ -84,6 +94,7 @@ export default function PrecallBriefPage() {
               id="company"
               value={company}
               onChange={(e) => setCompany(e.target.value)}
+              placeholder="e.g. Northwind Labs"
             />
           </div>
         </div>
@@ -99,37 +110,66 @@ export default function PrecallBriefPage() {
         </div>
 
         {error && (
-          <div className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="mt-4 rounded-xl border border-destructive/40 bg-destructive-soft p-3 text-sm text-destructive">
             {error}
           </div>
         )}
 
-        <div className="mt-4 flex justify-end">
+        <div className="mt-5 flex justify-end">
           <Button
             onClick={submit}
             disabled={generating || !prospectName.trim() || !company.trim()}
           >
+            {generating ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Sparkles className="size-4" />
+            )}
             {generating ? "Generating…" : "Generate brief"}
           </Button>
         </div>
       </section>
 
+      {generating && !brief ? (
+        <div className="rounded-2xl border border-dashed border-border bg-background p-12 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
+            <Loader2 className="h-5 w-5 animate-spin" />
+          </div>
+          <p className="mt-3 text-sm font-bold">Building your brief</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Searching your knowledge base and drafting talking points.
+          </p>
+        </div>
+      ) : null}
+
       {brief && (
-        <section className="space-y-6">
-          <Section title="Talking points" items={brief.talking_points} />
-          <ObjectionSection objections={brief.objections} />
-          <CaseStudySection caseStudies={brief.case_studies} />
-          <Section title="Pricing scenario" items={brief.pricing_scenario} />
+        <section className="space-y-4">
+          <BulletCard
+            icon={<Target className="size-4" />}
+            title="Talking points"
+            items={brief.talking_points}
+          />
+          <ObjectionCard objections={brief.objections} />
+          <CaseStudyCard caseStudies={brief.case_studies} />
+          <BulletCard
+            icon={<DollarSign className="size-4" />}
+            title="Pricing scenario"
+            items={brief.pricing_scenario}
+          />
 
           {brief.sources.length > 0 && (
-            <div className="rounded border bg-white p-4">
-              <div className="text-xs font-medium text-muted-foreground">
+            <div className="rounded-2xl border border-border bg-muted/40 p-5">
+              <p className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                 Based on {brief.sources.length} document
                 {brief.sources.length === 1 ? "" : "s"}
-              </div>
-              <ul className="mt-2 space-y-1 text-sm">
+              </p>
+              <ul className="mt-3 flex flex-wrap gap-2">
                 {brief.sources.map((s) => (
-                  <li key={s.document_id} className="text-zinc-700">
+                  <li
+                    key={s.document_id}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-card px-3 py-1 text-xs font-semibold text-body"
+                  >
+                    <FileText className="size-3 text-muted-foreground" />
                     {s.document_name}
                   </li>
                 ))}
@@ -142,15 +182,40 @@ export default function PrecallBriefPage() {
   );
 }
 
-function Section({ title, items }: { title: string; items: string[] }) {
+function SectionHead({
+  icon,
+  title,
+}: {
+  icon: React.ReactNode;
+  title: string;
+}) {
+  return (
+    <div className="mb-3 flex items-center gap-2.5">
+      <span className="flex size-7 items-center justify-center rounded-lg bg-brand-tint text-brand">
+        {icon}
+      </span>
+      <h2 className="text-sm font-bold">{title}</h2>
+    </div>
+  );
+}
+
+function BulletCard({
+  icon,
+  title,
+  items,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  items: string[];
+}) {
   if (!items?.length) return null;
   return (
-    <div className="rounded border bg-white p-4">
-      <h2 className="text-sm font-semibold">{title}</h2>
-      <ul className="mt-2 space-y-2 text-sm leading-6">
+    <div className="rounded-2xl border border-border bg-card p-5">
+      <SectionHead icon={icon} title={title} />
+      <ul className="space-y-2.5 text-sm leading-6 text-body">
         {items.map((it, i) => (
-          <li key={i} className="flex gap-2">
-            <span className="text-muted-foreground">•</span>
+          <li key={i} className="flex gap-2.5">
+            <span className="mt-2 size-1.5 shrink-0 rounded-full bg-brand" />
             <span>{it}</span>
           </li>
         ))}
@@ -159,16 +224,19 @@ function Section({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-function ObjectionSection({ objections }: { objections: Objection[] }) {
+function ObjectionCard({ objections }: { objections: Objection[] }) {
   if (!objections?.length) return null;
   return (
-    <div className="rounded border bg-white p-4">
-      <h2 className="text-sm font-semibold">Likely objections</h2>
-      <ul className="mt-2 space-y-3 text-sm leading-6">
+    <div className="rounded-2xl border border-border bg-card p-5">
+      <SectionHead icon={<ShieldQuestion className="size-4" />} title="Likely objections" />
+      <ul className="space-y-3 text-sm leading-6">
         {objections.map((o, i) => (
-          <li key={i} className="border-l-2 border-zinc-300 pl-3">
-            <div className="font-medium">{o.objection}</div>
-            <div className="text-zinc-600">{o.response}</div>
+          <li
+            key={i}
+            className="rounded-xl border-l-2 border-brand bg-muted/40 py-2.5 pl-4 pr-3"
+          >
+            <div className="font-bold text-foreground">{o.objection}</div>
+            <div className="mt-0.5 text-body">{o.response}</div>
           </li>
         ))}
       </ul>
@@ -176,16 +244,16 @@ function ObjectionSection({ objections }: { objections: Objection[] }) {
   );
 }
 
-function CaseStudySection({ caseStudies }: { caseStudies: CaseStudy[] }) {
+function CaseStudyCard({ caseStudies }: { caseStudies: CaseStudy[] }) {
   if (!caseStudies?.length) return null;
   return (
-    <div className="rounded border bg-white p-4">
-      <h2 className="text-sm font-semibold">Relevant case studies</h2>
-      <ul className="mt-2 space-y-3 text-sm leading-6">
+    <div className="rounded-2xl border border-border bg-card p-5">
+      <SectionHead icon={<BookOpen className="size-4" />} title="Relevant case studies" />
+      <ul className="space-y-3 text-sm leading-6">
         {caseStudies.map((c, i) => (
           <li key={i}>
-            <div className="font-medium">{c.title}</div>
-            <div className="text-zinc-600">{c.takeaway}</div>
+            <div className="font-bold text-foreground">{c.title}</div>
+            <div className="mt-0.5 text-body">{c.takeaway}</div>
           </li>
         ))}
       </ul>

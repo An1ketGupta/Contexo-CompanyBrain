@@ -214,7 +214,7 @@ export function NotionParentPicker({
                 </div>
               ) : pages.length === 0 ? (
                 <div className="space-y-3 p-4 text-sm">
-                  <div className="flex items-start gap-2 text-amber-700 dark:text-amber-300">
+                  <div className="flex items-start gap-2 text-amber">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     <span>
                       No pages shared with NirnayaIQ yet. Go to Notion to grant
@@ -268,7 +268,7 @@ export function NotionParentPicker({
                             )}
                           </div>
                           {isCurrent && (
-                            <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-success">
                               <CheckCircle2 className="h-3.5 w-3.5" />
                               current
                             </span>
@@ -287,7 +287,7 @@ export function NotionParentPicker({
                 type="button"
                 onClick={handleConnect}
                 disabled={connecting}
-                className="text-blue-600 hover:underline disabled:opacity-60"
+                className="font-semibold text-brand hover:underline disabled:opacity-60"
               >
                 Share more pages via Notion
               </button>

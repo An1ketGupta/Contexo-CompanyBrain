@@ -76,7 +76,7 @@ export function SendGmailButton({
 
   if (sentTo) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-2 py-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+      <span className="inline-flex items-center gap-1.5 rounded-md bg-success-tint px-2 py-1 text-[11px] font-medium text-success">
         <Send className="h-3 w-3" />
         Sent to {sentTo}
       </span>
@@ -127,7 +127,7 @@ export function SendGmailButton({
       </button>
 
       {showReauthBanner && (
-        <div className="ml-1 inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/60 dark:text-amber-300">
+        <div className="ml-1 inline-flex items-center gap-1.5 rounded-md border border-amber/20 bg-amber-tint px-2 py-1 text-[11px] text-amber">
           <AlertCircle className="h-3 w-3" />
           <span>Reconnect Gmail to enable send.</span>
           <a

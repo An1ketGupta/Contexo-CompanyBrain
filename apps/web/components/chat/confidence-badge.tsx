@@ -16,10 +16,9 @@ const COPY: Record<MessageConfidence["level"], string> = {
 };
 
 const STYLES: Record<MessageConfidence["level"], string> = {
-  high: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/60 dark:text-emerald-300",
-  medium:
-    "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/60 dark:text-amber-300",
-  low: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-300",
+  high: "border-transparent bg-success-tint text-success",
+  medium: "border-transparent bg-amber-tint text-amber",
+  low: "border-transparent bg-destructive-soft text-destructive",
 };
 
 export function ConfidenceBadge({ confidence, className }: ConfidenceBadgeProps) {

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeader } from "@/components/actual/kit";
 
 type SeniorityLevel = "intern" | "entry" | "mid" | "senior" | "staff" | "lead";
 
@@ -78,15 +79,14 @@ export default function NewRequisitionPage() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6 p-6 md:p-8">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">New requisition</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Generate 3 distinct JD variants to pick from.
-        </p>
-      </header>
+    <div className="mx-auto max-w-2xl space-y-8 p-6 md:p-8">
+      <PageHeader
+        eyebrow="Talent"
+        title="New requisition"
+        description="Generate 3 distinct JD variants to pick from."
+      />
 
-      <div className="space-y-6 rounded border border-border bg-card p-6">
+      <div className="space-y-6 rounded-2xl border border-border bg-card p-6">
 
         {/* Role details */}
         <div className="space-y-4">
@@ -132,7 +132,7 @@ export default function NewRequisitionPage() {
               id="seniority"
               value={seniorityLevel}
               onChange={(e) => setSeniorityLevel(e.target.value as SeniorityLevel)}
-              className="w-full rounded border border-input bg-background px-3 py-2 text-sm text-foreground"
+              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground"
             >
               {SENIORITY_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
@@ -220,7 +220,7 @@ export default function NewRequisitionPage() {
         </div>
 
         {error && (
-          <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300">
+          <div className="rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm font-medium text-destructive">
             {error}
           </div>
         )}

@@ -67,7 +67,7 @@ export function PostSlackButton({
 
   if (postedTo) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-2 py-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+      <span className="inline-flex items-center gap-1.5 rounded-md bg-success-tint px-2 py-1 text-[11px] font-medium text-success">
         <MessageSquare className="h-3 w-3" />
         Posted to #{postedTo}
       </span>

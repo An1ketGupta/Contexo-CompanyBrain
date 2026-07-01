@@ -35,10 +35,10 @@ export function CompetitorConfirmDialog({
       aria-modal="true"
       aria-labelledby="competitor-confirm-title"
     >
-      <div className="w-full max-w-md rounded-lg border border-border bg-background p-5 shadow-xl">
+      <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-xl">
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-500/15">
-            <ShieldAlert className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-tint">
+            <ShieldAlert className="h-4 w-4 text-amber" />
           </div>
           <div className="min-w-0 flex-1">
             <h2
@@ -69,7 +69,7 @@ export function CompetitorConfirmDialog({
           <button
             type="button"
             onClick={onConfirm}
-            className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            className="rounded-md bg-amber px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber/90 focus:outline-none focus:ring-2 focus:ring-amber"
           >
             Send anyway
           </button>

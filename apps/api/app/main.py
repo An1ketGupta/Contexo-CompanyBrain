@@ -165,9 +165,6 @@ from app.routers import (
 from app.routers import (
     onboarding_public as onboarding_public_router,
 )
-from app.routers import (
-    docuseal_webhook as docuseal_webhook_router,
-)
 from app.mcp import router as mcp_router
 
 
@@ -311,7 +308,6 @@ app.include_router(sales_agent_router.router)
 app.include_router(interview_kits_router.router)
 app.include_router(marketing_router.router)
 app.include_router(onboarding_public_router.router)
-app.include_router(docuseal_webhook_router.router)
 app.include_router(mcp_router)
 
 # Inngest serve endpoint — webhook the Inngest server hits to invoke our functions.

@@ -87,7 +87,7 @@ export function ExportNotionButton({
         href={createdUrl}
         target="_blank"
         rel="noreferrer"
-        className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
+        className="inline-flex items-center gap-1.5 rounded-md bg-success-tint px-2 py-1 text-[11px] font-medium text-success hover:bg-success/15"
       >
         <ExternalLink className="h-3 w-3" />
         Open in Notion
@@ -316,7 +316,7 @@ function ExportNotionDialog({
                           onClick={() => setSelectedParent(p)}
                           className={cn(
                             "flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors",
-                            selected ? "bg-primary/10 text-primary" : "hover:bg-muted",
+                            selected ? "bg-brand-tint text-brand" : "hover:bg-muted",
                           )}
                         >
                           <StickyNote className="h-3 w-3 text-muted-foreground" />

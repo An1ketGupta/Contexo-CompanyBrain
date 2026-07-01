@@ -394,7 +394,7 @@ function FeedbackButtons({
         aria-label={feedback === "positive" ? "Remove positive rating" : "Mark helpful"}
         className={cn(
           "tap inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-          feedback === "positive" && "bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/15 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300",
+          feedback === "positive" && "bg-success-tint text-success hover:bg-success/15 hover:text-success",
         )}
       >
         <ThumbsUp className="h-3.5 w-3.5" />
@@ -526,13 +526,13 @@ function ErrorPanel({
 
   if (isModerated) {
     return (
-      <div className="space-y-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
-        <div className="flex items-start gap-2 text-sm text-amber-900 dark:text-amber-100">
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+      <div className="space-y-2 rounded-xl border border-amber/20 bg-amber-tint px-3 py-2.5">
+        <div className="flex items-start gap-2 text-sm text-amber">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber" />
           <span>{error.message}</span>
         </div>
         {error.request_id && (
-          <div className="pl-6 text-xs text-amber-800/70 dark:text-amber-200/70">
+          <div className="pl-6 text-xs text-amber/70">
             ref <code className="font-mono">{error.request_id}</code>
           </div>
         )}

@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { StatusPill, type PillTone } from "@/components/actual/kit";
 
 // ── Types (mirror apps/api/app/services/agents/marketing_agent/schemas.py) ──
 
@@ -133,16 +134,16 @@ export default function MarketingBriefDetailPage() {
 
   if (isLoading || !brief) {
     return (
-      <div className="container max-w-5xl mx-auto py-8 px-4 space-y-4">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-40 w-full" />
-        <Skeleton className="h-40 w-full" />
+      <div className="mx-auto max-w-5xl space-y-4 p-6 md:p-8">
+        <Skeleton className="h-8 w-48 rounded-xl" />
+        <Skeleton className="h-40 w-full rounded-2xl" />
+        <Skeleton className="h-40 w-full rounded-2xl" />
       </div>
     );
   }
 
   return (
-    <div className="container max-w-5xl mx-auto py-8 px-4">
+    <div className="mx-auto max-w-5xl p-6 md:p-8">
       <Button
         variant="ghost"
         size="sm"
@@ -165,8 +166,8 @@ export default function MarketingBriefDetailPage() {
 
 function GeneratingState({ brief }: { brief: MarketingBrief }) {
   return (
-    <div className="border rounded-lg p-12 text-center bg-muted/30 mt-4">
-      <Loader2 className="w-12 h-12 mx-auto text-primary animate-spin mb-4" />
+    <div className="mt-4 rounded-2xl border border-border bg-muted/30 p-12 text-center">
+      <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-brand" />
       <h2 className="text-lg font-semibold mb-2">Generating marketing brief…</h2>
       <p className="text-sm text-muted-foreground max-w-md mx-auto">
         Pulling positioning, brand voice, and competitor context from your KB → drafting
@@ -181,7 +182,7 @@ function GeneratingState({ brief }: { brief: MarketingBrief }) {
 
 function FailedState({ brief }: { brief: MarketingBrief }) {
   return (
-    <div className="border border-destructive/40 bg-destructive/5 rounded-lg p-8 mt-4">
+    <div className="mt-4 rounded-2xl border border-destructive/40 bg-destructive-soft p-8">
       <h2 className="text-lg font-semibold mb-2 text-destructive">Generation failed</h2>
       <p className="text-sm text-muted-foreground mb-4">
         {brief.error_message || "The agent could not finish generating the brief."}
@@ -273,17 +274,19 @@ function BriefEditor({
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="rounded-lg border bg-card p-5">
+      <div className="rounded-2xl border border-border bg-card p-5">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <Rocket className="w-5 h-5" />
-              <h1 className="text-lg font-semibold truncate">
+            <div className="flex items-center gap-2.5">
+              <span className="flex size-9 items-center justify-center rounded-xl bg-brand-tint text-brand">
+                <Rocket className="size-4" />
+              </span>
+              <h1 className="text-xl font-extrabold tracking-tight truncate">
                 {positioning.category || "Marketing Brief"}
               </h1>
               <StatusBadge status={brief.status} />
             </div>
-            <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
+            <p className="text-sm text-muted-foreground mt-2 line-clamp-2">
               {brief.objective}
             </p>
             {brief.generated_at ? (
@@ -320,8 +323,9 @@ function BriefEditor({
               {brief.sources.slice(0, 12).map((s) => (
                 <span
                   key={s.document_id}
-                  className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-body"
                 >
+                  <FileText className="size-3 text-muted-foreground" />
                   {s.document_name}
                 </span>
               ))}
@@ -444,28 +448,27 @@ function Section({
 }) {
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        {icon}
-        <h2 className="text-lg font-semibold">{title}</h2>
+      <div className="flex items-center gap-2.5">
+        <span className="flex size-8 items-center justify-center rounded-lg bg-brand-tint text-brand [&_svg]:size-4">
+          {icon}
+        </span>
+        <h2 className="text-lg font-bold tracking-tight">{title}</h2>
       </div>
       {children}
     </div>
   );
 }
 
+const STATUS_TONE: Record<Status, PillTone> = {
+  draft: "gray",
+  generating: "blue",
+  ready: "amber",
+  published: "green",
+  failed: "red",
+};
+
 function StatusBadge({ status }: { status: Status }) {
-  const styles: Record<Status, string> = {
-    draft: "bg-muted text-muted-foreground",
-    generating: "bg-blue-100 text-blue-700",
-    ready: "bg-amber-100 text-amber-800",
-    published: "bg-green-100 text-green-800",
-    failed: "bg-red-100 text-red-800",
-  };
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded-full ${styles[status]}`}>
-      {status}
-    </span>
-  );
+  return <StatusPill tone={STATUS_TONE[status]}>{status}</StatusPill>;
 }
 
 function PositioningEditor({
@@ -476,7 +479,7 @@ function PositioningEditor({
   onChange: (v: Positioning) => void;
 }) {
   return (
-    <div className="rounded-lg border p-4 space-y-3 bg-card">
+    <div className="rounded-2xl border border-border p-4 space-y-3 bg-card">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
           <Label className="text-xs text-muted-foreground">Audience</Label>
@@ -626,7 +629,7 @@ function PillarCard({
   onRemove: () => void;
 }) {
   return (
-    <div className="rounded-lg border bg-card p-4 space-y-2">
+    <div className="rounded-2xl border border-border bg-card p-4 space-y-2">
       <div className="flex items-center gap-2">
         <Input
           value={pillar.name}
@@ -711,7 +714,7 @@ function CompetitiveCard({
   onRemove: () => void;
 }) {
   return (
-    <div className="rounded-lg border bg-card p-4 space-y-2">
+    <div className="rounded-2xl border border-border bg-card p-4 space-y-2">
       <div className="flex items-center gap-2">
         <Input
           value={row.competitor}
@@ -764,9 +767,9 @@ function ChannelCard({
   onChange: (e: ChannelPlanEntry) => void;
 }) {
   return (
-    <div className="rounded-lg border bg-card">
+    <div className="rounded-2xl border border-border bg-card">
       <div className="border-b p-4 flex items-center gap-3 flex-wrap">
-        <span className="text-xs font-medium uppercase tracking-wide bg-primary/10 text-primary px-2 py-0.5 rounded">
+        <span className="rounded-full bg-brand-tint px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-brand">
           {entry.channel}
         </span>
         <div className="flex-1 min-w-[200px]">
@@ -796,7 +799,7 @@ function ChannelCard({
       </div>
       <div className="p-4 space-y-3">
         {entry.drafts.map((d, i) => (
-          <div key={i} className="rounded border p-3 space-y-2 bg-muted/30">
+          <div key={i} className="rounded-xl border border-border p-3 space-y-2 bg-muted/30">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-muted-foreground">
                 Variant {i + 1}
@@ -887,7 +890,7 @@ function ContentBriefEditor({
   onChange: (v: ContentBrief) => void;
 }) {
   return (
-    <div className="rounded-lg border bg-card p-4 space-y-3">
+    <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-[1fr_140px] gap-3">
         <div>
           <Label className="text-xs text-muted-foreground">Working title</Label>
@@ -921,7 +924,7 @@ function ContentBriefEditor({
         <Label className="text-xs text-muted-foreground">Outline</Label>
         <div className="space-y-2 mt-1">
           {value.outline.map((s, i) => (
-            <div key={i} className="rounded border p-3 space-y-2 bg-muted/30">
+            <div key={i} className="rounded-xl border border-border p-3 space-y-2 bg-muted/30">
               <div className="flex gap-2">
                 <Input
                   value={s.heading}

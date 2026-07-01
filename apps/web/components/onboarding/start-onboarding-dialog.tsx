@@ -343,7 +343,7 @@ export function StartOnboardingDialog({
           </section>
 
           {error ? (
-            <p className="rounded-md border border-red-300/60 bg-red-50 p-3 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
+            <p className="rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-xs font-medium text-destructive">
               {error}
             </p>
           ) : null}

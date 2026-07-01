@@ -1,0 +1,46 @@
+[project]
+name = "esign"
+version = "0.1.0"
+description = "NirnayaIQ — in-house e-signature service"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.136.3",
+    "uvicorn[standard]>=0.49.0",
+    "pydantic-settings>=2.14.1",
+    "email-validator>=2.2.0",
+    "python-dotenv>=1.2.2",
+    "python-multipart>=0.0.20",
+    "httpx>=0.28.1",
+    "structlog>=24.4.0",
+    "sentry-sdk[fastapi]>=2.20.0",
+    "supabase>=2.31.0",
+    "pymupdf>=1.27.2.3",
+    "inngest>=0.5.18",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.4.0",
+    "httpx>=0.28.1",
+    "ruff>=0.8.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["__pycache__", ".venv"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors (real syntax/indent issues)
+    "F",   # pyflakes — unused imports, undefined names, redefinitions
+    "I",   # isort — auto-fixable, so safe to gate on
+]
+ignore = [
+    "E501",  # line length is enforced by formatter, not lint
+]

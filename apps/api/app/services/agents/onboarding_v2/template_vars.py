@@ -127,7 +127,37 @@ TEMPLATE_VARIABLES: list[TemplateVar] = [
         "description": "Governing-law jurisdiction (typically a state or country).",
         "example": "Karnataka, India",
     },
+    {
+        "name": "hr_signature_block",
+        "label": "HR signature location",
+        "description": (
+            "Place this where HR's signature should appear on the document. "
+            "Renders as a sentinel marker (not visible text) that the e-sign "
+            "service replaces with HR's drawn/typed signature. Optional — "
+            "if omitted, the signature is placed at the bottom of the last page."
+        ),
+        "example": "",
+    },
+    {
+        "name": "candidate_signature_block",
+        "label": "Candidate signature location",
+        "description": (
+            "Place this where the candidate's signature should appear. Same "
+            "sentinel-marker mechanism as hr_signature_block. Optional."
+        ),
+        "example": "",
+    },
 ]
+
+# Rendered values for the two signature-block variables — literal sentinel
+# strings, not real data. apps/esign's pdf_sign.py searches the rendered PDF
+# for these exact strings (see SIGNATURE_MARKERS in that module) to find
+# where to stamp each signer's signature. Low-collision by construction —
+# a lozenge-wrapped all-caps tag no real document text would contain.
+SIGNATURE_BLOCK_MARKERS: dict[str, str] = {
+    "hr_signature_block": "◇SIGN:HR◇",
+    "candidate_signature_block": "◇SIGN:CANDIDATE◇",
+}
 
 
 def get_variable_names() -> list[str]:
