@@ -30,7 +30,7 @@ export function ScopeBanner(props: ScopeBannerProps) {
   const { clearHref } = props;
 
   return (
-    <div className="flex items-center gap-2 border-b border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200">
+    <div className="flex items-center gap-2 border-b border-brand/15 bg-brand-tint px-4 py-2 text-sm text-brand">
       {isTagScope ? (
         <>
           <Tag className="h-4 w-4 shrink-0" />
@@ -52,7 +52,7 @@ export function ScopeBanner(props: ScopeBannerProps) {
       {clearHref && (
         <Link
           href={clearHref}
-          className="ml-auto inline-flex items-center gap-1 text-xs text-blue-700 underline-offset-2 hover:underline dark:text-blue-300"
+          className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-brand underline-offset-2 hover:underline"
         >
           Search all documents
           <X className="h-3 w-3" />

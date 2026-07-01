@@ -11,6 +11,7 @@ const badgeVariants = cva(
       variant: {
         default: "bg-secondary text-secondary-foreground",
         accent: "bg-accent text-accent-foreground",
+        brand: "bg-brand-tint text-brand",
         success:
           "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
         warning:

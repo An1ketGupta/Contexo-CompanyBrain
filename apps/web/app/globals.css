@@ -5,62 +5,104 @@
    to follow that class — without this the variant is OS-driven only. */
 @custom-variant dark (&:is(.dark, .dark *));
 
-/* ── Design tokens ─────────────────────────────────────────── */
+/* ── Design tokens — Actual design system ──────────────────────
+   Cool-gray canvas, pure-white surfaces, hairline borders, one electric-blue
+   brand, and playful pastels. Semantic names are unchanged so every shadcn
+   primitive adopts Actual automatically:
+     • primary  = near-black "ink" (the signature black pill button)
+     • accent   = blue tint / blue ink (active nav + selected surfaces)
+     • ring     = electric blue focus ring
+   Brand + status hues (blue/green/pink/violet/amber) and pastels (sky/rose/
+   lilac) are exposed as color-* utilities for bespoke Actual surfaces. */
 :root {
-  --background: #ffffff;
-  --foreground: #0f172a;
+  --background: #ffffff; /* Surface — cards, sidebar, dialogs */
+  --foreground: #16181c; /* Ink */
 
-  --muted: #f8fafc;
-  --muted-foreground: #64748b;
+  --muted: #f4f5f6; /* Canvas — page backdrops + hover fills */
+  --muted-foreground: #8a9099; /* Muted text */
 
-  --border: #e2e8f0;
-  --input: #e2e8f0;
+  --border: #e7e9ec; /* Hairline */
+  --input: #dadde1; /* Slightly firmer input border */
 
-  --primary: #1e40af;
+  --primary: #16181c; /* Ink — the primary action is always a black pill */
   --primary-foreground: #ffffff;
 
-  --secondary: #f1f5f9;
-  --secondary-foreground: #1e293b;
+  --secondary: #f4f5f6;
+  --secondary-foreground: #16181c;
 
-  --accent: #dbeafe;
-  --accent-foreground: #1e40af;
+  --accent: #eaf0ff; /* Blue tint — active/selected surfaces */
+  --accent-foreground: #2f6bff; /* Electric blue */
 
-  --destructive: #ef4444;
+  --destructive: #e5484d;
   --destructive-foreground: #ffffff;
-  /* Tinted background used for soft destructive surfaces (danger zone, etc).
-     Keep it close to bg so layouts don't look noisy. */
-  --destructive-soft: #fef2f2;
+  /* Tinted background used for soft destructive surfaces (danger zone, etc). */
+  --destructive-soft: #feecec;
 
-  --ring: #1e40af;
-  --radius: 0.5rem;
+  --ring: #2f6bff; /* Electric-blue focus ring */
+  --radius: 0.625rem; /* 10px base — Actual runs on soft, generous corners */
+
+  /* Actual brand + status accents — exposed as color utilities below. */
+  --brand: #2f6bff;
+  --brand-foreground: #ffffff;
+  --brand-tint: #eaf0ff;
+  --body: #3a3f46; /* Body copy — one step warmer than ink */
+  --success: #12b76a;
+  --success-tint: #e4f7ee;
+  --pink: #e8508d;
+  --pink-tint: #fce7f0;
+  --violet: #7a5af8;
+  --violet-tint: #ede9fe;
+  --amber: #f5a623;
+  --amber-tint: #fef0da;
+  --pastel-sky: #dceafb;
+  --pastel-rose: #f6dce9;
+  --pastel-lilac: #e4defb;
 }
 
-/* Dark theme — toggled by next-themes via class="dark" on <html>. Keep
-   semantically the same names; just retune for low-light contrast. */
+/* Dark theme — toggled by next-themes via class="dark" on <html>. Actual is a
+   light-first system; this is a faithful low-light retune: cool near-black
+   canvas, lighter card surfaces, and the blue brand kept vivid. Primary flips
+   to light-on-dark (the "black pill" becomes a bright pill in the dark). */
 .dark {
-  --background: #0b1120;
-  --foreground: #e2e8f0;
+  --background: #1a1c20; /* Card surface */
+  --foreground: #f3f4f6;
 
-  --muted: #111c30;
-  --muted-foreground: #94a3b8;
+  --muted: #121417; /* Canvas — darker than cards for depth */
+  --muted-foreground: #8b9099;
 
-  --border: #1e293b;
-  --input: #1e293b;
+  --border: #292c31;
+  --input: #34373d;
 
-  --primary: #60a5fa;
-  --primary-foreground: #0b1120;
+  --primary: #f3f4f6;
+  --primary-foreground: #16181c;
 
-  --secondary: #1e293b;
-  --secondary-foreground: #e2e8f0;
+  --secondary: #23262b;
+  --secondary-foreground: #f3f4f6;
 
-  --accent: #1e3a8a;
-  --accent-foreground: #bfdbfe;
+  --accent: #1b2740; /* Deep blue tint — active/selected */
+  --accent-foreground: #7aa2ff;
 
-  --destructive: #f87171;
-  --destructive-foreground: #1a0a0a;
-  --destructive-soft: #2a1414;
+  --destructive: #f2555a;
+  --destructive-foreground: #16181c;
+  --destructive-soft: #2a1618;
 
-  --ring: #60a5fa;
+  --ring: #2f6bff;
+
+  --brand: #5b8bff;
+  --brand-foreground: #0e1116;
+  --brand-tint: #1b2740;
+  --body: #c3c7cd;
+  --success: #34d08a;
+  --success-tint: #12241c;
+  --pink: #f06fa4;
+  --pink-tint: #2a1620;
+  --violet: #9a80fb;
+  --violet-tint: #201b34;
+  --amber: #f7b84b;
+  --amber-tint: #2a2113;
+  --pastel-sky: #1c3050;
+  --pastel-rose: #3a2030;
+  --pastel-lilac: #262045;
 }
 
 @theme inline {
@@ -80,7 +122,25 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-destructive-soft: var(--destructive-soft);
   --color-ring: var(--ring);
-  --font-sans: var(--font-inter);
+
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-tint: var(--brand-tint);
+  --color-body: var(--body);
+  --color-success: var(--success);
+  --color-success-tint: var(--success-tint);
+  --color-pink: var(--pink);
+  --color-pink-tint: var(--pink-tint);
+  --color-violet: var(--violet);
+  --color-violet-tint: var(--violet-tint);
+  --color-amber: var(--amber);
+  --color-amber-tint: var(--amber-tint);
+  --color-pastel-sky: var(--pastel-sky);
+  --color-pastel-rose: var(--pastel-rose);
+  --color-pastel-lilac: var(--pastel-lilac);
+
+  --font-sans: var(--font-jakarta);
+  --font-mono: var(--font-jetbrains);
   --radius: var(--radius);
 }
 
@@ -91,7 +151,7 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-inter, system-ui, sans-serif);
+  font-family: var(--font-jakarta, system-ui, sans-serif);
   /* `manipulation` removes the legacy 300ms tap delay iOS Safari adds while
      it waits to disambiguate single-tap vs double-tap zoom. We keep pinch-zoom
      (`pan-x pan-y pinch-zoom`-ish behavior) but trade away double-tap zoom for

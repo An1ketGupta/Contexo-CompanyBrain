@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Loader2 } from "lucide-react";
+import { Brain, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -127,17 +127,29 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted p-4">
       <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold text-foreground">Company Brain</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+        <div className="mb-8 flex flex-col items-center text-center">
+          <div className="mb-4 flex items-center gap-2.5">
+            <span className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-primary text-primary-foreground">
+              <Brain className="h-5 w-5" />
+            </span>
+            <span className="text-lg font-extrabold tracking-tight text-foreground">
+              Company Brain
+            </span>
+          </div>
+          <h1 className="text-2xl font-extrabold tracking-tight text-foreground">
+            Welcome back
+          </h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">
             Sign in to your workspace
           </p>
         </div>
 
-        <div className="rounded-lg border border-border bg-background p-8 shadow-sm">
+        <div className="rounded-2xl border border-border bg-background p-8 shadow-sm">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email" className="text-[12px] font-bold uppercase tracking-[0.04em] text-muted-foreground">
+                Email
+              </Label>
               <Input
                 id="email"
                 type="email"
@@ -151,10 +163,12 @@ export default function LoginPage() {
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <Label htmlFor="password">Password</Label>
+                <Label htmlFor="password" className="text-[12px] font-bold uppercase tracking-[0.04em] text-muted-foreground">
+                  Password
+                </Label>
                 <Link
                   href="/forgot-password"
-                  className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+                  className="text-xs font-medium text-brand hover:underline"
                 >
                   Forgot password?
                 </Link>
@@ -169,7 +183,7 @@ export default function LoginPage() {
               />
             </div>
 
-            <Button type="submit" disabled={loading} className="w-full">
+            <Button type="submit" disabled={loading} className="w-full" size="lg">
               {loading && <Loader2 className="animate-spin" />}
               {loading ? "Signing in…" : "Sign in"}
             </Button>
@@ -186,6 +200,7 @@ export default function LoginPage() {
             variant="outline"
             onClick={handleGoogle}
             className="w-full"
+            size="lg"
           >
             <GoogleIcon className="h-4 w-4" />
             Continue with Google
@@ -195,7 +210,7 @@ export default function LoginPage() {
             Don&apos;t have an account?{" "}
             <Link
               href="/signup"
-              className="font-medium text-primary hover:underline"
+              className="font-semibold text-brand hover:underline"
             >
               Sign up
             </Link>

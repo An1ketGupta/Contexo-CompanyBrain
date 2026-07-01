@@ -142,7 +142,7 @@ export function MessageItem({
 
   return (
     <div id={anchorId} className="group flex gap-3 px-1 scroll-mt-24">
-      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-tint text-brand">
         <Brain className="h-3.5 w-3.5" />
       </div>
 
@@ -154,7 +154,7 @@ export function MessageItem({
         )}
 
         {message.intent && (isStreaming || !hasContent) && (
-          <div className="mb-1.5 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+          <div className="mb-1.5 inline-flex items-center gap-1 rounded-full bg-brand-tint px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-brand">
             {INTENT_LABELS[message.intent]}
           </div>
         )}

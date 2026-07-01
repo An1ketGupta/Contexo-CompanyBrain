@@ -64,14 +64,14 @@ export function MessageInput({
     <div className="border-t border-border bg-background/95 px-4 py-3 pb-safe-3 backdrop-blur md:px-6 md:pb-3">
       <div className="mx-auto max-w-3xl">
         {disabled && disabledReason && (
-          <div className="mb-2 rounded-md border border-amber-300/40 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <div className="mb-2 rounded-lg border border-amber/30 bg-amber-tint px-3 py-2 text-xs text-foreground">
             {disabledReason}
           </div>
         )}
 
         <div
           className={cn(
-            "flex items-end gap-2 rounded-2xl border border-input bg-background px-3 py-2 shadow-sm transition-colors focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/30",
+            "flex items-end gap-2 rounded-2xl border border-input bg-background px-3 py-2 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/25",
             disabled && "opacity-60",
           )}
         >

@@ -168,7 +168,7 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
         return (
           <div key={sectionIdx} className="flex flex-col gap-0.5">
             {section.label && (
-              <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+              <div className="px-3 pb-1 pt-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-muted-foreground/70">
                 {section.label}
               </div>
             )}
@@ -192,9 +192,9 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
                   href={item.href}
                   onClick={onNavigate}
                   className={cn(
-                    "flex items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    "flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
                     isActive
-                      ? "bg-accent text-accent-foreground"
+                      ? "bg-accent font-semibold text-accent-foreground"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground",
                   )}
                 >

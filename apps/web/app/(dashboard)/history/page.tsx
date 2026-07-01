@@ -20,19 +20,15 @@ const INTENT_LABEL: Record<string, string> = {
   generic: "General",
 };
 
+// Actual accent tints — one hue per intent, drawn from the design system's
+// status palette (blue/violet/amber/green/pink) rather than raw Tailwind.
 const INTENT_COLOR: Record<string, string> = {
-  factual_qa:
-    "bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300",
-  task_generation:
-    "bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300",
-  analysis:
-    "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300",
-  search:
-    "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
-  summarization:
-    "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300",
-  comparison:
-    "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300",
+  factual_qa: "bg-brand-tint text-brand",
+  task_generation: "bg-violet-tint text-violet",
+  analysis: "bg-amber-tint text-amber",
+  search: "bg-success-tint text-success",
+  summarization: "bg-brand-tint text-brand",
+  comparison: "bg-pink-tint text-pink",
   generic: "bg-muted text-muted-foreground",
 };
 
@@ -64,14 +60,14 @@ export default function QueryHistoryPage() {
     <div className="mx-auto max-w-3xl p-6 md:p-8">
       <div className="mb-6 flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-foreground">
+          <h1 className="text-2xl font-extrabold tracking-tight text-foreground">
             Query history
           </h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
+          <p className="mt-1 text-sm text-muted-foreground">
             Your recent questions and the conversations they belong to.
           </p>
         </div>
-        <div className="rounded-md bg-muted p-2 text-muted-foreground">
+        <div className="rounded-xl bg-brand-tint p-2.5 text-brand">
           <History className="h-4 w-4" />
         </div>
       </div>
@@ -84,16 +80,16 @@ export default function QueryHistoryPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search your questions…"
-            className="w-full rounded-md border border-border bg-background py-1.5 pl-8 pr-3 text-sm placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+            className="w-full rounded-[10px] border border-input bg-background py-2 pl-8 pr-3 text-sm transition-colors placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/25"
           />
         </div>
         <button
           type="button"
           onClick={() => setIntent(null)}
           className={cn(
-            "rounded-full border px-2.5 py-1 text-xs",
+            "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
             intent === null
-              ? "border-primary bg-primary/10 text-foreground"
+              ? "border-transparent bg-brand-tint font-semibold text-brand"
               : "border-border text-muted-foreground hover:text-foreground",
           )}
         >
@@ -105,9 +101,9 @@ export default function QueryHistoryPage() {
             type="button"
             onClick={() => setIntent(intent === f.value ? null : f.value)}
             className={cn(
-              "rounded-full border px-2.5 py-1 text-xs transition-colors",
+              "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
               intent === f.value
-                ? "border-primary bg-primary/10 text-foreground"
+                ? "border-transparent bg-brand-tint font-semibold text-brand"
                 : "border-border text-muted-foreground hover:text-foreground",
             )}
           >
@@ -199,14 +195,14 @@ function HistoryRow({ entry }: { entry: QueryHistoryEntry }) {
     return (
       <Link
         href={`/chat/${entry.conversation_id}`}
-        className="block rounded-lg border border-border bg-background px-4 py-3 transition-colors hover:bg-muted"
+        className="block rounded-xl border border-border bg-background px-4 py-3 transition-colors hover:border-input hover:bg-muted"
       >
         {inner}
       </Link>
     );
   }
   return (
-    <div className="rounded-lg border border-dashed border-border bg-background px-4 py-3 opacity-70">
+    <div className="rounded-xl border border-dashed border-border bg-background px-4 py-3 opacity-70">
       {inner}
     </div>
   );
@@ -218,7 +214,7 @@ function ListSkeleton() {
       {Array.from({ length: 6 }).map((_, i) => (
         <div
           key={i}
-          className="rounded-lg border border-border bg-background px-4 py-3"
+          className="rounded-xl border border-border bg-background px-4 py-3"
         >
           <Skeleton className="h-3.5 w-3/4" />
           <Skeleton className="mt-2 h-2.5 w-1/3" />
@@ -230,8 +226,8 @@ function ListSkeleton() {
 
 function EmptyState({ filtered }: { filtered: boolean }) {
   return (
-    <div className="rounded-lg border border-dashed border-border bg-background px-6 py-16 text-center">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-accent-foreground">
+    <div className="rounded-xl border border-dashed border-border bg-background px-6 py-16 text-center">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
         <History className="h-5 w-5" />
       </div>
       <h2 className="text-base font-semibold text-foreground">

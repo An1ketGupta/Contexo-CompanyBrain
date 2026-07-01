@@ -31,7 +31,7 @@ export default function DashboardLayout({
             <GlobalDocumentToaster />
             <Sidebar />
             <MobileHeader />
-            <div className="flex-1 overflow-y-auto bg-muted/30 [overflow-anchor:none]">
+            <div className="flex-1 overflow-y-auto bg-muted [overflow-anchor:none]">
               <AcknowledgementBanner />
               {children}
             </div>
