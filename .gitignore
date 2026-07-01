@@ -15,7 +15,7 @@ out/
 .vercel/
 *.tsbuildinfo
 next-env.d.ts
-
+.playwright-mcp
 # ── Python / FastAPI ─────────────────────────────────────────
 __pycache__/
 *.py[cod]
