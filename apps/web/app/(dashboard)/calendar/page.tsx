@@ -26,11 +26,11 @@ const fetcher = async (url: string): Promise<{ meetings: Meeting[] }> => {
 };
 
 const STATUS_BADGE: Record<string, string> = {
-  ready: "bg-emerald-100 text-emerald-700",
-  generating: "bg-amber-100 text-amber-700",
-  pending: "bg-zinc-100 text-zinc-700",
-  failed: "bg-red-100 text-red-700",
-  skipped: "bg-zinc-100 text-zinc-500",
+  ready: "bg-success-tint text-success",
+  generating: "bg-amber-tint text-amber",
+  pending: "bg-secondary text-muted-foreground",
+  failed: "bg-destructive-soft text-destructive",
+  skipped: "bg-secondary text-muted-foreground",
 };
 
 export default function CalendarMeetingsPage() {
@@ -55,7 +55,7 @@ export default function CalendarMeetingsPage() {
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Upcoming meetings</h1>
+          <h1 className="text-2xl font-extrabold tracking-tight">Upcoming meetings</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Prep briefs auto-generate 2 hours before each meeting. Connect
             Google Workspace in settings if you haven&apos;t already.
@@ -69,11 +69,11 @@ export default function CalendarMeetingsPage() {
       {isLoading ? (
         <Skeleton className="h-40 w-full" />
       ) : error ? (
-        <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm text-destructive">
           Failed to load meetings.
         </div>
       ) : !data?.meetings?.length ? (
-        <div className="rounded border border-dashed p-8 text-center text-sm text-muted-foreground">
+        <div className="rounded-xl border border-dashed border-border bg-background p-10 text-center text-sm text-muted-foreground">
           No upcoming meetings. Connect Google Workspace to sync your calendar.
         </div>
       ) : (
@@ -81,7 +81,7 @@ export default function CalendarMeetingsPage() {
           {data.meetings.map((m) => (
             <li
               key={m.id}
-              className="rounded border bg-white p-4 transition hover:bg-zinc-50"
+              className="rounded-xl border border-border bg-card p-4 transition-colors hover:border-input hover:bg-muted"
             >
               <Link href={`/calendar/${m.id}`} className="block">
                 <div className="flex items-start justify-between gap-4">

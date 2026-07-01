@@ -96,9 +96,9 @@ export default function ChannelsPage() {
     <div className="mx-auto max-w-4xl p-6 md:p-8">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold">Channels</h1>
+          <h1 className="text-2xl font-extrabold tracking-tight">Channels</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Multi-user conversations. Everyone sees the same AI thread live.
+            Multi-user conversations.
           </p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
@@ -178,8 +178,10 @@ export default function ChannelsPage() {
           <Loader2 className="size-5 animate-spin" />
         </div>
       ) : channels.length === 0 ? (
-        <div className="text-center py-12 border rounded-lg">
-          <Users className="size-10 mx-auto text-muted-foreground mb-2" />
+        <div className="rounded-xl border border-dashed border-border bg-background px-6 py-16 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
+            <Users className="size-5" />
+          </div>
           <p className="text-muted-foreground">No channels yet. Create one to start.</p>
         </div>
       ) : (
@@ -188,7 +190,7 @@ export default function ChannelsPage() {
             <li key={c.id}>
               <Link
                 href={`/chat/${c.id}`}
-                className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/40 transition-colors"
+                className="flex items-center justify-between rounded-xl border border-border bg-background p-4 transition-colors hover:border-input hover:bg-muted"
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -210,7 +212,7 @@ export default function ChannelsPage() {
                     <Users className="size-3.5" /> {c.member_count}
                   </span>
                   {c.my_role ? (
-                    <span className="px-2 py-0.5 rounded-full bg-muted text-xs">
+                    <span className="rounded-full bg-secondary px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-secondary-foreground">
                       {c.my_role}
                     </span>
                   ) : null}

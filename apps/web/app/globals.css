@@ -18,6 +18,9 @@
   --background: #ffffff; /* Surface — cards, sidebar, dialogs */
   --foreground: #16181c; /* Ink */
 
+  --card: #ffffff; /* Card surface — pure white on the cool-gray canvas */
+  --card-foreground: #16181c;
+
   --muted: #f4f5f6; /* Canvas — page backdrops + hover fills */
   --muted-foreground: #8a9099; /* Muted text */
 
@@ -67,6 +70,9 @@
   --background: #1a1c20; /* Card surface */
   --foreground: #f3f4f6;
 
+  --card: #1a1c20; /* Card surface — lighter than the canvas for depth */
+  --card-foreground: #f3f4f6;
+
   --muted: #121417; /* Canvas — darker than cards for depth */
   --muted-foreground: #8b9099;
 
@@ -108,6 +114,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);

@@ -139,7 +139,7 @@ function DocumentCard({
   const tags = doc.tags ?? [];
   const errorReason = extractErrorReason(doc.metadata);
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-background p-3">
+    <div className="flex items-center gap-3 rounded-xl border border-border bg-background p-3">
       <FileIcon type={doc.file_type} className="h-5 w-5 shrink-0" />
       <div className="min-w-0 flex-1">
         <p className="line-clamp-1 text-sm font-medium text-foreground">

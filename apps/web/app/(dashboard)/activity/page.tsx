@@ -36,30 +36,34 @@ export default function TeamActivityPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6 md:p-8">
-      <header>
-        <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
-          <Users className="h-5 w-5 text-primary" />
-          Team activity
-        </h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          What teammates have been generating, uploading, and sharing across the
-          workspace.
-        </p>
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight">
+            Team activity
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            What teammates have been generating, uploading, and sharing across
+            the workspace.
+          </p>
+        </div>
+        <div className="rounded-xl bg-brand-tint p-2.5 text-brand">
+          <Users className="h-4 w-4" />
+        </div>
       </header>
 
       {isLoading ? (
         <ActivitySkeleton />
       ) : error ? (
-        <div className="rounded-lg border border-destructive/40 bg-destructive-soft px-4 py-3 text-sm text-destructive">
+        <div className="rounded-xl border border-destructive/40 bg-destructive-soft px-4 py-3 text-sm text-destructive">
           {(error as Error).message}
         </div>
       ) : !data || data.length === 0 ? (
-        <p className="rounded-lg border border-border bg-background px-4 py-8 text-center text-sm text-muted-foreground">
+        <p className="rounded-xl border border-border bg-background px-4 py-8 text-center text-sm text-muted-foreground">
           No activity yet. As your team uploads documents and generates content,
           it&apos;ll show up here.
         </p>
       ) : (
-        <ul className="divide-y divide-border rounded-lg border border-border bg-background">
+        <ul className="divide-y divide-border rounded-xl border border-border bg-background">
           {data.map((item) => (
             <li key={item.id} className="flex items-start gap-3 px-4 py-3">
               <Avatar name={item.user_name} />
@@ -68,7 +72,7 @@ export default function TeamActivityPage() {
                   <span className="font-medium">{item.user_name}</span>{" "}
                   <span className="text-muted-foreground">{item.summary}</span>
                 </p>
-                <p className="mt-0.5 text-[11px] uppercase tracking-wider text-muted-foreground">
+                <p className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
                   {formatDistanceToNow(item.created_at)}
                 </p>
               </div>
@@ -82,7 +86,7 @@ export default function TeamActivityPage() {
 
 function ActivitySkeleton() {
   return (
-    <ul className="divide-y divide-border rounded-lg border border-border bg-background">
+    <ul className="divide-y divide-border rounded-xl border border-border bg-background">
       {Array.from({ length: 6 }).map((_, i) => (
         <li key={i} className="flex items-start gap-3 px-4 py-3">
           <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
@@ -107,7 +111,7 @@ function Avatar({ name }: { name: string }) {
     .map((w) => w[0]!.toUpperCase())
     .join("");
   return (
-    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-tint text-xs font-extrabold text-brand">
       {initials || "·"}
     </span>
   );

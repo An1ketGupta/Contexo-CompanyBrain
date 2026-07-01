@@ -67,10 +67,10 @@ export default function DocumentsPage() {
     <div className="mx-auto max-w-6xl p-6 md:p-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-foreground">
+          <h1 className="text-2xl font-extrabold tracking-tight text-foreground">
             Documents
           </h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
+          <p className="mt-1 text-sm text-muted-foreground">
             Everything your AI knows about your company.
           </p>
         </div>
@@ -127,7 +127,7 @@ export default function DocumentsPage() {
 
 function TableSkeleton() {
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-background">
+    <div className="overflow-hidden rounded-xl border border-border bg-background">
       <div className="border-b border-border bg-muted/40 px-4 py-2.5">
         <Skeleton className="h-3 w-20" />
       </div>
@@ -150,8 +150,8 @@ function TableSkeleton() {
 
 function EmptyState() {
   return (
-    <div className="rounded-lg border border-dashed border-border bg-background px-6 py-16 text-center">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-accent-foreground">
+    <div className="rounded-xl border border-dashed border-border bg-background px-6 py-16 text-center">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
         <FileText className="h-5 w-5" />
       </div>
       <h2 className="text-base font-semibold text-foreground">
@@ -167,14 +167,14 @@ function EmptyState() {
 
 function NoMatchesState({ onClear }: { onClear: () => void }) {
   return (
-    <div className="rounded-lg border border-dashed border-border bg-background px-6 py-12 text-center">
+    <div className="rounded-xl border border-dashed border-border bg-background px-6 py-12 text-center">
       <h2 className="text-base font-semibold text-foreground">No matches</h2>
       <p className="mx-auto mt-1 max-w-xs text-sm text-muted-foreground">
         No documents match the current filters.
       </p>
       <button
         onClick={onClear}
-        className="mt-3 text-sm font-medium text-primary hover:underline"
+        className="mt-3 text-sm font-semibold text-brand hover:underline"
       >
         Clear filters
       </button>
@@ -190,11 +190,11 @@ function ErrorState({
   onRetry: () => void;
 }) {
   return (
-    <div className="rounded-lg border border-destructive/30 bg-destructive-soft/60 px-6 py-8 text-center">
+    <div className="rounded-xl border border-destructive/30 bg-destructive-soft/60 px-6 py-8 text-center">
       <p className="text-sm font-medium text-destructive">{message}</p>
       <button
         onClick={onRetry}
-        className="mt-3 text-sm font-medium text-primary hover:underline"
+        className="mt-3 text-sm font-semibold text-brand hover:underline"
       >
         Try again
       </button>

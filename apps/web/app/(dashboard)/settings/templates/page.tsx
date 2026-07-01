@@ -114,7 +114,7 @@ export default function TemplatesSettingsPage() {
         </Link>
         <div className="mt-2 flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">Templates</h1>
+            <h1 className="text-2xl font-extrabold tracking-tight">Templates</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               Saved prompts your team can pick from in the chat composer. Use{" "}
               <code className="rounded bg-muted px-1 text-[11px]">
@@ -147,9 +147,9 @@ export default function TemplatesSettingsPage() {
               type="button"
               onClick={() => setCategory(c)}
               className={cn(
-                "rounded-full border px-2.5 py-0.5 text-xs transition-colors",
+                "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
                 category === c
-                  ? "border-primary bg-primary text-primary-foreground"
+                  ? "border-transparent bg-brand-tint font-semibold text-brand"
                   : "border-border bg-background text-muted-foreground hover:border-foreground/40 hover:text-foreground",
               )}
             >
@@ -172,12 +172,14 @@ export default function TemplatesSettingsPage() {
           Loading templates…
         </div>
       ) : error ? (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
         </div>
       ) : templates.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border bg-muted/30 px-6 py-10 text-center">
-          <LayoutTemplate className="mx-auto h-6 w-6 text-muted-foreground" />
+        <div className="rounded-xl border border-dashed border-border bg-background px-6 py-12 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
+            <LayoutTemplate className="h-5 w-5" />
+          </div>
           <p className="mt-3 text-sm font-medium text-foreground">
             No templates match
           </p>
@@ -197,7 +199,7 @@ export default function TemplatesSettingsPage() {
             .filter((c) => (grouped.get(c) ?? []).length > 0)
             .map((c) => (
               <section key={c} className="space-y-2">
-                <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <h2 className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
                   {c}
                 </h2>
                 <ul className="space-y-2">

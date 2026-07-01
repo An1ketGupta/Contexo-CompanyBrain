@@ -51,8 +51,7 @@ export function DocumentVersionHistory({
   if (versions.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        No version records yet. Uploading or re-uploading this document will
-        create them automatically.
+        No version records yet.
       </p>
     );
   }

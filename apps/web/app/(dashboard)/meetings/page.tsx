@@ -65,38 +65,47 @@ export default function MeetingsPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
-      <header>
-        <h1 className="text-xl font-semibold tracking-tight">Meeting summaries</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Structured extractions from uploaded Zoom and Teams transcripts.
-          Attendees, decisions, action items — all searchable through your
-          chat.
-        </p>
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight">
+            Meeting summaries
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Structured extractions from uploaded Zoom and Teams transcripts.
+            Attendees, decisions, action items — all searchable through your
+            chat.
+          </p>
+        </div>
+        <div className="rounded-xl bg-brand-tint p-2.5 text-brand">
+          <CalendarDays className="h-4 w-4" />
+        </div>
       </header>
 
       {isLoading ? (
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
       ) : error ? (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm text-destructive">
+        <div className="rounded-xl border border-destructive/50 bg-destructive/5 p-4 text-sm text-destructive">
           Failed to load meeting summaries.
         </div>
       ) : !data?.summaries.length ? (
         <EmptyState />
       ) : (
-        <ul className="divide-y divide-border rounded-lg border border-border bg-background">
+        <ul className="divide-y divide-border rounded-xl border border-border bg-card">
           {data.summaries.map((m) => (
             <li key={m.id}>
               <Link
                 href={`/meetings/${m.id}`}
-                className="flex items-center gap-4 px-4 py-3 hover:bg-muted/40"
+                className="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-muted/50"
               >
-                <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-tint text-brand">
+                  <CalendarDays className="h-4 w-4" />
+                </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="truncate text-sm font-medium">
                       {m.source_document_name ?? "Untitled meeting"}
                     </p>
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    <span className="rounded-full bg-secondary px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-secondary-foreground">
                       {FORMAT_LABEL[m.source_format] ?? m.source_format}
                     </span>
                     {formatDuration(m.meeting_duration_seconds) ? (
@@ -142,12 +151,14 @@ export default function MeetingsPage() {
 
 function EmptyState() {
   return (
-    <div className="rounded-lg border border-dashed border-border bg-background p-8 text-center">
-      <CalendarDays className="mx-auto h-8 w-8 text-muted-foreground" />
+    <div className="rounded-xl border border-dashed border-border bg-background p-10 text-center">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
+        <CalendarDays className="h-5 w-5" />
+      </div>
       <p className="mt-3 text-sm font-medium">No meeting summaries yet</p>
       <p className="mt-1 text-xs text-muted-foreground">
         Upload a Zoom <code>.vtt</code> or Teams transcript JSON to your{" "}
-        <Link href="/documents" className="underline">
+        <Link href="/documents" className="font-semibold text-brand hover:underline">
           documents
         </Link>{" "}
         and Company Brain will extract attendees, decisions, and action items

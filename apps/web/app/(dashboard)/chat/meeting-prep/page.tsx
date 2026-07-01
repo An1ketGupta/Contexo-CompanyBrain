@@ -81,9 +81,11 @@ export default function MeetingPrepPage() {
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
       <header className="mb-8">
-        <div className="mb-2 flex items-center gap-2">
-          <CalendarDays className="h-5 w-5 text-primary" />
-          <h1 className="text-2xl font-semibold tracking-tight">
+        <div className="mb-2 flex items-center gap-2.5">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-tint text-brand">
+            <CalendarDays className="h-4 w-4" />
+          </span>
+          <h1 className="text-2xl font-extrabold tracking-tight">
             Meeting prep assistant
           </h1>
         </div>
@@ -103,10 +105,10 @@ export default function MeetingPrepPage() {
                 type="button"
                 onClick={() => setMeetingType(type)}
                 className={cn(
-                  "rounded-lg border px-3 py-1.5 text-sm transition-colors",
+                  "rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors",
                   meetingType === type
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border text-foreground hover:border-primary/40",
+                    ? "border-transparent bg-brand-tint font-semibold text-brand"
+                    : "border-border text-foreground hover:border-input hover:bg-muted",
                 )}
               >
                 {type}

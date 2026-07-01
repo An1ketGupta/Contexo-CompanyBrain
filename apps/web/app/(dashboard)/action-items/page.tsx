@@ -26,11 +26,11 @@ const fetcher = async (url: string): Promise<{ action_items: ActionItem[] }> => 
 };
 
 const STATUS_BADGE: Record<string, string> = {
-  pending: "bg-zinc-100 text-zinc-700",
-  tracked: "bg-blue-100 text-blue-700",
-  completed: "bg-emerald-100 text-emerald-700",
-  overdue: "bg-red-100 text-red-700",
-  cancelled: "bg-zinc-100 text-zinc-500",
+  pending: "bg-secondary text-muted-foreground",
+  tracked: "bg-brand-tint text-brand",
+  completed: "bg-success-tint text-success",
+  overdue: "bg-destructive-soft text-destructive",
+  cancelled: "bg-secondary text-muted-foreground",
 };
 
 export default function ActionItemsPage() {
@@ -103,14 +103,14 @@ export default function ActionItemsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Action items</h1>
+        <h1 className="text-2xl font-extrabold tracking-tight">Action items</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Paste meeting notes — we extract owners + due dates and push tasks to
           Notion, Asana, or Linear.
         </p>
       </header>
 
-      <section className="space-y-4 rounded border bg-white p-6">
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
         <div className="space-y-2">
           <Label htmlFor="notes">Paste meeting notes</Label>
           <Textarea
@@ -123,7 +123,7 @@ export default function ActionItemsPage() {
         </div>
 
         {error && (
-          <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="rounded-lg border border-destructive/30 bg-destructive-soft p-3 text-sm text-destructive">
             {error}
           </div>
         )}
@@ -135,7 +135,7 @@ export default function ActionItemsPage() {
         </div>
 
         {extractedIds.length > 0 && (
-          <div className="rounded border border-amber-200 bg-amber-50 p-4">
+          <div className="rounded-lg border border-amber/30 bg-amber-tint p-4">
             <p className="text-sm">
               {extractedIds.length} item{extractedIds.length === 1 ? "" : "s"}
               {" "}extracted. Provision them?
@@ -149,7 +149,7 @@ export default function ActionItemsPage() {
                   id="target"
                   value={target}
                   onChange={(e) => setTarget(e.target.value as typeof target)}
-                  className="w-40 rounded border border-input bg-background px-2 py-1 text-sm"
+                  className="h-9 w-40 rounded-[10px] border border-input bg-background px-2.5 text-sm transition-colors focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
                 >
                   <option value="asana">Asana</option>
                   <option value="linear">Linear</option>
@@ -165,7 +165,7 @@ export default function ActionItemsPage() {
                     id="np"
                     value={notionParent}
                     onChange={(e) => setNotionParent(e.target.value)}
-                    className="w-72 rounded border border-input bg-background px-2 py-1 text-sm"
+                    className="h-9 w-72 rounded-[10px] border border-input bg-background px-2.5 text-sm transition-colors focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
                   />
                 </div>
               )}
@@ -178,7 +178,9 @@ export default function ActionItemsPage() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-medium">Recent action items</h2>
+        <h2 className="mb-3 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+          Recent action items
+        </h2>
         {isLoading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : !data?.action_items?.length ? (
@@ -186,7 +188,7 @@ export default function ActionItemsPage() {
         ) : (
           <ul className="space-y-2">
             {data.action_items.map((a) => (
-              <li key={a.id} className="rounded border bg-white p-3">
+              <li key={a.id} className="rounded-xl border border-border bg-card p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="text-sm">{a.action_text}</div>
@@ -200,7 +202,7 @@ export default function ActionItemsPage() {
                             href={a.external_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-blue-600 hover:underline"
+                            className="font-medium text-brand hover:underline"
                           >
                             {a.external_provider} ↗
                           </a>

@@ -131,9 +131,9 @@ export function DocumentTable({
   }, [documents]);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-background">
+    <div className="overflow-hidden rounded-xl border border-border bg-background">
       <table className="w-full text-sm">
-        <thead className="border-b border-border bg-muted/40 text-xs uppercase tracking-wider text-muted-foreground">
+        <thead className="border-b border-border bg-muted/40 font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
           <tr>
             <th className="w-8 px-3 py-2.5">
               <Checkbox
@@ -214,7 +214,7 @@ function Row({
     <tr
       className={cn(
         "group transition-colors",
-        selected ? "bg-primary/5" : "hover:bg-muted/40",
+        selected ? "bg-accent/60" : "hover:bg-muted/40",
       )}
     >
       <td className="w-8 px-3 py-3">

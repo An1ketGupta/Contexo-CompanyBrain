@@ -73,6 +73,14 @@ def _require_configured() -> dict[str, str]:
 
 # ── HTTP client ────────────────────────────────────────────────────────────
 
+# Free-tier hosts (Render, Koyeb, ...) scale to zero and can take 30-90s to
+# wake on the first request. A single long timeout plus a couple of retries
+# absorbs that without turning a cold start into a hard failure for the user.
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = (3.0, 8.0)
+_RETRYABLE_EXC = (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError)
+
+
 class DocuSealClient:
     """Thin REST wrapper around DocuSeal's HTTP API. Auth is a static
     X-Auth-Token header — no token exchange, no caching."""
@@ -86,7 +94,7 @@ class DocuSealClient:
         path: str,
         *,
         json_body: Any | None = None,
-        timeout: float = 60.0,
+        timeout: float = 90.0,
     ) -> Any:
         url = f"{self.cfg['base_url']}{path}"
         headers = {
@@ -95,8 +103,25 @@ class DocuSealClient:
         }
         if json_body is not None:
             headers["Content-Type"] = "application/json"
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.request(method, url, headers=headers, json=json_body)
+
+        resp = None
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    resp = await client.request(method, url, headers=headers, json=json_body)
+                break
+            except _RETRYABLE_EXC as exc:
+                if attempt == _MAX_ATTEMPTS:
+                    raise DocuSealError(
+                        f"DocuSeal {method} {path} unreachable after {attempt} "
+                        f"attempts (host may be cold-starting): {exc}"
+                    ) from exc
+                log.warning(
+                    "docuseal.request_retry method=%s path=%s attempt=%d err=%s",
+                    method, path, attempt, exc,
+                )
+                await asyncio.sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
+
         if resp.status_code >= 400:
             snippet = (resp.text or "")[:500]
             raise DocuSealError(
@@ -109,13 +134,30 @@ class DocuSealClient:
         except ValueError:
             return resp.content
 
-    async def _get_bytes(self, url: str, *, timeout: float = 60.0) -> bytes:
+    async def _get_bytes(self, url: str, *, timeout: float = 90.0) -> bytes:
         """GET a fully-qualified URL (e.g. signed-PDF download). Uses the
         API key in case the URL is on our DocuSeal host; harmless on
         signed download URLs that ignore the header."""
         headers = {"X-Auth-Token": self.cfg["api_key"]}
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            resp = await client.get(url, headers=headers)
+
+        resp = None
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+                    resp = await client.get(url, headers=headers)
+                break
+            except _RETRYABLE_EXC as exc:
+                if attempt == _MAX_ATTEMPTS:
+                    raise DocuSealError(
+                        f"DocuSeal GET {url[:80]}… unreachable after {attempt} "
+                        f"attempts (host may be cold-starting): {exc}"
+                    ) from exc
+                log.warning(
+                    "docuseal.get_bytes_retry url=%s attempt=%d err=%s",
+                    url[:80], attempt, exc,
+                )
+                await asyncio.sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
+
         if resp.status_code != 200:
             raise DocuSealError(
                 f"DocuSeal GET {url[:80]}… → {resp.status_code}: {(resp.text or '')[:200]}"

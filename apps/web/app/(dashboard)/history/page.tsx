@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { History, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -45,8 +45,11 @@ export default function QueryHistoryPage() {
   const [search, setSearch] = useState<string>("");
 
   // Debounce the search input lightly so each keystroke doesn't fire a fetch.
+  // Must be an effect, not useMemo — it schedules a timer (a side effect) and
+  // touches `window`, so running it during SSR would throw "window is not
+  // defined". useEffect only runs client-side, which is exactly what we want.
   const [debouncedSearch, setDebouncedSearch] = useState<string>("");
-  useMemo(() => {
+  useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
     return () => window.clearTimeout(t);
   }, [search]);

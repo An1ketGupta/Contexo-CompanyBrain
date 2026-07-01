@@ -117,7 +117,7 @@ export default function ApprovalsPage() {
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Approvals</h1>
+        <h1 className="text-2xl font-extrabold tracking-tight">Approvals</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Review and approve AI outputs before they go out.
         </p>
@@ -141,9 +141,9 @@ export default function ApprovalsPage() {
               key={s}
               onClick={() => setStatus(s)}
               className={cn(
-                "shrink-0 rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
+                "shrink-0 rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors",
                 status === s
-                  ? "bg-muted text-foreground"
+                  ? "bg-brand-tint font-semibold text-brand"
                   : "text-muted-foreground hover:bg-muted/50",
               )}
             >
@@ -156,13 +156,13 @@ export default function ApprovalsPage() {
       {isLoading ? (
         <ApprovalsListSkeleton />
       ) : error ? (
-        <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           Couldn&apos;t load approvals. Refresh to try again.
         </div>
       ) : counts.total === 0 ? (
         <EmptyState tab={tab} status={status} />
       ) : (
-        <ul className="divide-y rounded-md border bg-card">
+        <ul className="divide-y rounded-xl border bg-card">
           {(data?.approvals ?? []).map((a) => (
             <ApprovalRow
               key={a.id}
@@ -189,8 +189,8 @@ export default function ApprovalsPage() {
             </DialogHeader>
 
             <div className="space-y-3">
-              <div className="rounded-md border bg-muted/40 p-3 text-sm">
-                <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <div className="rounded-lg border bg-muted/40 p-3 text-sm">
+                <div className="mb-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
                   Draft
                 </div>
                 <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap font-sans text-[13px] leading-relaxed">
@@ -211,8 +211,8 @@ export default function ApprovalsPage() {
                   />
                 </div>
               ) : active.note ? (
-                <div className="rounded-md border bg-muted/40 p-3 text-sm">
-                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <div className="rounded-lg border bg-muted/40 p-3 text-sm">
+                  <div className="mb-1 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
                     Note from {active.approver_name ?? "approver"}
                   </div>
                   <p className="whitespace-pre-wrap text-[13px]">{active.note}</p>
@@ -307,8 +307,8 @@ function ApprovalRow({
         onClick={onClick}
         className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40"
       >
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
-          <Icon className="h-4 w-4 text-muted-foreground" />
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-tint">
+          <Icon className="h-4 w-4 text-brand" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -355,10 +355,10 @@ function StatusBadge({ status }: { status: string }) {
 
 function ApprovalsListSkeleton() {
   return (
-    <ul className="divide-y rounded-md border bg-card">
+    <ul className="divide-y rounded-xl border bg-card">
       {Array.from({ length: 4 }).map((_, i) => (
         <li key={i} className="flex items-center gap-3 px-4 py-3">
-          <Skeleton className="h-9 w-9 shrink-0 rounded-md" />
+          <Skeleton className="h-9 w-9 shrink-0 rounded-lg" />
           <div className="min-w-0 flex-1 space-y-1.5">
             <div className="flex items-center gap-2">
               <Skeleton
@@ -386,8 +386,10 @@ function EmptyState({ tab, status }: { tab: Tab; status: StatusFilter }) {
         ? "You haven't submitted anything for approval yet."
         : "Nothing matches that filter.";
   return (
-    <div className="rounded-md border bg-card px-6 py-12 text-center">
-      <CheckCircle2 className="mx-auto h-8 w-8 text-muted-foreground/50" />
+    <div className="rounded-xl border bg-card px-6 py-12 text-center">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
+        <CheckCircle2 className="h-5 w-5" />
+      </div>
       <p className="mt-3 text-sm text-muted-foreground">{message}</p>
     </div>
   );
