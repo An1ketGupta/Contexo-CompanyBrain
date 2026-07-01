@@ -1,4 +1,4 @@
-# Company Brain — 30-Day Build Roadmap + Pricing Plans
+# Nirnaya IQ — 30-Day Build Roadmap + Pricing Plans
 
 > **Solo engineer, $0 budget, production-quality MVP in 30 days.**
 > Everything is sequenced so each day builds directly on the previous one.
@@ -685,7 +685,7 @@
    import google.generativeai as genai
    from google.generativeai.types import FunctionDeclaration, Tool
    
-   SYSTEM_PROMPT = """You are Company Brain, an AI assistant that helps employees 
+   SYSTEM_PROMPT = """You are Nirnaya IQ, an AI assistant that helps employees 
    of this company execute work tasks using the company's internal knowledge.
 
    You have access to a tool: search_company_knowledge(query).
@@ -971,7 +971,7 @@ The UX challenge with tool-use: there's a pause while the LLM makes tool calls a
    - Add ThemeProvider (next-themes)
    - Add Toaster (shadcn)
    - Set font (Inter via next/font)
-   - Meta: title "Company Brain", description
+   - Meta: title "Nirnaya IQ", description
 
 5. Set color tokens in `globals.css` — company brand: deep blue + white
 6. Create `lib/utils.ts` with `cn()` helper (combine clsx + tailwind-merge)
@@ -985,14 +985,14 @@ The UX challenge with tool-use: there's a pause while the LLM makes tool calls a
 **Time: ~5 hours | Deliverable: Users can sign up, log in, log out**
 
 1. `app/(auth)/login/page.tsx`:
-   - Logo + "Sign in to Company Brain"
+   - Logo + "Sign in to Nirnaya IQ"
    - Email field, password field
    - Submit button (shows loading spinner)
    - Error alert for wrong credentials
    - Link: "Don't have an account? Sign up"
 
 2. `app/(auth)/signup/page.tsx`:
-   - "Create your Company Brain"
+   - "Create your Nirnaya IQ"
    - Fields: Full name, Company name, Email, Password, Confirm password
    - Password strength indicator
    - Submit button + loading state
@@ -1460,7 +1460,7 @@ The UI has three zones: input (describe the task), output (generated content), s
 
 2. **Record a 2-minute Loom demo:**
    - Screen record: landing page → sign up → upload doc → ask question → show citations
-   - Narrate: "This is how Company Brain works. You upload your documents, then any employee can get instant answers."
+   - Narrate: "This is how Nirnaya IQ works. You upload your documents, then any employee can get instant answers."
    - Upload to loom.com (free)
 
 3. **Identify your first 5 targets:**
@@ -1474,7 +1474,7 @@ The UI has three zones: input (describe the task), output (generated content), s
    
    I built something that might save your team hours every week.
    
-   Company Brain lets employees ask plain-English questions and get 
+   Nirnaya IQ lets employees ask plain-English questions and get 
    instant answers from your internal docs — SOPs, handbooks, meeting 
    notes — with source citations so they can verify the answer.
    

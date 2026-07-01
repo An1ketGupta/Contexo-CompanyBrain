@@ -5,7 +5,7 @@ order: 3
 tags: [pdf, docx, xlsx, pptx, txt, md, html, csv, files, formats]
 ---
 
-Company Brain accepts the following file types:
+Nirnaya IQ accepts the following file types:
 
 | Format | Extension | Notes |
 |--------|-----------|-------|

@@ -1960,13 +1960,13 @@ async def export_conversation(
     lines: list[str] = [
         f"# {title}",
         "",
-        f"*Exported from Company Brain — {_format_export_ts()}*",
+        f"*Exported from Nirnaya IQ — {_format_export_ts()}*",
         "",
         "---",
         "",
     ]
     for m in timeline:
-        role = "**You**" if m.get("role") == "user" else "**Company Brain**"
+        role = "**You**" if m.get("role") == "user" else "**Nirnaya IQ**"
         lines.append(role)
         lines.append("")
         lines.append((m.get("content") or "").rstrip())

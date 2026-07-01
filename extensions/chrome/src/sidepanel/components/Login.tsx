@@ -26,7 +26,7 @@ export default function Login({ onAuthed }: { onAuthed: (s: Session) => void }) 
     <div className="cb-screen">
       <div className="cb-brand">
         <div className="cb-logo-dot" />
-        <h1>Company Brain</h1>
+        <h1>Nirnaya IQ</h1>
       </div>
       <p className="cb-subtle">Sign in to access your knowledge base.</p>
 

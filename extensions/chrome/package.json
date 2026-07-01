@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "Company Brain — Chrome side-panel client for the AI knowledge base",
+  "description": "Nirnaya IQ — Chrome side-panel client for the AI knowledge base",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

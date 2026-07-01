@@ -38,7 +38,7 @@ export default function HelpCenterPage() {
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">Help Center</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Answers to common questions about Company Brain.
+          Answers to common questions about Nirnaya IQ.
         </p>
       </header>
 

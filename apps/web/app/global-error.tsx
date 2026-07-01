@@ -39,7 +39,7 @@ export default function GlobalError({
       >
         <div style={{ maxWidth: 420, padding: 24, textAlign: "center" }}>
           <div style={{ fontSize: 12, color: "#737373", letterSpacing: 1 }}>
-            COMPANY BRAIN
+            Nirnaya IQ
           </div>
           <h1
             style={{

@@ -5,7 +5,7 @@ order: 2
 tags: [upload, documents, drag, drop, files, ingest]
 ---
 
-Documents are how you teach Company Brain about your company. Anything you upload becomes searchable context for every chat and every generated output.
+Documents are how you teach Nirnaya IQ about your company. Anything you upload becomes searchable context for every chat and every generated output.
 
 ## Upload from the Documents page
 

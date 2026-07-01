@@ -1,6 +1,6 @@
-# Company Brain — Chrome Extension
+# Nirnaya IQ — Chrome Extension
 
-Side-panel client for the Company Brain knowledge base. Built with Manifest V3,
+Side-panel client for the Nirnaya IQ knowledge base. Built with Manifest V3,
 Chrome's native `sidePanel` API, React 18, and Vite + CRXJS.
 
 ## Architecture (1-minute overview)

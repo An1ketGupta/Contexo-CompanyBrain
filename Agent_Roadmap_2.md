@@ -28,7 +28,7 @@
 
 ## DAY 1 — Autoflow Engine Core + Webhook Expansion
 
-**Goal:** Build the shared trigger/action backend that Sequences, Knowledge Curator, and Internal Comms will run on top of. Expand webhooks so Company Brain becomes a Zapier-compatible source of truth.
+**Goal:** Build the shared trigger/action backend that Sequences, Knowledge Curator, and Internal Comms will run on top of. Expand webhooks so Nirnaya IQ becomes a Zapier-compatible source of truth.
 
 ### Morning Block: Database Schema
 

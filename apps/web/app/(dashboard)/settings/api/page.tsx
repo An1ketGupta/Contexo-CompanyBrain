@@ -400,7 +400,7 @@ import os
 INTERNAL_SECRET = os.environ["INTERNAL_EMAIL_SECRET"]  # set during integration
 
 def verify_callback(body_bytes: bytes, headers: dict) -> bool:
-    """Returns True when the request was sent by Company Brain.
+    """Returns True when the request was sent by Nirnaya IQ.
 
     The signature is HMAC-SHA256 over the raw body, with the secret derived
     from your API key id (echoed in X-NirnayaIQ-Api-Key-Id) + your
@@ -466,7 +466,7 @@ while (true) {
 const INTERNAL_SECRET = process.env.INTERNAL_EMAIL_SECRET!;
 
 /**
- * Verifies an inbound callback from Company Brain.
+ * Verifies an inbound callback from Nirnaya IQ.
  *
  * The signature is HMAC-SHA256 over the raw request body, with the secret
  * derived from your API key id (echoed in X-NirnayaIQ-Api-Key-Id) +

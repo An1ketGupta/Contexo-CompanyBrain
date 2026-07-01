@@ -1,4 +1,4 @@
-# Company Brain — V4 Feature Roadmap (4 Days)
+# Nirnaya IQ — V4 Feature Roadmap (4 Days)
 
 ## Confirmed Architecture Decisions
 
@@ -1150,7 +1150,7 @@ Variable schema stored in `variables` JSONB:
 [
   { "name": "client_name", "label": "Client Name", "placeholder": "Acme Corp", "required": true },
   { "name": "date", "label": "Date", "placeholder": "Q1 2024", "required": false },
-  { "name": "product_name", "label": "Product", "placeholder": "Company Brain", "required": true }
+  { "name": "product_name", "label": "Product", "placeholder": "Nirnaya IQ", "required": true }
 ]
 ```
 
@@ -1818,7 +1818,7 @@ Citation version display — update `CitationCard` to show version:
 
 ## Day 3 — Chrome Extension
 
-**Goal:** Company Brain is available anywhere in Chrome — Gmail, Notion, Lever, Google Docs — as a 400px sidebar that slides in from the right. "Add to Brain" scrapes the current page and ingests it as a document.
+**Goal:** Nirnaya IQ is available anywhere in Chrome — Gmail, Notion, Lever, Google Docs — as a 400px sidebar that slides in from the right. "Add to Brain" scrapes the current page and ingests it as a document.
 
 **Feature:** #32 Chrome Extension (Manifest V3, iframe embed)
 
@@ -1850,9 +1850,9 @@ All icons: simple brain icon in indigo (`#6366f1`) on white background. Export a
 ```json
 {
   "manifest_version": 3,
-  "name": "Company Brain",
+  "name": "Nirnaya IQ",
   "version": "1.0.0",
-  "description": "Access your Company Brain knowledge base from any webpage",
+  "description": "Access your Nirnaya IQ knowledge base from any webpage",
   "permissions": [
     "activeTab",
     "storage",
@@ -1880,7 +1880,7 @@ All icons: simple brain icon in indigo (`#6366f1`) on white background. Export a
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     },
-    "default_title": "Open Company Brain"
+    "default_title": "Open Nirnaya IQ"
   },
   "web_accessible_resources": [
     {
@@ -1980,7 +1980,7 @@ function createSidebar(appUrl) {
         <circle cx="12" cy="12" r="10" fill="#6366f1" opacity="0.15"/>
         <circle cx="12" cy="12" r="5" fill="#6366f1"/>
       </svg>
-      <span style="font-size:13px; font-weight:600; color:#111827;">Company Brain</span>
+      <span style="font-size:13px; font-weight:600; color:#111827;">Nirnaya IQ</span>
     </div>
     <button id="cb-add-to-brain" style="
       font-size:11px; padding:4px 10px; background:#6366f1; color:white;
@@ -2144,7 +2144,7 @@ The popup is minimal — it opens when user clicks the toolbar icon (before cont
 <body>
   <div class="logo">
     <div class="logo-dot"></div>
-    <h1>Company Brain</h1>
+    <h1>Nirnaya IQ</h1>
   </div>
   <p>Your AI knowledge base — available on every page.</p>
   <button class="btn" id="open-sidebar">Open Sidebar</button>
@@ -2447,7 +2447,7 @@ export default function HelpCenterPage() {
           <Book size={22} className="text-indigo-600" />
         </div>
         <h1 className="text-2xl font-semibold mb-2">Help Center</h1>
-        <p className="text-muted-foreground">Answers to common questions about Company Brain</p>
+        <p className="text-muted-foreground">Answers to common questions about Nirnaya IQ</p>
       </div>
 
       {/* Search */}

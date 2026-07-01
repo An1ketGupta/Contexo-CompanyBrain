@@ -5,7 +5,7 @@ order: 8
 tags: [billing, plans, quota, upgrade, pricing, payment, invoice]
 ---
 
-Company Brain has three plans. You can see your current plan and usage on **Settings → Billing**.
+Nirnaya IQ has three plans. You can see your current plan and usage on **Settings → Billing**.
 
 ## Plans
 

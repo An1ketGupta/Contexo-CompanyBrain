@@ -341,7 +341,7 @@ export function CommandPalette() {
                   close
                 </span>
               </div>
-              <span className="hidden sm:inline">Company Brain</span>
+              <span className="hidden sm:inline">Nirnaya IQ</span>
             </div>
           </Command>
         </DialogPrimitive.Content>

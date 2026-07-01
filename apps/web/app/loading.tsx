@@ -30,7 +30,7 @@ export default function RootLoading() {
         </div>
         <div className="flex flex-col items-center gap-2.5">
           <p className="text-sm font-medium tracking-tight text-foreground">
-            Company Brain
+            Nirnaya IQ
           </p>
           <div className="flex items-center gap-1.5" aria-hidden>
             {[0, 1, 2].map((i) => (

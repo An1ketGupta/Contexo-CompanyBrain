@@ -197,7 +197,7 @@ export default function Chat({
       <header className="cb-header">
         <div className="cb-brand">
           <div className="cb-logo-dot" />
-          <span className="cb-brand-text">Company Brain</span>
+          <span className="cb-brand-text">Nirnaya IQ</span>
         </div>
         <button
           className="cb-btn-ghost"
@@ -253,7 +253,7 @@ export default function Chat({
       <div className="cb-messages" ref={listRef}>
         {messages.length === 0 && (
           <div className="cb-empty">
-            <p>Ask your Company Brain anything.</p>
+            <p>Ask your Nirnaya IQ anything.</p>
             <p className="cb-subtle">
               Try: <em>"Draft a Slack update about the Q4 plan"</em> or{' '}
               <em>"What's our refund policy?"</em>
@@ -275,7 +275,7 @@ export default function Chat({
               void onSubmit(e)
             }
           }}
-          placeholder="Ask Company Brain…"
+          placeholder="Ask Nirnaya IQ…"
           rows={2}
           disabled={streaming}
         />

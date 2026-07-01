@@ -23,9 +23,9 @@ export async function generateMetadata({
 }) {
   const { slug } = await params;
   const article = await loadArticle(slug);
-  if (!article) return { title: "Help — Company Brain" };
+  if (!article) return { title: "Help — Nirnaya IQ" };
   return {
-    title: `${article.frontmatter.title} — Help — Company Brain`,
+    title: `${article.frontmatter.title} — Help — Nirnaya IQ`,
     description: undefined,
   };
 }

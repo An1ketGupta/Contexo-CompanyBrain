@@ -319,3 +319,40 @@ class SourceJob(BaseModel):
 
 class SourcesResponse(BaseModel):
     jobs: list[SourceJob] = Field(default_factory=list)
+
+
+# ── DocuSeal e-sign template bindings (free-tier signing) ───────────────────
+# Free self-hosted DocuSeal can't ingest a PDF via API, so signing runs off a
+# template built once in the DocuSeal UI. HR records the template id + role
+# names here per signing envelope. See migration 081.
+
+
+class DocusealTemplateItem(BaseModel):
+    """One (org, envelope) → DocuSeal template binding as surfaced to HR."""
+
+    template_key: str  # 'loi' | 'offer_bundle'
+    label: str
+    docuseal_template_id: str | None = None
+    role_names: list[str] = Field(default_factory=list)
+    field_map: dict[str, str] = Field(default_factory=dict)
+    note: str | None = None
+    configured: bool = False
+
+
+class DocusealTemplatesStatusResponse(BaseModel):
+    """Returned by GET /onboarding/docuseal-templates. `esign_configured`
+    reflects the env credentials (base_url + api_key + webhook_secret); the
+    templates list reports each envelope's binding state so the UI can show
+    "configure your LOI template" style prompts."""
+
+    esign_configured: bool
+    templates: list[DocusealTemplateItem] = Field(default_factory=list)
+
+
+class UpsertDocusealTemplateRequest(BaseModel):
+    """Body for PUT /onboarding/docuseal-templates/{template_key}."""
+
+    docuseal_template_id: str = Field(..., min_length=1, max_length=64)
+    role_names: list[str] = Field(default_factory=list, max_length=5)
+    field_map: dict[str, str] = Field(default_factory=dict)
+    note: str | None = Field(default=None, max_length=500)

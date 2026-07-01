@@ -50,7 +50,7 @@ export function FeedbackThresholdAlertEmail({
       <Text style={p}>
         Over the last <strong>{rollup_days} days</strong>, users at{" "}
         <strong>{org_name}</strong> have thumbed-down{" "}
-        <strong>{count} responses</strong> that Company Brain classified as{" "}
+        <strong>{count} responses</strong> that Nirnaya IQ classified as{" "}
         <em>{failure_reason_label.toLowerCase()}</em>.
       </Text>
 
@@ -114,7 +114,7 @@ export function FeedbackThresholdAlertEmail({
 export const feedbackThresholdAlertSubject = (
   props: FeedbackThresholdAlertEmailProps,
 ): string =>
-  `${props.count} "${props.failure_reason_label}" failures this week — Company Brain`;
+  `${props.count} "${props.failure_reason_label}" failures this week — Nirnaya IQ`;
 
 export default FeedbackThresholdAlertEmail;
 

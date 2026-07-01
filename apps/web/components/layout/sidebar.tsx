@@ -19,8 +19,8 @@ export function Sidebar() {
           <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <Brain className="h-3.5 w-3.5" />
           </span>
-          <span className="text-sm font-extrabold tracking-tight">
-            Company Brain
+          <span className="text-md font-extrabold tracking-tight">
+            Nirnaya IQ
           </span>
         </Link>
         <NotificationBell />
@@ -31,7 +31,7 @@ export function Sidebar() {
       </div>
 
       <div
-        className="scrollbar-thin min-h-0 flex-1 overflow-y-auto py-2"
+        className="scrollbar-thin flex min-h-0 flex-1 overflow-y-auto py-2"
         style={{ scrollbarGutter: "stable" }}
       >
         <SidebarNav />

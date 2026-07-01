@@ -1,5 +1,5 @@
 -- ── Day 15: Developer API (#47) + Slack Bot (#31) ──────────────────────────
--- Both are platform features that turn Company Brain into something other
+-- Both are platform features that turn Nirnaya IQ into something other
 -- systems consume. Slack is the highest-leverage distribution channel; the
 -- public API turns the product into an API-first platform other tools
 -- can plug into.

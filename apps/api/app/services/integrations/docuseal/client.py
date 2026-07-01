@@ -2,10 +2,20 @@
 
 See the module docstring in __init__.py for the design rationale.
 
+Free-tier note: self-hosted open-source DocuSeal gates every file-ingest API
+endpoint (POST /submissions/pdf|docx|html, POST /templates/*) behind the Pro
+license — they 404 with "available in Pro Edition". The only free way to
+create a signable submission is POST /submissions against a template_id built
+once in the DocuSeal web UI. Per-candidate variable data is injected as
+read-only pre-filled field values. The (org, envelope) → template_id binding
+lives in the onboarding_docuseal_templates table (migration 081); callers
+resolve it and pass template_id + field_values in.
+
 Lifecycle of an envelope from our side:
 
-    create_routed_signing_envelope(run, [loi_pdf], [hr_signer, candidate_signer])
-        ├─ POST /submissions/pdf  (returns submission_id + per-submitter slug + embed_src)
+    create_routed_signing_envelope(run, template_id, field_values, [hr, candidate])
+        ├─ POST /submissions  {template_id, submitters:[{role, email, fields:[…]}]}
+        │     (returns per-submitter submission_id + slug + embed_src)
         └─ INSERT onboarding_signing_envelopes (provider=docuseal, status=sent)
 
     [HR clicks signing link → DocuSeal POSTs form.completed]
@@ -69,6 +79,16 @@ def _require_configured() -> dict[str, str]:
             "DocuSeal not fully configured. Missing: " + ", ".join(missing)
         )
     return cfg
+
+
+def is_configured() -> bool:
+    """True only when DocuSeal is wired end-to-end: base_url + api_key to
+    create envelopes, and webhook_secret to HMAC-verify the completion
+    callbacks. Gate the onboarding e-sign path on this — entering e-signing
+    without the webhook secret would start a signing flow that can never be
+    driven to completion, stranding the run."""
+    cfg = _config()
+    return all(cfg.get(k) for k in ("base_url", "api_key", "webhook_secret"))
 
 
 # ── HTTP client ────────────────────────────────────────────────────────────
@@ -174,12 +194,23 @@ async def create_signing_envelope(
     run_id: str,
     recipient_email: str,
     recipient_name: str,
-    documents: list[dict[str, Any]],
+    template_id: str,
+    document_kinds: list[str],
+    field_values: dict[str, Any] | None = None,
+    role_name: str = "First Party",
+    field_map: dict[str, str] | None = None,
     email_subject: str,
     email_body: str | None = None,
-    return_url: str | None = None,
+    send_email: bool = False,
+    return_url: str | None = None,  # noqa: ARG001 — DocuSeal redirect lives in the template
 ) -> dict[str, Any]:
-    """Create a single-signer DocuSeal submission wrapping one or more PDFs.
+    """Create a single-signer DocuSeal submission from a pre-built template.
+
+    `template_id` is a DocuSeal template built once in the web UI (free tier
+    cannot ingest a PDF via API). `field_values` are per-candidate variable
+    values (our render context); they're injected as read-only pre-filled
+    fields on the signer. `field_map` optionally remaps a variable name to a
+    differently-named field in the template.
 
     Returns:
         {
@@ -188,40 +219,36 @@ async def create_signing_envelope(
             "signing_url_expires_at": None (DocuSeal slugs do not expire),
         }
     """
-    if not documents:
-        raise DocuSealError("No documents supplied for envelope.")
+    if not document_kinds:
+        raise DocuSealError("No document kinds supplied for envelope.")
 
     client = DocuSealClient()
+    submitter: dict[str, Any] = {
+        "role": role_name,
+        "email": recipient_email,
+        "name": recipient_name,
+        "send_email": send_email,
+    }
+    fields = _prefill_fields(field_values, field_map)
+    if fields:
+        submitter["fields"] = fields
+
     body = {
-        "name": email_subject,
-        "send_email": False,  # Single embedded signer — we surface the link in UI.
+        "template_id": _template_id_int(template_id),
+        "send_email": send_email,  # Single embedded signer — we surface the link in UI.
         "order": "preserved",
         "message": {
             "subject": email_subject,
             "body": email_body or email_subject,
         },
-        "documents": [
-            {
-                "name": d.get("name") or f"{d.get('kind', 'document')}.pdf",
-                "file": base64.b64encode(d["pdf_bytes"]).decode("ascii"),
-            }
-            for d in documents
-        ],
-        "submitters": [
-            {
-                "role": "signer",
-                "email": recipient_email,
-                "name": recipient_name,
-                "send_email": False,
-            }
-        ],
+        "submitters": [submitter],
     }
 
     log.info(
-        "docuseal.create_envelope run=%s recipient=%s doc_count=%d",
-        run_id, recipient_email, len(documents),
+        "docuseal.create_envelope run=%s recipient=%s template=%s kinds=%s",
+        run_id, recipient_email, template_id, document_kinds,
     )
-    res = await client._request("POST", "/submissions/pdf", json_body=body)
+    res = await client._request("POST", "/submissions", json_body=body)
     submission_id, submitters = _extract_submission(res)
 
     if not submitters:
@@ -238,7 +265,7 @@ async def create_signing_envelope(
                 "run_id": run_id,
                 "provider": "docuseal",
                 "envelope_id": str(submission_id),
-                "document_kinds": [d["kind"] for d in documents],
+                "document_kinds": document_kinds,
                 "status": "sent",
                 "recipient_email": recipient_email,
                 "recipient_name": recipient_name,
@@ -299,17 +326,29 @@ async def create_routed_signing_envelope(
     org_id: str,
     run_id: str,
     document_kinds: list[str],
-    documents: list[dict[str, Any]],
     signers: list[dict[str, Any]],
+    template_id: str,
+    field_values: dict[str, Any] | None = None,
+    role_names: list[str] | None = None,
+    field_map: dict[str, str] | None = None,
     email_subject: str,
     email_body: str | None = None,
 ) -> dict[str, Any]:
     """Create a DocuSeal submission routed to multiple signers in order.
 
-    `signers` is a list of {role, email, name, routing_order, embedded} dicts.
-    Embedded signers get `send_email=false` so DocuSeal doesn't email them
-    (we surface the link in our UI). Remote signers get `send_email=true` so
-    DocuSeal mails them when their turn arrives (sequential, order="preserved").
+    `signers` is a list of {role, email, name, routing_order, embedded} dicts,
+    where `role` is our *internal* role ('hr' | 'candidate') used by the webhook
+    ingest + mint_signer_url. `template_id` is a DocuSeal template built once in
+    the web UI; `role_names` are that template's *DocuSeal* role names in
+    routing order (position i → the i-th sorted signer). Embedded signers get
+    `send_email=false` (we surface the link in our UI); remote signers get
+    `send_email=true` so DocuSeal mails them when their turn arrives.
+
+    `field_values` (our render context) are injected as read-only pre-filled
+    fields on the FIRST submitter — DocuSeal shows them to every party but only
+    that submitter "owns" them, so the template must assign the data fields to
+    the first role. `field_map` optionally remaps a variable to a differently-
+    named field.
 
     `document_kinds` lists the onboarding kinds wrapped in this envelope
     (e.g. ["loi"]). Used for the signing_envelopes row + webhook fan-out.
@@ -325,52 +364,47 @@ async def create_routed_signing_envelope(
             ],
         }
     """
-    if not documents:
-        raise DocuSealError("No documents supplied for envelope.")
     if not signers:
         raise DocuSealError("No signers supplied for envelope.")
 
     client = DocuSealClient()
     sorted_signers = sorted(signers, key=lambda s: int(s.get("routing_order", 1)))
+    prefill = _prefill_fields(field_values, field_map)
 
     submitters_payload: list[dict[str, Any]] = []
-    for s in sorted_signers:
-        role = s["role"]
+    for idx, s in enumerate(sorted_signers):
         is_embedded = bool(s.get("embedded", True))
-        submitters_payload.append(
-            {
-                "role": role,
-                "email": s["email"],
-                "name": s["name"],
-                # Embedded signers: link surfaced in our UI, no email from DocuSeal.
-                # Remote signers: DocuSeal emails them when their turn arrives.
-                "send_email": not is_embedded,
-            }
-        )
+        submitter: dict[str, Any] = {
+            # DocuSeal role name (matches a role in the template), NOT our
+            # internal 'hr'/'candidate' role — those stay in the signers JSONB.
+            "role": _docuseal_role(role_names, idx),
+            "email": s["email"],
+            "name": s["name"],
+            # Embedded signers: link surfaced in our UI, no email from DocuSeal.
+            # Remote signers: DocuSeal emails them when their turn arrives.
+            "send_email": not is_embedded,
+        }
+        # Pre-filled read-only data goes on the first signer only.
+        if idx == 0 and prefill:
+            submitter["fields"] = prefill
+        submitters_payload.append(submitter)
 
     body = {
-        "name": email_subject,
+        "template_id": _template_id_int(template_id),
         "send_email": True,  # Per-submitter send_email overrides this.
         "order": "preserved",
         "message": {
             "subject": email_subject,
             "body": email_body or email_subject,
         },
-        "documents": [
-            {
-                "name": d.get("name") or f"{d.get('kind', 'document')}.pdf",
-                "file": base64.b64encode(d["pdf_bytes"]).decode("ascii"),
-            }
-            for d in documents
-        ],
         "submitters": submitters_payload,
     }
 
     log.info(
-        "docuseal.create_routed_envelope run=%s doc_count=%d signer_count=%d",
-        run_id, len(documents), len(signers),
+        "docuseal.create_routed_envelope run=%s template=%s kinds=%s signer_count=%d",
+        run_id, template_id, document_kinds, len(signers),
     )
-    res = await client._request("POST", "/submissions/pdf", json_body=body)
+    res = await client._request("POST", "/submissions", json_body=body)
     submission_id, returned_submitters = _extract_submission(res)
     if not returned_submitters:
         raise DocuSealError(f"DocuSeal submission returned no submitters: {res}")
@@ -848,6 +882,63 @@ def _human_event_message(
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _template_id_int(template_id: str | int) -> int:
+    """DocuSeal's POST /submissions expects template_id as an integer. We store
+    it as text to avoid JSON-number precision surprises, so coerce here and
+    surface a clean error if HR pasted something non-numeric."""
+    try:
+        return int(str(template_id).strip())
+    except (TypeError, ValueError) as exc:
+        raise DocuSealError(
+            f"DocuSeal template_id must be numeric, got {template_id!r}. "
+            "Copy the numeric id from the template's URL in the DocuSeal admin."
+        ) from exc
+
+
+def _docuseal_role(role_names: list[str] | None, idx: int) -> str:
+    """Map a routing position to the DocuSeal role name defined in the template.
+    Falls back to DocuSeal's default names when the mapping is short/unset."""
+    if role_names and idx < len(role_names) and (role_names[idx] or "").strip():
+        return role_names[idx].strip()
+    return "First Party" if idx == 0 else "Second Party"
+
+
+def _stringify_value(val: Any) -> str:
+    """Render a pre-fill value as the string DocuSeal expects for a text field."""
+    if isinstance(val, bool):
+        return "Yes" if val else "No"
+    if isinstance(val, float) and val.is_integer():
+        return str(int(val))
+    return str(val)
+
+
+def _prefill_fields(
+    field_values: dict[str, Any] | None,
+    field_map: dict[str, str] | None,
+) -> list[dict[str, Any]]:
+    """Turn a render context into DocuSeal read-only pre-filled fields.
+
+    Each `{name, default_value, readonly}` targets a field named after our
+    template_vars.py variable (or its `field_map` override). Complex values
+    (dicts/lists like ctc_breakdown) and None are skipped — only the flat
+    scalar blanks map onto DocuSeal fields."""
+    if not field_values:
+        return []
+    fmap = field_map or {}
+    out: list[dict[str, Any]] = []
+    for var, val in field_values.items():
+        if val is None or isinstance(val, (dict, list)):
+            continue
+        out.append(
+            {
+                "name": fmap.get(var, var),
+                "default_value": _stringify_value(val),
+                "readonly": True,
+            }
+        )
+    return out
 
 
 def _extract_submission(res: Any) -> tuple[Any, list[dict[str, Any]]]:

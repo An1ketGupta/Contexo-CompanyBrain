@@ -25,6 +25,8 @@ from app.database import get_service_client, get_user_client
 from app.errors import NoOrganization
 from app.inngest.client import get_inngest_client
 from app.models.onboarding_v2 import (
+    DocusealTemplateItem,
+    DocusealTemplatesStatusResponse,
     HrReferencesOverrideRequest,
     ImportTemplateFromDriveRequest,
     LoiApproveDraftResponse,
@@ -38,6 +40,7 @@ from app.models.onboarding_v2 import (
     TemplateApplyMappingsRequest,
     TemplateApplyMappingsResponse,
     TemplateMappingItem,
+    UpsertDocusealTemplateRequest,
 )
 from app.services.agents.onboarding_v2 import storage as ob_storage
 
@@ -665,7 +668,7 @@ async def approve_offer_bundle(
 
     docs = await asyncio.to_thread(
         lambda: svc.table("onboarding_documents")
-        .select("id, kind, storage_path")
+        .select("id, kind, storage_path, render_context")
         .eq("run_id", run_id)
         .in_("kind", ["appointment_letter", "nda"])
         .execute()
@@ -686,31 +689,41 @@ async def approve_offer_bundle(
     # Prefer e-sign embedded signing when configured; fall back to plain
     # email with signed-link PDFs. The fallback path is what the customer
     # uses on their first day before they wire DocuSeal credentials.
-    use_esign = bool(getattr(settings, "docuseal_api_key", ""))
+    # Gate on the full config (base_url + api_key + webhook_secret) so a
+    # half-wired setup falls back cleanly rather than starting a signing
+    # flow whose completion webhook can never be verified.
+    from app.services.integrations.docuseal import is_configured as _docuseal_ready
+
+    # Free-tier DocuSeal signs from a pre-built template, not an uploaded PDF —
+    # resolve the org's 'offer_bundle' template binding. Missing binding (or
+    # missing creds) falls back to the plain email-with-signed-links path.
+    esign_template = await ob_storage.fetch_docuseal_template(
+        org_id=org_id, template_key="offer_bundle"
+    )
+    use_esign = _docuseal_ready() and esign_template is not None
 
     if use_esign:
         try:
             from app.services.integrations.docuseal import create_signing_envelope
 
-            # Download the latest PDFs from Storage so we send the freshest
-            # bytes — HR may have re-generated after a tweak.
-            pdfs: list[dict[str, Any]] = []
-            for d in docs.data:
-                def _dl(path: str = d["storage_path"]) -> bytes:
-                    return svc.storage.from_(ob_storage.STORAGE_BUCKET).download(path)
-                pdf_bytes = await asyncio.to_thread(_dl)
-                pdfs.append({
-                    "kind": d["kind"],
-                    "pdf_bytes": pdf_bytes,
-                    "name": f"{d['kind']}.pdf",
-                })
+            # Per-candidate values come from the render context stamped on the
+            # generated docs; DocuSeal pre-fills them as read-only fields.
+            field_values = next(
+                (d.get("render_context") for d in docs.data if d.get("render_context")),
+                {},
+            ) or {}
+            role_names = esign_template.get("role_names") or []
 
             envelope = await create_signing_envelope(
                 org_id=org_id,
                 run_id=run_id,
                 recipient_email=run.data["candidate_email"],
                 recipient_name=run.data["candidate_name"],
-                documents=pdfs,
+                template_id=esign_template["docuseal_template_id"],
+                document_kinds=["appointment_letter", "nda"],
+                field_values=field_values,
+                role_name=(role_names[0] if role_names else "First Party"),
+                field_map=esign_template.get("field_map") or {},
                 email_subject=(
                     f"Offer documents from {run.data.get('candidate_name', 'us')}: "
                     f"Appointment Letter + NDA"
@@ -719,10 +732,7 @@ async def approve_offer_bundle(
                     "Please review and sign your appointment letter and NDA. "
                     "Click the link to open the signing page."
                 ),
-                return_url=(
-                    f"{settings.app_url.rstrip('/')}/candidate/done?run={run_id}"
-                    if settings.app_url else "https://nirnayaiq.com/candidate/done"
-                ),
+                send_email=False,  # Embedded signer — we surface the link in UI.
             )
             esign_envelope_id = envelope["envelope_id"]
             esign_signing_url = envelope["signing_url"]
@@ -1019,7 +1029,7 @@ async def approve_loi_draft(
 
     doc = await asyncio.to_thread(
         lambda: svc.table("onboarding_documents")
-        .select("id, storage_path, hr_edited_pdf_path")
+        .select("id, storage_path, hr_edited_pdf_path, render_context")
         .eq("run_id", run_id)
         .eq("kind", "loi")
         .maybe_single()
@@ -1031,8 +1041,17 @@ async def approve_loi_draft(
             "LOI document row not found for this run.",
         )
 
-    settings = get_settings()
-    use_esign = bool(getattr(settings, "docuseal_api_key", ""))
+    # Gate on the full DocuSeal config so a half-wired setup (e.g. api_key
+    # set but webhook_secret missing) falls back to the print/scan flow
+    # instead of stranding the run in loi_pending_esign_signature.
+    # Free-tier DocuSeal signs from a pre-built template, so we also require the
+    # org's 'loi' template binding; without it we use the print/scan fallback.
+    from app.services.integrations.docuseal import is_configured as _docuseal_ready
+
+    esign_template = await ob_storage.fetch_docuseal_template(
+        org_id=org_id, template_key="loi"
+    )
+    use_esign = _docuseal_ready() and esign_template is not None
 
     if use_esign:
         # Resolve HR's email from Supabase auth admin (mirrors agent.py:514).
@@ -1063,13 +1082,13 @@ async def approve_loi_draft(
             or hr_email.split("@", 1)[0]
         )
 
-        # Use the HR-edited PDF if HR uploaded one, else the agent's render.
-        pdf_path = doc.data.get("hr_edited_pdf_path") or doc.data["storage_path"]
-
-        def _dl() -> bytes:
-            return svc.storage.from_(ob_storage.STORAGE_BUCKET).download(pdf_path)
-
-        pdf_bytes = await asyncio.to_thread(_dl)
+        # Per-candidate values come from the render context stamped on the LOI
+        # doc; DocuSeal pre-fills them as read-only fields on the HR signer.
+        # NOTE: free-tier signing uses the pre-built DocuSeal template, so an
+        # HR-edited PDF (hr_edited_pdf_path) is not what gets signed — the
+        # template body is. HR edits still show in the PDF preview.
+        field_values = doc.data.get("render_context") or {}
+        role_names = esign_template.get("role_names") or []
 
         from app.services.integrations.docuseal import (
             DocuSealError,
@@ -1082,13 +1101,6 @@ async def approve_loi_draft(
                 org_id=org_id,
                 run_id=run_id,
                 document_kinds=["loi"],
-                documents=[
-                    {
-                        "kind": "loi",
-                        "pdf_bytes": pdf_bytes,
-                        "name": "Letter of Intent.pdf",
-                    }
-                ],
                 signers=[
                     {
                         "role": "hr",
@@ -1105,6 +1117,10 @@ async def approve_loi_draft(
                         "embedded": False,
                     },
                 ],
+                template_id=esign_template["docuseal_template_id"],
+                field_values=field_values,
+                role_names=role_names,
+                field_map=esign_template.get("field_map") or {},
                 email_subject=(
                     f"Sign the Letter of Intent — {run.data['candidate_name']}"
                 ),
@@ -1755,6 +1771,137 @@ async def template_status(
         "nda": by_kind.get("nda"),
         "induction": by_kind.get("induction"),
     }
+
+
+# ── DocuSeal e-sign template bindings ──────────────────────────────────────
+# Free self-hosted DocuSeal can't create a submission from an uploaded PDF
+# (that endpoint is Pro-gated), so onboarding signing runs off a template
+# built once in the DocuSeal UI. HR records the template id + role names here,
+# one binding per signing envelope. Without a binding the run falls back to the
+# print/scan (LOI) or email (offer bundle) flow.
+
+_DOCUSEAL_TEMPLATE_KEYS: dict[str, str] = {
+    "loi": "Letter of Intent (HR → candidate)",
+    "offer_bundle": "Appointment Letter + NDA (candidate)",
+}
+
+
+@router.get(
+    "/docuseal-templates",
+    response_model=DocusealTemplatesStatusResponse,
+)
+async def list_docuseal_templates(
+    current_user: dict = Depends(verify_jwt),
+) -> DocusealTemplatesStatusResponse:
+    """Report the org's DocuSeal template bindings + whether the DocuSeal env
+    credentials are wired. Drives the e-sign settings screen."""
+    _, org_id, _ = _require_user(current_user)
+    from app.services.integrations.docuseal import is_configured as _docuseal_ready
+
+    svc = get_service_client()
+    rows = await asyncio.to_thread(
+        lambda: svc.table("onboarding_docuseal_templates")
+        .select("template_key, docuseal_template_id, role_names, field_map, note")
+        .eq("org_id", org_id)
+        .execute()
+    )
+    by_key = {r["template_key"]: r for r in (rows.data or [])}
+
+    templates = []
+    for key, label in _DOCUSEAL_TEMPLATE_KEYS.items():
+        row = by_key.get(key) or {}
+        tid = row.get("docuseal_template_id")
+        templates.append(
+            DocusealTemplateItem(
+                template_key=key,
+                label=label,
+                docuseal_template_id=tid,
+                role_names=row.get("role_names") or [],
+                field_map=row.get("field_map") or {},
+                note=row.get("note"),
+                configured=bool(tid),
+            )
+        )
+
+    return DocusealTemplatesStatusResponse(
+        esign_configured=_docuseal_ready(),
+        templates=templates,
+    )
+
+
+@router.put(
+    "/docuseal-templates/{template_key}",
+    response_model=DocusealTemplateItem,
+)
+async def upsert_docuseal_template(
+    template_key: str,
+    body: UpsertDocusealTemplateRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> DocusealTemplateItem:
+    """Create or update the DocuSeal template binding for one signing envelope."""
+    _, org_id, _ = _require_user(current_user)
+    if template_key not in _DOCUSEAL_TEMPLATE_KEYS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Unknown template_key '{template_key}'. "
+            f"Expected one of: {', '.join(_DOCUSEAL_TEMPLATE_KEYS)}.",
+        )
+    # DocuSeal template ids are integers; validate early so HR gets a clear
+    # message instead of a 502 at signing time.
+    tid = body.docuseal_template_id.strip()
+    if not tid.isdigit():
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "DocuSeal template id must be the numeric id from the template's "
+            "URL in the DocuSeal admin (e.g. 1000001).",
+        )
+
+    svc = get_service_client()
+    payload = {
+        "org_id": org_id,
+        "template_key": template_key,
+        "docuseal_template_id": tid,
+        "role_names": body.role_names or ["First Party", "Second Party"],
+        "field_map": body.field_map or {},
+        "note": body.note,
+    }
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_docuseal_templates")
+        .upsert(payload, on_conflict="org_id,template_key")
+        .execute()
+    )
+    return DocusealTemplateItem(
+        template_key=template_key,
+        label=_DOCUSEAL_TEMPLATE_KEYS[template_key],
+        docuseal_template_id=tid,
+        role_names=payload["role_names"],
+        field_map=payload["field_map"],
+        note=body.note,
+        configured=True,
+    )
+
+
+@router.delete("/docuseal-templates/{template_key}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_docuseal_template(
+    template_key: str,
+    current_user: dict = Depends(verify_jwt),
+) -> None:
+    """Remove a DocuSeal template binding — the envelope reverts to the
+    print/scan or email fallback until reconfigured."""
+    _, org_id, _ = _require_user(current_user)
+    if template_key not in _DOCUSEAL_TEMPLATE_KEYS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Unknown template_key '{template_key}'.",
+        )
+    svc = get_service_client()
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_docuseal_templates")
+        .delete()
+        .eq("org_id", org_id)
+        .eq("template_key", template_key)
+        .execute()
+    )
 
 
 # Sample data used when previewing a template. Mirrors the structure of

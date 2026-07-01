@@ -566,7 +566,7 @@
 
 ## 2.8 MCP Server (Model Context Protocol)
 
-**Problem:** The API supports external callers via API keys (`public_api.py`). But as Claude, ChatGPT, and other AI assistants adopt MCP, orgs want the Company Brain callable as a tool from any AI system — not just via REST.
+**Problem:** The API supports external callers via API keys (`public_api.py`). But as Claude, ChatGPT, and other AI assistants adopt MCP, orgs want the Nirnaya IQ callable as a tool from any AI system — not just via REST.
 
 **Why It Matters:** MCP is becoming the standard interface for AI tool use. If NirnayaIQ ships an MCP server, any user of Claude.ai or ChatGPT Enterprise can call "search NirnayaIQ" as a native tool. This is a distribution channel, not just a feature.
 
@@ -1143,7 +1143,7 @@
 ---
 
 # Tier 5 — AI-Native
-> **Agentic and Company Brain innovations** — features that make NirnayaIQ genuinely novel as an organizational AI platform.
+> **Agentic and Nirnaya IQ innovations** — features that make NirnayaIQ genuinely novel as an organizational AI platform.
 
 ---
 
@@ -1151,7 +1151,7 @@
 
 **Problem:** (Extending 2.3) The decision log captures explicit decisions. But there are hundreds of implicit organizational "memories" — recurring patterns, lessons learned, cultural norms, institutional knowledge — that exist only in aggregate across thousands of conversations but are never synthesized.
 
-**Why It Matters:** A true organizational brain doesn't just store documents — it remembers what the organization has experienced, learned, and decided. This is the difference between a knowledge base (Notion) and a Company Brain (NirnayaIQ).
+**Why It Matters:** A true organizational brain doesn't just store documents — it remembers what the organization has experienced, learned, and decided. This is the difference between a knowledge base (Notion) and a Nirnaya IQ (NirnayaIQ).
 
 **User Impact:** All users — the AI becomes smarter about their org the longer they use it.
 
@@ -1375,9 +1375,9 @@
 
 ---
 
-## 6.3 Voice-First Company Brain (Speech Interface)
+## 6.3 Voice-First Nirnaya IQ (Speech Interface)
 
-**Problem:** The Company Brain is entirely text-based. But in-office and on-the-go employees often need quick answers while their hands are busy (in the warehouse, on the factory floor, driving between customer sites, in a meeting without a laptop open).
+**Problem:** The Nirnaya IQ is entirely text-based. But in-office and on-the-go employees often need quick answers while their hands are busy (in the warehouse, on the factory floor, driving between customer sites, in a meeting without a laptop open).
 
 **Why It Matters:** Voice is the most natural interface for quick Q&A. "Hey Brain, what's our discount policy for enterprise deals?" should work the same as typing it.
 
@@ -1394,7 +1394,7 @@
 2. "Hold to speak" button in the chat interface — streams audio → browser transcribes → sends as text to `/chat/stream`.
 3. TTS response: use browser `SpeechSynthesis` API to read the response back. "Speak response" toggle.
 4. Chrome extension: same "hold to speak" in the side panel — ideal for reps using it while looking at a prospect's page.
-5. Phone integration: Twilio voice webhook → transcription → KB query → TTS response. "Call your Company Brain."
+5. Phone integration: Twilio voice webhook → transcription → KB query → TTS response. "Call your Nirnaya IQ."
 
 **Dependencies:** Existing chat pipeline, Chrome extension, browser APIs, optional Twilio integration.
 

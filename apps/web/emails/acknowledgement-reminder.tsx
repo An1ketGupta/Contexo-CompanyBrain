@@ -31,7 +31,7 @@ export function AcknowledgementReminderEmail({
       <Text style={p}>
         Hi {first_name}, {org_name} updated{" "}
         {pending_count === 1 ? "a policy" : `${pending_count} policies`} in
-        Company Brain. Please review and confirm you&apos;ve read{" "}
+        Nirnaya IQ. Please review and confirm you&apos;ve read{" "}
         {pending_count === 1 ? "it" : "them"}.
       </Text>
 

@@ -1,4 +1,4 @@
-# Company Brain — V2 Feature Roadmap (15 Days)
+# Nirnaya IQ — V2 Feature Roadmap (15 Days)
 
 ## Confirmed Architecture Decisions
 
@@ -388,7 +388,7 @@ Create plain HTML strings (or use Jinja2 templates) for each trigger. Keep them 
 
 **`invite.html`**
 ```html
-<h2>You've been invited to join {{ org_name }} on Company Brain</h2>
+<h2>You've been invited to join {{ org_name }} on Nirnaya IQ</h2>
 <p>{{ inviter_name }} has invited you to collaborate.</p>
 <a href="{{ accept_url }}" style="...">Accept Invitation</a>
 <p>This link expires in 7 days.</p>
@@ -396,7 +396,7 @@ Create plain HTML strings (or use Jinja2 templates) for each trigger. Keep them 
 
 **`welcome.html`** — Sent on signup completion.
 ```html
-<h2>Welcome to Company Brain, {{ first_name }}</h2>
+<h2>Welcome to Nirnaya IQ, {{ first_name }}</h2>
 <p>Your knowledge base is ready. Upload your first document to get started.</p>
 <a href="{{ app_url }}/documents">Upload Documents →</a>
 ```
@@ -417,12 +417,12 @@ Create plain HTML strings (or use Jinja2 templates) for each trigger. Keep them 
 **`quota_exceeded.html`** — Sent at 100%.
 ```html
 <h2>You've reached your query limit</h2>
-<p>Upgrade your plan to continue using Company Brain.</p>
+<p>Upgrade your plan to continue using Nirnaya IQ.</p>
 ```
 
 **`weekly_digest.html`** — Sent every Monday (Inngest cron).
 ```html
-<h2>Your Company Brain weekly summary</h2>
+<h2>Your Nirnaya IQ weekly summary</h2>
 <p>{{ query_count }} queries this week | {{ doc_count }} documents in your knowledge base</p>
 <p>Top document cited: {{ top_doc }}</p>
 ```
@@ -2248,7 +2248,7 @@ Email forwarding card:
 
 ## Day 15 — Developer API + Slack Bot (#47, #31)
 
-**Goal:** The two highest-leverage distribution features. API access turns Company Brain into a platform. Slack makes it viral inside every organization.
+**Goal:** The two highest-leverage distribution features. API access turns Nirnaya IQ into a platform. Slack makes it viral inside every organization.
 
 **Features:** #47 Developer API, #31 Slack Bot Integration
 
@@ -2332,7 +2332,7 @@ async def public_query(
     api_key: ApiKey = Depends(get_api_key_context)
 ):
     """
-    Query your Company Brain knowledge base programmatically.
+    Query your Nirnaya IQ knowledge base programmatically.
     Rate limited by plan.
     """
     result = await execute_task(
@@ -2447,7 +2447,7 @@ async def handle_brain_command(ack, body, client):
     # Find org by team_id
     integration = await get_slack_integration_by_team(team_id)
     if not integration:
-        await client.chat_postMessage(channel=channel_id, text="Company Brain is not connected.")
+        await client.chat_postMessage(channel=channel_id, text="Nirnaya IQ is not connected.")
         return
 
     # Post "thinking" placeholder message

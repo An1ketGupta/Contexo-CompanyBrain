@@ -124,7 +124,7 @@ export default function MagicLinkApprovalPage() {
       <div className="mx-auto max-w-xl rounded-lg border bg-card p-8 shadow-sm">
         <div className="mb-6 border-b pb-4">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Company Brain
+            Nirnaya IQ
           </p>
           <h1 className="mt-1 text-xl font-semibold tracking-tight">
             {resolved

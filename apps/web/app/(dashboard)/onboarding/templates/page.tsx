@@ -4,17 +4,21 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import {
+  AlertTriangle,
   ArrowLeft,
   CheckCircle2,
   ExternalLink,
   Eye,
   FileText,
   Loader2,
+  PenLine,
   Sparkles,
+  Trash2,
   XCircle,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -49,6 +53,21 @@ interface TemplateStatusResponse {
   appointment_letter: TemplateStatusRow | null;
   nda: TemplateStatusRow | null;
   induction: TemplateStatusRow | null;
+}
+
+interface DocusealTemplateItem {
+  template_key: string;
+  label: string;
+  docuseal_template_id: string | null;
+  role_names: string[];
+  field_map: Record<string, string>;
+  note: string | null;
+  configured: boolean;
+}
+
+interface DocusealTemplatesStatus {
+  esign_configured: boolean;
+  templates: DocusealTemplateItem[];
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -264,6 +283,8 @@ export default function OnboardingTemplatesPage() {
         );
       })}
 
+      <EsignTemplatesSection />
+
       <TemplateMapperModal
         documentId={mapper?.docId ?? null}
         documentName={mapper?.docName}
@@ -336,6 +357,226 @@ function TemplatePicker({
         ) : null}
         {currentId ? "Replace template" : "Assign template"}
       </Button>
+    </div>
+  );
+}
+
+// ── DocuSeal e-sign template bindings ──────────────────────────────────────
+// Free self-hosted DocuSeal can't create a submission from an uploaded PDF, so
+// signing runs off a template built once in the DocuSeal admin. HR pastes the
+// numeric template id here per signing envelope. Without a binding, the run
+// falls back to the print/scan (LOI) or plain-email (offer bundle) flow.
+
+function EsignTemplatesSection() {
+  const { data, mutate } = useSWR<DocusealTemplatesStatus>(
+    "/api/onboarding/docuseal-templates",
+    fetcher,
+  );
+
+  return (
+    <section className="mt-10 border-t border-border pt-8">
+      <header className="mb-4">
+        <h2 className="text-lg font-semibold tracking-tight text-foreground">
+          E-signature templates (DocuSeal)
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          The free DocuSeal edition can&apos;t accept an uploaded PDF over the
+          API, so signing uses a template you build once in the DocuSeal admin.
+          Upload your document there, drop signature + field boxes on the blanks
+          (name each text field to match a{" "}
+          <a
+            href="https://github.com/nirnayaiq/docs/blob/main/onboarding-template-vars.md"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            template variable
+          </a>
+          , e.g. <code className="rounded bg-muted px-1">candidate_name</code>),
+          then paste the template&apos;s numeric id below.
+        </p>
+      </header>
+
+      {data && !data.esign_configured ? (
+        <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-300/60 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            DocuSeal credentials aren&apos;t set on the backend
+            (DOCUSEAL_BASE_URL / DOCUSEAL_API_KEY / DOCUSEAL_WEBHOOK_SECRET).
+            Until they are, onboarding uses the print/scan &amp; email fallback
+            even with a template configured here.
+          </span>
+        </div>
+      ) : null}
+
+      {!data ? (
+        <Skeleton className="h-24 w-full" />
+      ) : (
+        data.templates.map((t) => (
+          <EsignTemplateCard
+            key={t.template_key}
+            item={t}
+            onChanged={() => void mutate()}
+          />
+        ))
+      )}
+    </section>
+  );
+}
+
+function EsignTemplateCard({
+  item,
+  onChanged,
+}: {
+  item: DocusealTemplateItem;
+  onChanged: () => void;
+}) {
+  const twoRole = item.template_key === "loi";
+  const [templateId, setTemplateId] = useState(item.docuseal_template_id ?? "");
+  const [roleNames, setRoleNames] = useState(
+    (item.role_names.length
+      ? item.role_names
+      : twoRole
+        ? ["First Party", "Second Party"]
+        : ["First Party"]
+    ).join(", "),
+  );
+  const [busy, setBusy] = useState<"save" | "delete" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    setBusy("save");
+    setError(null);
+    try {
+      const roles = roleNames
+        .split(",")
+        .map((r) => r.trim())
+        .filter(Boolean);
+      const res = await fetch(
+        `/api/onboarding/docuseal-templates/${item.template_key}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            docuseal_template_id: templateId.trim(),
+            role_names: roles,
+          }),
+        },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          detail?: string;
+          message?: string;
+        };
+        setError(body.detail || body.message || "Couldn't save the template.");
+        return;
+      }
+      onChanged();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function remove() {
+    setBusy("delete");
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/onboarding/docuseal-templates/${item.template_key}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok && res.status !== 204) {
+        setError("Couldn't remove the binding.");
+        return;
+      }
+      setTemplateId("");
+      onChanged();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const dirty =
+    templateId.trim() !== (item.docuseal_template_id ?? "") ||
+    roleNames.trim() !== item.role_names.join(", ");
+
+  return (
+    <div className="mb-4 rounded-lg border border-border bg-background p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium text-foreground">{item.label}</p>
+          <p className="text-xs text-muted-foreground">
+            {item.configured ? (
+              <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
+                <CheckCircle2 className="h-3 w-3" />
+                Template #{item.docuseal_template_id}
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-red-600 dark:text-red-400">
+                <XCircle className="h-3 w-3" />
+                Not configured — using fallback flow
+              </span>
+            )}
+          </p>
+        </div>
+        <PenLine className="h-4 w-4 text-muted-foreground" />
+      </div>
+
+      {error ? (
+        <div className="mb-3 rounded-md border border-red-300/60 bg-red-50 p-2 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-muted-foreground">
+            DocuSeal template id
+          </span>
+          <Input
+            value={templateId}
+            inputMode="numeric"
+            placeholder="e.g. 1000001"
+            onChange={(e) => setTemplateId(e.target.value)}
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-muted-foreground">
+            {twoRole
+              ? "Role names (HR first, candidate second)"
+              : "Role name (candidate)"}
+          </span>
+          <Input
+            value={roleNames}
+            placeholder={twoRole ? "First Party, Second Party" : "First Party"}
+            onChange={(e) => setRoleNames(e.target.value)}
+          />
+        </label>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button size="sm" onClick={save} disabled={busy !== null || !dirty}>
+          {busy === "save" ? (
+            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+          ) : null}
+          Save
+        </Button>
+        {item.configured ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={remove}
+            disabled={busy !== null}
+          >
+            {busy === "delete" ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            Remove
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -303,7 +303,7 @@ function ExportNotionDialog({
                 </div>
               ) : filteredPages.length === 0 ? (
                 <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                  No pages found. Share a page with the Company Brain integration in Notion first.
+                  No pages found. Share a page with the Nirnaya IQ integration in Notion first.
                 </div>
               ) : (
                 <ul className="divide-y divide-border">

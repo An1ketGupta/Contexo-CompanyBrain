@@ -1,4 +1,4 @@
-# Company Brain — 15-Day Agentic Implementation Roadmap
+# Nirnaya IQ — 15-Day Agentic Implementation Roadmap
 > Generated June 2026. Based on full codebase analysis + confirmed architectural decisions.
 
 ---
@@ -296,7 +296,7 @@ router = APIRouter(prefix="/integrations/gmail", tags=["gmail"])
 
 
 class SendEmailRequest(BaseModel):
-    message_id: str          # The Company Brain message ID (for delivery_status tracking)
+    message_id: str          # The Nirnaya IQ message ID (for delivery_status tracking)
     to: str                  # Recipient email address
     subject: str             # Email subject
     body: str                # Email body (the AI-generated content)
@@ -1224,7 +1224,7 @@ Clicking "Review Draft" opens a dialog with the stub content, with "Approve & Up
 
 ### DAY 6 — Human-in-the-Loop Approval Workflow
 
-**Goal:** Users can submit any AI output for manager approval before execution. Approvers get notified and can approve/reject from Company Brain or directly from their email.
+**Goal:** Users can submit any AI output for manager approval before execution. Approvers get notified and can approve/reject from Nirnaya IQ or directly from their email.
 
 ---
 
@@ -1807,11 +1807,11 @@ class PolicyPropagationAgent(BaseAgent):
 *What changed:*
 {diff}
 
-All team members have been asked to acknowledge this update in Company Brain.
+All team members have been asked to acknowledge this update in Nirnaya IQ.
 """
         return f"""📋 *New Policy Document: {title}*
 
-This document has been added to Company Brain. All team members have been asked to acknowledge it.
+This document has been added to Nirnaya IQ. All team members have been asked to acknowledge it.
 """
 ```
 
@@ -2012,7 +2012,7 @@ async def gather_weekly_stats(org_id: str, since: str) -> dict:
 **Resend Email Template** — `weekly-digest` template:
 
 The email structure:
-1. **Header**: "Your Company Brain Weekly Report — Week of [date]"
+1. **Header**: "Your Nirnaya IQ Weekly Report — Week of [date]"
 2. **Hero stat**: "Your team saved **X hours** this week" (big, bold)
 3. **Stats row**: Queries Run | Documents Added | Knowledge Gaps Found
 4. **Knowledge Gaps section**: "These topics were asked but had no answers: [list]" → "Click to review AI-drafted stubs"
@@ -2034,7 +2034,7 @@ This email is built as a React Email component and registered with Resend.
 
 ### DAY 12 — Support Response Agent + Auto-Tagger
 
-**Goal:** Inbound emails to the company support address get processed through Company Brain, draft responses created, routed to support queue. Auto-tagging makes collections work without manual effort.
+**Goal:** Inbound emails to the company support address get processed through Nirnaya IQ, draft responses created, routed to support queue. Auto-tagging makes collections work without manual effort.
 
 ---
 
@@ -2411,7 +2411,7 @@ async def process_meeting_transcript(document_id: str, org_id: str, file_content
 
 ### DAY 14 — Public Agent Trigger API + API-Triggered Onboarding
 
-**Goal:** External systems (BambooHR, Rippling, Notion, Airtable) can trigger Company Brain agents via a simple REST API with API key auth.
+**Goal:** External systems (BambooHR, Rippling, Notion, Airtable) can trigger Nirnaya IQ agents via a simple REST API with API key auth.
 
 ---
 

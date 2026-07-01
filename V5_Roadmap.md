@@ -1,4 +1,4 @@
-# Company Brain — V5 Feature Roadmap (4 Days)
+# Nirnaya IQ — V5 Feature Roadmap (4 Days)
 
 ## Confirmed Architecture Decisions
 
@@ -1448,7 +1448,7 @@ export function TimeSavingsCard() {
 
 1. **Chat sidebar footer** — below quota meter: "⏱ 14.5h saved this month"
 2. **Admin analytics page** — new stat card showing org-wide hours saved
-3. **Weekly digest email** — extend existing template: "Your team saved ~14h this month using Company Brain"
+3. **Weekly digest email** — extend existing template: "Your team saved ~14h this month using Nirnaya IQ"
 
 ---
 
@@ -1533,9 +1533,9 @@ TEMPLATE_SEEDS = {
 }
 
 DEFAULT_AI_INSTRUCTIONS = {
-    "hr_policies": "This organization uses Company Brain primarily for HR policy Q&A. Responses should be accurate, cite specific policies, and avoid speculation.",
-    "sales_enablement": "This organization uses Company Brain for sales enablement. Responses should be persuasive, customer-focused, and reference product positioning documents.",
-    "customer_support": "This organization uses Company Brain for customer support. Responses should be empathetic, solution-focused, and reference support policies.",
+    "hr_policies": "This organization uses Nirnaya IQ primarily for HR policy Q&A. Responses should be accurate, cite specific policies, and avoid speculation.",
+    "sales_enablement": "This organization uses Nirnaya IQ for sales enablement. Responses should be persuasive, customer-focused, and reference product positioning documents.",
+    "customer_support": "This organization uses Nirnaya IQ for customer support. Responses should be empathetic, solution-focused, and reference support policies.",
     "general": "",
 }
 ```
@@ -1579,7 +1579,7 @@ export function EnrichmentModal({ open, onComplete }: { open: boolean; onComplet
         <DialogHeader>
           <DialogTitle>Tell us about your organization</DialogTitle>
           <DialogDescription>
-            Takes 30 seconds. We'll personalize Company Brain for your team.
+            Takes 30 seconds. We'll personalize Nirnaya IQ for your team.
           </DialogDescription>
         </DialogHeader>
 
@@ -2087,12 +2087,12 @@ async def send_report(report: ScheduledReport):
     if report.report_type == 'usage_summary':
         data = await generate_usage_summary(report.org_id)
         html = render_usage_summary_email(data)
-        subject = f"Company Brain: Weekly usage summary — {report.org.name}"
+        subject = f"Nirnaya IQ: Weekly usage summary — {report.org.name}"
 
     elif report.report_type == 'knowledge_health':
         data = await get_knowledge_health_data(report.org_id)
         html = render_health_email(data)
-        subject = f"Company Brain: Knowledge base health report"
+        subject = f"Nirnaya IQ: Knowledge base health report"
 
     # Send to all recipients
     for recipient in report.recipients:

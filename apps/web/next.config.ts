@@ -1,7 +1,14 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
+import path from "node:path";
 
 const nextConfig: NextConfig = {
+  // Pin the workspace root to this app. Without it, Turbopack walks up looking
+  // for a lockfile and can pick the monorepo root, printing an "inferred
+  // workspace root" warning. This app is self-contained (own pnpm-lock.yaml).
+  turbopack: {
+    root: __dirname,
+  },
   // Forward the upstream Request-ID on response so the browser can correlate
   // a failed UI action with backend logs. We also set this in the proxy
   // helper for each route, but adding it at the framework level catches

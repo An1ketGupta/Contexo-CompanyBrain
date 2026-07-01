@@ -161,7 +161,7 @@ function EmptyState() {
         <Link href="/documents" className="font-semibold text-brand hover:underline">
           documents
         </Link>{" "}
-        and Company Brain will extract attendees, decisions, and action items
+        and Nirnaya IQ will extract attendees, decisions, and action items
         automatically.
       </p>
     </div>

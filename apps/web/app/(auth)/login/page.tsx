@@ -133,7 +133,7 @@ export default function LoginPage() {
               <Brain className="h-5 w-5" />
             </span>
             <span className="text-lg font-extrabold tracking-tight text-foreground">
-              Company Brain
+              Nirnaya IQ
             </span>
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight text-foreground">

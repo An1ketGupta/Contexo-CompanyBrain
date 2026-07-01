@@ -18,7 +18,7 @@ export default function PublicLayout({
             className="flex items-center gap-2 text-sm font-semibold tracking-tight"
           >
             <Brain className="h-5 w-5 text-primary" />
-            Company Brain
+            Nirnaya IQ
           </Link>
           <nav className="flex items-center gap-4 text-xs text-muted-foreground">
             <Link

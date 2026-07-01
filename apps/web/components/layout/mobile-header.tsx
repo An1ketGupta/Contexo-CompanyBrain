@@ -31,7 +31,7 @@ export function MobileHeader() {
           >
             <Brain className="h-5 w-5 text-primary" />
             <span className="text-sm font-semibold tracking-tight">
-              Company Brain
+              Nirnaya IQ
             </span>
           </Link>
           <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto py-2">
@@ -49,7 +49,7 @@ export function MobileHeader() {
       <Link href="/chat" className="flex items-center gap-2">
         <Brain className="h-5 w-5 text-primary" />
         <span className="text-sm font-semibold tracking-tight">
-          Company Brain
+          Nirnaya IQ
         </span>
       </Link>
 

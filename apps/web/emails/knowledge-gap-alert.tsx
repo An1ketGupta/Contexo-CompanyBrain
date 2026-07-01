@@ -23,7 +23,7 @@ export function KnowledgeGapAlertEmail({
       <Text style={p}>
         We&apos;ve seen this topic come up{" "}
         <strong>{count} times in the last week</strong>, but your knowledge
-        base doesn&apos;t cover it. Company Brain has drafted a stub document
+        base doesn&apos;t cover it. Nirnaya IQ has drafted a stub document
         below — review it, edit if needed, and approve to add it to your
         knowledge base.
       </Text>

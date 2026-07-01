@@ -17,18 +17,18 @@ export function InviteEmail({
   expires_in_days = 7,
 }: InviteEmailProps) {
   const subject = inviter_name
-    ? `${inviter_name} invited you to ${org_name} on Company Brain`
-    : `You've been invited to ${org_name} on Company Brain`;
+    ? `${inviter_name} invited you to ${org_name} on Nirnaya IQ`
+    : `You've been invited to ${org_name} on Nirnaya IQ`;
 
   return (
-    <EmailShell preview={subject} heading={`Join ${org_name} on Company Brain`}>
+    <EmailShell preview={subject} heading={`Join ${org_name} on Nirnaya IQ`}>
       <Text style={p}>
         {inviter_name
           ? `${inviter_name} added you to ${org_name} as a${role === "admin" ? "n admin" : " member"}.`
           : `You've been added to ${org_name} as a${role === "admin" ? "n admin" : " member"}.`}
       </Text>
       <Text style={p}>
-        Company Brain is your team&apos;s knowledge base — everything you know
+        Nirnaya IQ is your team&apos;s knowledge base — everything you know
         about your business, queryable in plain English.
       </Text>
       <Section style={{ margin: "24px 0" }}>
@@ -51,7 +51,7 @@ export function InviteEmail({
 
 export const inviteSubject = (props: InviteEmailProps): string =>
   props.inviter_name
-    ? `${props.inviter_name} invited you to ${props.org_name} on Company Brain`
-    : `You've been invited to ${props.org_name} on Company Brain`;
+    ? `${props.inviter_name} invited you to ${props.org_name} on Nirnaya IQ`
+    : `You've been invited to ${props.org_name} on Nirnaya IQ`;
 
 export default InviteEmail;

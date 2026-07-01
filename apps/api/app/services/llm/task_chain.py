@@ -1,4 +1,4 @@
-"""Tool-use orchestrator — the LLM brain of Company Brain.
+"""Tool-use orchestrator — the LLM brain of Nirnaya IQ.
 
 Single entry point: `execute_task(...)`. The orchestrator wraps the
 LLM↔retrieval loop and produces a stream of typed events that both the

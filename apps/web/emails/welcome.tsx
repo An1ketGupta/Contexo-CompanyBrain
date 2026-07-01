@@ -10,7 +10,7 @@ export interface WelcomeEmailProps {
 export function WelcomeEmail({ first_name, org_name, app_url }: WelcomeEmailProps) {
   return (
     <EmailShell
-      preview={`Welcome to Company Brain, ${first_name ?? "there"}`}
+      preview={`Welcome to Nirnaya IQ, ${first_name ?? "there"}`}
       heading={`Welcome${first_name ? `, ${first_name}` : ""}.`}
     >
       <Text style={p}>
@@ -18,7 +18,7 @@ export function WelcomeEmail({ first_name, org_name, app_url }: WelcomeEmailProp
         document and start asking questions in seconds.
       </Text>
       <Text style={p}>
-        Company Brain works best when you give it real context — handbooks,
+        Nirnaya IQ works best when you give it real context — handbooks,
         product docs, meeting notes, brand guides. The more it knows about how
         your team works, the sharper its answers get.
       </Text>
@@ -32,6 +32,6 @@ export function WelcomeEmail({ first_name, org_name, app_url }: WelcomeEmailProp
 }
 
 export const welcomeSubject = (props: WelcomeEmailProps): string =>
-  `Welcome to Company Brain${props.first_name ? `, ${props.first_name}` : ""}`;
+  `Welcome to Nirnaya IQ${props.first_name ? `, ${props.first_name}` : ""}`;
 
 export default WelcomeEmail;

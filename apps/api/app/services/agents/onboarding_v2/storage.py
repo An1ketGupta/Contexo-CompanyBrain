@@ -176,6 +176,41 @@ async def fetch_template_docx(
     return raw, doc
 
 
+async def fetch_docuseal_template(
+    *,
+    org_id: str,
+    template_key: str,
+) -> dict[str, Any] | None:
+    """Resolve the org's DocuSeal e-sign template binding for an envelope.
+
+    `template_key` is 'loi' (routed HR → candidate) or 'offer_bundle' (the
+    candidate-only Appointment Letter + NDA). Returns the row from
+    onboarding_docuseal_templates — {docuseal_template_id, role_names,
+    field_map, …} — or None when the org hasn't configured e-sign for this
+    envelope yet (the caller then falls back to the print/scan or email flow).
+
+    Free-tier DocuSeal can't ingest a rendered PDF over the API, so signing
+    requires a template built once in the DocuSeal UI. See migration 081.
+    """
+    svc = get_service_client()
+
+    def _fetch() -> dict[str, Any] | None:
+        res = (
+            svc.table("onboarding_docuseal_templates")
+            .select("docuseal_template_id, role_names, field_map, template_key, note")
+            .eq("org_id", org_id)
+            .eq("template_key", template_key)
+            .maybe_single()
+            .execute()
+        )
+        return res.data if res else None
+
+    row = await asyncio.to_thread(_fetch)
+    if not row or not row.get("docuseal_template_id"):
+        return None
+    return row
+
+
 async def upload_onboarding_artifact(
     *,
     org_id: str,

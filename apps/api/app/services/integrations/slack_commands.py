@@ -108,7 +108,7 @@ async def _handle_help(_groups: tuple[str, ...], _ctx: HandlerContext) -> dict[s
                 "text": {
                     "type": "mrkdwn",
                     "text": (
-                        "*Company Brain — what you can do with `/brain`*\n\n"
+                        "*Nirnaya IQ — what you can do with `/brain`*\n\n"
                         "_Questions_\n"
                         "• `/brain what's our refund policy?`\n\n"
                         "_Drafting_\n"

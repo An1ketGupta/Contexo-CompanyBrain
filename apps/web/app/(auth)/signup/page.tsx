@@ -77,7 +77,7 @@ export default function SignupPage() {
     <main className="flex min-h-screen items-center justify-center bg-muted p-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold text-foreground">Company Brain</h1>
+          <h1 className="text-2xl font-bold text-foreground">Nirnaya IQ</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Create your company workspace
           </p>

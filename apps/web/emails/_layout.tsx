@@ -30,14 +30,14 @@ export function EmailShell({
       <Body style={body}>
         <Container style={container}>
           <Section style={brand}>
-            <Text style={brandText}>Company Brain</Text>
+            <Text style={brandText}>Nirnaya IQ</Text>
           </Section>
           {heading && <Heading style={h1}>{heading}</Heading>}
           {children}
           <Section style={footer}>
             <Text style={footerText}>
               You&apos;re receiving this email because you have an account with
-              Company Brain. Reply to this email to talk to us.
+              Nirnaya IQ. Reply to this email to talk to us.
             </Text>
           </Section>
         </Container>

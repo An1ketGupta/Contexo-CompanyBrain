@@ -54,7 +54,7 @@ export function RecommendationsWidget() {
             Recommended documents to upload
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Based on how your team uses Company Brain · {matchedCount}/{totalVisible}{" "}
+            Based on how your team uses Nirnaya IQ · {matchedCount}/{totalVisible}{" "}
             matched
           </p>
         </div>

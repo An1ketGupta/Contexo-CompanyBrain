@@ -14,12 +14,12 @@ import pkg from '../package.json'
 //    no surprise reads of Gmail/Slack DOMs.
 export default defineManifest({
   manifest_version: 3,
-  name: 'Company Brain',
+  name: 'Nirnaya IQ',
   version: pkg.version,
   description: pkg.description,
 
   action: {
-    default_title: 'Open Company Brain',
+    default_title: 'Open Nirnaya IQ',
     default_icon: {
       '16': 'icons/icon-16.png',
       '48': 'icons/icon-48.png',
