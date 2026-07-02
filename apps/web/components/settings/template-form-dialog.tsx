@@ -126,7 +126,7 @@ export function TemplateFormDialog({ open, onOpenChange, template }: Props) {
                 id="tpl-cat"
                 value={category}
                 onChange={(e) => setCategory(e.target.value as TemplateCategory)}
-                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                className="h-10 w-full rounded-[10px] border border-input bg-background px-3.5 text-sm shadow-sm transition-colors focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
               >
                 {CATEGORIES.map((c) => (
                   <option key={c} value={c}>

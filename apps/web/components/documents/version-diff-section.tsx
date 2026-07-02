@@ -45,8 +45,8 @@ export function VersionDiffSection({ documentId }: { documentId: string }) {
   const latest = diffs[0];
 
   return (
-    <section className="space-y-2 rounded-md border border-border bg-background p-3">
-      <header className="flex items-center gap-2 text-xs font-medium">
+    <section className="space-y-2 rounded-xl border border-border bg-background p-3">
+      <header className="flex items-center gap-2 text-xs font-semibold">
         <GitCompare className="h-3.5 w-3.5 text-muted-foreground" />
         <span>
           What changed in v{latest.to_version}

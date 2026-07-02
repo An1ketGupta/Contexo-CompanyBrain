@@ -1,14 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
-  CheckCircle2,
-  Download,
+  ArrowLeft,
   ExternalLink,
+  Eye,
   Loader2,
   Sparkles,
-  Upload,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -52,11 +51,24 @@ interface ApplyResponse {
   preview_url: string | null;
 }
 
-interface PreviewResponse {
-  status: string;
+interface TextBlock {
+  index: number;
+  text: string;
+  kind: string;
+}
+
+interface BlocksResponse {
+  document_id: string;
   template_kind: string;
-  preview_url: string;
-  file_bytes: number;
+  blocks: TextBlock[];
+}
+
+interface EditTextResponse {
+  document_id: string;
+  template_kind: string;
+  changed_count: number;
+  preview_url: string | null;
+  preview_error: string | null;
 }
 
 interface TemplateMapperModalProps {
@@ -71,9 +83,10 @@ interface TemplateMapperModalProps {
 type Stage =
   | "analyzing"
   | "applying"
-  | "rendering"
-  | "done"
-  | "replacing"
+  | "loading"
+  | "editing"
+  | "previewing"
+  | "preview"
   | "saving"
   | "saved"
   | "error";
@@ -83,6 +96,12 @@ const KIND_LABEL: Record<string, string> = {
   appointment_letter: "Appointment Letter",
   nda: "NDA",
   induction: "Induction",
+};
+
+const BLOCK_KIND_LABEL: Record<string, string> = {
+  header: "Header",
+  footer: "Footer",
+  table: "Table",
 };
 
 const CONFIDENCE_STYLE: Record<MappingItem["confidence"], string> = {
@@ -95,6 +114,15 @@ async function readJson<T = unknown>(res: Response): Promise<T> {
   return (await res.json().catch(() => ({}))) as T;
 }
 
+/** Append PDF-viewer fragment params so the browser's built-in dark toolbar,
+ *  side panels, and page chrome are hidden — leaving just the rendered page.
+ *  The fragment goes after any existing query string on the signed URL. */
+function toChromelessPdf(url: string): string {
+  const [base, existingHash] = url.split("#");
+  const params = "toolbar=0&navpanes=0&statusbar=0&view=FitH";
+  return existingHash ? `${base}#${existingHash}&${params}` : `${base}#${params}`;
+}
+
 function errorText(body: unknown, fallback: string): string {
   if (body && typeof body === "object") {
     const b = body as { detail?: unknown; message?: string };
@@ -102,6 +130,37 @@ function errorText(body: unknown, fallback: string): string {
     if (typeof b.message === "string") return b.message;
   }
   return fallback;
+}
+
+/** A textarea that grows to fit its content — HR edits template lines that
+ *  range from one word to a full clause. */
+function AutoTextarea({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      spellCheck={false}
+      className="w-full resize-none overflow-hidden rounded-sm border-0 bg-transparent px-1 py-0.5 text-[15px] leading-7 text-neutral-900 outline-none focus:bg-primary/5 disabled:opacity-60"
+    />
+  );
 }
 
 export function TemplateMapperModal({
@@ -114,66 +173,76 @@ export function TemplateMapperModal({
 }: TemplateMapperModalProps) {
   const [stage, setStage] = useState<Stage>("analyzing");
   const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null);
-  const [appliedCount, setAppliedCount] = useState(0);
+  const [blocks, setBlocks] = useState<TextBlock[]>([]);
+  const [edited, setEdited] = useState<Record<number, string>>({});
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showMappings, setShowMappings] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const replaceFileRef = useRef<HTMLInputElement>(null);
   const onAppliedRef = useRef(onApplied);
   onAppliedRef.current = onApplied;
 
-  async function downloadDocx() {
-    if (!documentId) return;
+  const currentText = (b: TextBlock) =>
+    edited[b.index] !== undefined ? edited[b.index] : b.text;
+  const dirty = blocks.some(
+    (b) => edited[b.index] !== undefined && edited[b.index] !== b.text,
+  );
+
+  /** Write the current edits back to the DOCX and render a fresh preview.
+   *  Returns the response (or null on a hard error) and resets the edit
+   *  baseline so `dirty` clears on success. */
+  async function persistEdits(): Promise<EditTextResponse | null> {
+    if (!documentId) return null;
     setActionError(null);
+    const merged = blocks.map((b) => ({
+      index: b.index,
+      text: currentText(b),
+      kind: b.kind,
+    }));
     const res = await fetch(
-      `/api/onboarding/templates/${documentId}/docx-url`,
+      `/api/onboarding/templates/${documentId}/edit-text`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ edits: merged }),
+      },
     );
+    const body = await readJson(res);
     if (!res.ok) {
-      setActionError("Couldn't get a download link. Try again.");
-      return;
+      setActionError(errorText(body, "Couldn't save your edits."));
+      return null;
     }
-    const body = (await res.json()) as { docx_url?: string };
-    if (body.docx_url) window.open(body.docx_url, "_blank");
+    const resp = body as EditTextResponse;
+    setBlocks(merged);
+    setEdited({});
+    if (resp.preview_url) setPreviewUrl(resp.preview_url);
+    if (resp.preview_error) setActionError(resp.preview_error);
+    return resp;
   }
 
-  async function replaceDocx(file: File) {
-    if (!documentId) return;
-    setStage("replacing");
-    setActionError(null);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch(
-        `/api/onboarding/templates/${documentId}/replace`,
-        { method: "POST", body: form },
-      );
-      const body = (await readJson(res)) as {
-        preview_url?: string;
-        preview_error?: string | null;
-      };
-      if (!res.ok) {
-        setActionError(
-          errorText(body, "Couldn't upload the edited .docx."),
-        );
-        setStage("done");
-        return;
-      }
-      if (body.preview_url) setPreviewUrl(body.preview_url);
-      if (body.preview_error) setActionError(body.preview_error);
-      setStage("done");
-    } catch (exc) {
-      setActionError(
-        `Upload failed (${exc instanceof Error ? exc.message : String(exc)})`,
-      );
-      setStage("done");
+  async function previewPdf() {
+    const origin = stage;
+    setStage("previewing");
+    const resp = await persistEdits();
+    if (resp && resp.preview_url) {
+      setStage("preview");
+    } else {
+      setStage(origin === "preview" ? "preview" : "editing");
     }
   }
 
   async function saveTemplate() {
     if (!documentId) return;
-    setStage("saving");
+    const origin: Stage = stage === "preview" ? "preview" : "editing";
     setActionError(null);
+    setStage("saving");
+    if (dirty) {
+      const resp = await persistEdits();
+      if (!resp) {
+        setStage(origin);
+        return;
+      }
+    }
     const res = await fetch(
       `/api/onboarding/templates/${documentId}/save`,
       { method: "POST" },
@@ -182,7 +251,7 @@ export function TemplateMapperModal({
       setActionError(
         errorText(await readJson(res), "Couldn't save the template."),
       );
-      setStage("done");
+      setStage(origin);
       return;
     }
     setStage("saved");
@@ -192,7 +261,8 @@ export function TemplateMapperModal({
     if (!open || !documentId) {
       setStage("analyzing");
       setAnalysis(null);
-      setAppliedCount(0);
+      setBlocks([]);
+      setEdited({});
       setPreviewUrl(null);
       setError(null);
       setActionError(null);
@@ -242,28 +312,25 @@ export function TemplateMapperModal({
           return;
         }
         const appliedResp = applyBody as ApplyResponse;
-        setAppliedCount(appliedResp.applied_count);
         onAppliedRef.current?.(appliedResp);
       }
 
-      // Render a "raw" preview — DOCX as-is, placeholders visible, no
-      // sample data. This shows HR what the template looks like and where
-      // the {{ variables }} sit before any candidate is onboarded.
-      setStage("rendering");
-      const previewRes = await fetch(
-        `/api/onboarding/templates/${documentId}/preview?raw=true`,
-        { method: "POST" },
+      // Load the template as editable text (placeholders visible). HR reviews
+      // and edits the wording, then hits Preview PDF to see the rendered doc.
+      setStage("loading");
+      const blocksRes = await fetch(
+        `/api/onboarding/templates/${documentId}/blocks`,
       );
-      const previewBody = await readJson(previewRes);
+      const blocksBody = await readJson(blocksRes);
       if (cancelled) return;
-      if (!previewRes.ok) {
-        // Fall through to "done" without preview — the analysis + mapping
-        // already succeeded, the preview is a nice-to-have.
-        setStage("done");
+      if (!blocksRes.ok) {
+        setError(errorText(blocksBody, "Couldn't read the template text."));
+        setStage("error");
         return;
       }
-      setPreviewUrl((previewBody as PreviewResponse).preview_url);
-      setStage("done");
+      setBlocks((blocksBody as BlocksResponse).blocks ?? []);
+      setEdited({});
+      setStage("editing");
     })();
 
     return () => {
@@ -273,23 +340,23 @@ export function TemplateMapperModal({
 
   const kindLabel = KIND_LABEL[templateKind] || templateKind;
   const mappings = analysis?.mappings ?? [];
-  const placeholderCount = analysis
-    ? (analysis.text_preview.match(/\{\{\s*[a-zA-Z_][a-zA-Z0-9_.]*\s*\}\}/g) || [])
-        .length
-    : 0;
   const stageLabel: Record<Stage, string> = {
     analyzing: "Reading template and finding blanks…",
     applying: `Applying ${mappings.length} mapping${mappings.length === 1 ? "" : "s"}…`,
-    rendering: "Rendering preview…",
-    done: "Template ready",
-    replacing: "Uploading edited .docx and re-rendering…",
+    loading: "Loading editable text…",
+    editing: "Template ready to review",
+    previewing: "Saving edits and rendering preview…",
+    preview: "Preview",
     saving: "Saving template…",
     saved: "Template saved",
     error: "Something went wrong",
   };
 
   const inProgress =
-    stage === "analyzing" || stage === "applying" || stage === "rendering";
+    stage === "analyzing" || stage === "applying" || stage === "loading";
+  const isEditing =
+    stage === "editing" || stage === "previewing" || stage === "saving";
+  const busy = stage === "previewing" || stage === "saving";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -299,7 +366,7 @@ export function TemplateMapperModal({
             <Sparkles className="h-4 w-4 text-violet" />
             {stage === "saved"
               ? "Template saved"
-              : stage === "done"
+              : isEditing || stage === "preview"
                 ? "Review and save"
                 : "Checking template"}
           </DialogTitle>
@@ -313,11 +380,9 @@ export function TemplateMapperModal({
             {kindLabel}
             {stage === "saved" ? (
               <> · this template is now live. The Onboarding agent will use it for every new candidate.</>
-            ) : stage === "done" ? (
-              <> · check the preview. Download the .docx if you need to edit, then re-upload. When the template looks right, click Save.</>
-            ) : (
-              <> · we&apos;ll find <code>{`{{ variables }}`}</code>, convert any blank spots into placeholders, and show the template as-is.</>
-            )}
+            ) : stage === "preview" ? (
+              <> · read-only preview. Go back to editing to make changes, or Save to publish.</>
+            ) : ""}
           </DialogDescription>
         </DialogHeader>
 
@@ -329,8 +394,8 @@ export function TemplateMapperModal({
               {stageLabel[stage]}
             </div>
             <ol className="space-y-1.5 text-xs">
-              {(["analyzing", "applying", "rendering"] as const).map((s, i) => {
-                const order = ["analyzing", "applying", "rendering"];
+              {(["analyzing", "applying", "loading"] as const).map((s, i) => {
+                const order = ["analyzing", "applying", "loading"];
                 const currentIdx = order.indexOf(stage);
                 const thisIdx = order.indexOf(s);
                 const done = thisIdx < currentIdx;
@@ -362,7 +427,7 @@ export function TemplateMapperModal({
                     <span>
                       {s === "analyzing" && "Find {{ }} placeholders and blank spots"}
                       {s === "applying" && "Convert blanks into placeholders"}
-                      {s === "rendering" && "Render template (placeholders visible, no sample data)"}
+                      {s === "loading" && "Load the template text for review"}
                     </span>
                   </li>
                 );
@@ -382,34 +447,15 @@ export function TemplateMapperModal({
         ) : null}
 
         {/* AI warning (analyzer failed but we kept going) */}
-        {stage === "done" && analysis?.warning ? (
+        {isEditing && analysis?.warning ? (
           <div className="rounded-xl border border-amber/30 bg-amber-tint p-2.5 text-xs text-amber">
             {analysis.warning}
           </div>
         ) : null}
 
-        {/* Done — summary only, no sample-data preview */}
-        {stage === "done" ? (
+        {/* Editing — editable text */}
+        {isEditing ? (
           <div className="space-y-3">
-            <div className="rounded-xl border border-success/30 bg-success-tint p-3 text-sm text-success">
-              <div className="flex items-start gap-2">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-                <div className="flex-1">
-                  <p className="font-medium">
-                    {appliedCount > 0
-                      ? `Converted ${appliedCount} blank${appliedCount === 1 ? "" : "s"} into ${appliedCount === 1 ? "a placeholder" : "placeholders"}.`
-                      : analysis?.has_placeholders
-                        ? `Template already has ${placeholderCount} placeholder${placeholderCount === 1 ? "" : "s"} — no blanks to convert.`
-                        : "No placeholders or blanks detected — template will be used as-is."}
-                  </p>
-                  <p className="mt-0.5 text-xs opacity-80">
-                    Placeholders will be filled with real candidate data when
-                    you start each candidate&apos;s onboarding.
-                  </p>
-                </div>
-              </div>
-            </div>
-
             {mappings.length > 0 ? (
               <div className="rounded-md border border-border bg-muted/20 p-2">
                 <button
@@ -449,26 +495,65 @@ export function TemplateMapperModal({
               </div>
             ) : null}
 
-            {previewUrl ? (
-              <div className="overflow-hidden rounded-md border border-border bg-muted/20">
-                <iframe
-                  src={previewUrl}
-                  title="Template preview (placeholders visible)"
-                  className="h-[55vh] w-full bg-white"
-                />
+            {blocks.length > 0 ? (
+              <div className="max-h-[52vh] overflow-y-auto rounded-md border border-border bg-white px-8 py-6 shadow-inner">
+                <div className="mx-auto max-w-2xl space-y-1.5">
+                  {blocks.map((b) => {
+                    const badge = BLOCK_KIND_LABEL[b.kind];
+                    return (
+                      <div key={b.index} className="group relative">
+                        {badge ? (
+                          <span className="pointer-events-none absolute -left-7 top-1 hidden text-[9px] font-medium uppercase tracking-wide text-muted-foreground group-focus-within:inline">
+                            {badge}
+                          </span>
+                        ) : null}
+                        <AutoTextarea
+                          value={currentText(b)}
+                          onChange={(v) =>
+                            setEdited((prev) => ({ ...prev, [b.index]: v }))
+                          }
+                          disabled={busy}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                Preview unavailable — the analysis and mapping were saved,
-                but rendering the PDF failed. Try the &quot;Preview&quot; button
-                on the templates page.
+                No editable text found in this template.
               </p>
             )}
           </div>
         ) : null}
 
-        {/* Action-level errors (replace/save) — kept distinct from initial
-            analyze/apply errors which use the larger banner above. */}
+        {/* Read-only PDF preview — the page floats like paper on a soft
+            canvas, with the browser's native PDF chrome suppressed. */}
+        {stage === "preview" ? (
+          previewUrl ? (
+            <div className="rounded-xl border border-border bg-muted p-3 shadow-inner sm:p-5">
+              <div className="mx-auto max-w-3xl overflow-hidden rounded-lg bg-white shadow-[0_1px_2px_rgba(16,18,20,0.06),0_8px_24px_-8px_rgba(16,18,20,0.18)] ring-1 ring-black/5">
+                <iframe
+                  src={toChromelessPdf(previewUrl)}
+                  title="Template preview (placeholders visible)"
+                  className="h-[58vh] w-full bg-white"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-1 rounded-xl border border-dashed border-border bg-muted/40 py-10 text-center">
+              <p className="text-sm font-medium text-foreground">
+                Preview unavailable
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Go back to editing and try Preview PDF again.
+              </p>
+            </div>
+          )
+        ) : null}
+
+        {/* Action-level errors (edit/save) — kept distinct from the
+            initial analyze/apply errors which use the larger banner above. */}
         {actionError ? (
           <div className="rounded-xl border border-amber/30 bg-amber-tint p-2.5 text-xs text-amber">
             {actionError}
@@ -476,59 +561,51 @@ export function TemplateMapperModal({
         ) : null}
 
         <DialogFooter className="gap-2">
-          <input
-            ref={replaceFileRef}
-            type="file"
-            accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void replaceDocx(f);
-              if (replaceFileRef.current) replaceFileRef.current.value = "";
-            }}
-          />
-          {stage === "done" || stage === "replacing" || stage === "saving" ? (
+          {isEditing ? (
             <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mr-auto"
+                onClick={previewPdf}
+                disabled={busy || blocks.length === 0}
+              >
+                {stage === "previewing" ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Eye className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                Preview PDF
+              </Button>
+              <Button size="sm" onClick={saveTemplate} disabled={busy}>
+                {stage === "saving" ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : null}
+                Save template
+              </Button>
+            </>
+          ) : stage === "preview" ? (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mr-auto"
+                onClick={() => setStage("editing")}
+              >
+                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
+                Back to editing
+              </Button>
               {previewUrl ? (
                 <a
                   href={previewUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mr-auto inline-flex items-center gap-1 text-xs font-medium text-foreground underline hover:no-underline"
+                  className="inline-flex items-center gap-1 text-xs font-medium text-foreground underline hover:no-underline"
                 >
                   Open in new tab <ExternalLink className="h-3 w-3" />
                 </a>
               ) : null}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={downloadDocx}
-                disabled={stage !== "done"}
-              >
-                <Download className="mr-1.5 h-3.5 w-3.5" />
-                Download .docx
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => replaceFileRef.current?.click()}
-                disabled={stage !== "done"}
-              >
-                {stage === "replacing" ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Upload className="mr-1.5 h-3.5 w-3.5" />
-                )}
-                Replace with edited .docx
-              </Button>
-              <Button
-                size="sm"
-                onClick={saveTemplate}
-                disabled={stage !== "done"}
-              >
-                {stage === "saving" ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                ) : null}
+              <Button size="sm" onClick={saveTemplate}>
                 Save template
               </Button>
             </>

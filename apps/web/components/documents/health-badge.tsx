@@ -8,18 +8,18 @@ const HEALTH_CONFIG: Record<
 > = {
   healthy: {
     label: "Healthy",
-    cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
-    dotCls: "bg-emerald-500",
+    cls: "bg-success-tint text-success-ink",
+    dotCls: "bg-success",
   },
   stale: {
     label: "Stale",
-    cls: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
-    dotCls: "bg-amber-500",
+    cls: "bg-amber-tint text-amber-ink",
+    dotCls: "bg-amber",
   },
   at_risk: {
     label: "At risk",
-    cls: "bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300",
-    dotCls: "bg-orange-500",
+    cls: "bg-destructive-soft text-destructive-ink",
+    dotCls: "bg-destructive",
   },
   unused: {
     label: "Unused",

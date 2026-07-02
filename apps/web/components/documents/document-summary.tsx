@@ -39,7 +39,7 @@ export function DocumentSummary({ summary, keyTopics }: DocumentSummaryProps) {
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+    <h4 className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
       {children}
     </h4>
   );

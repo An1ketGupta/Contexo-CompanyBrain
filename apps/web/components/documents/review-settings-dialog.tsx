@@ -175,7 +175,7 @@ export function ReviewSettingsDialog({
           <div className="space-y-1.5">
             <label
               htmlFor="review-cadence"
-              className="text-xs font-medium text-foreground"
+              className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground"
             >
               Review cadence
             </label>
@@ -185,8 +185,8 @@ export function ReviewSettingsDialog({
               onChange={(e) => setPreset(e.target.value as PresetValue)}
               disabled={busy}
               className={cn(
-                "flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm",
-                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                "flex h-10 w-full rounded-[10px] border border-input bg-background px-3.5 py-1 text-sm shadow-sm transition-colors",
+                "focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25",
                 "disabled:cursor-not-allowed disabled:opacity-50",
               )}
             >
@@ -224,9 +224,9 @@ export function ReviewSettingsDialog({
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3 rounded-md border border-border/70 bg-muted/30 px-3 py-2.5 text-xs">
+          <div className="grid grid-cols-2 gap-3 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5 text-xs">
             <div>
-              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              <p className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                 Last reviewed
               </p>
               <p
@@ -237,7 +237,7 @@ export function ReviewSettingsDialog({
               </p>
             </div>
             <div>
-              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              <p className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                 Next due
               </p>
               <p

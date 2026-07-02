@@ -21,8 +21,7 @@ export function StatusBadge({ status, embeddingStats, errorReason }: StatusBadge
   ) {
     return (
       <Badge
-        variant="outline"
-        className="border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-300"
+        variant="warning"
         title={`${embeddingStats.embedded} of ${embeddingStats.total} chunks embedded.`}
       >
         <AlertTriangle />

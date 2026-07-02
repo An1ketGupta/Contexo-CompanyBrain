@@ -117,8 +117,8 @@ export default function ApprovalsPage() {
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-extrabold tracking-tight">Approvals</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <h1 className="text-3xl font-extrabold tracking-tight">Approvals</h1>
+        <p className="mt-1.5 text-[15px] text-muted-foreground">
           Review and approve AI outputs before they go out.
         </p>
       </header>
@@ -156,13 +156,13 @@ export default function ApprovalsPage() {
       {isLoading ? (
         <ApprovalsListSkeleton />
       ) : error ? (
-        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+        <div className="rounded-2xl border border-destructive/30 bg-destructive-soft p-4 text-sm text-destructive-ink">
           Couldn&apos;t load approvals. Refresh to try again.
         </div>
       ) : counts.total === 0 ? (
         <EmptyState tab={tab} status={status} />
       ) : (
-        <ul className="divide-y rounded-xl border bg-card">
+        <ul className="divide-y rounded-2xl border bg-card">
           {(data?.approvals ?? []).map((a) => (
             <ApprovalRow
               key={a.id}
@@ -189,7 +189,7 @@ export default function ApprovalsPage() {
             </DialogHeader>
 
             <div className="space-y-3">
-              <div className="rounded-lg border bg-muted/40 p-3 text-sm">
+              <div className="rounded-xl border bg-muted/40 p-3 text-sm">
                 <div className="mb-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
                   Draft
                 </div>
@@ -200,7 +200,7 @@ export default function ApprovalsPage() {
 
               {tab === "inbox" && active.status === "pending" ? (
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                  <label className="mb-1.5 block font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
                     Note (optional)
                   </label>
                   <Textarea
@@ -211,7 +211,7 @@ export default function ApprovalsPage() {
                   />
                 </div>
               ) : active.note ? (
-                <div className="rounded-lg border bg-muted/40 p-3 text-sm">
+                <div className="rounded-xl border bg-muted/40 p-3 text-sm">
                   <div className="mb-1 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
                     Note from {active.approver_name ?? "approver"}
                   </div>
@@ -307,7 +307,7 @@ function ApprovalRow({
         onClick={onClick}
         className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40"
       >
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-tint">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-tint">
           <Icon className="h-4 w-4 text-brand" />
         </div>
         <div className="min-w-0 flex-1">
@@ -336,18 +336,20 @@ function ApprovalRow({
   );
 }
 
+type StatusVariant = "warning" | "success" | "destructive" | "default";
+
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    pending: { label: "Pending", cls: "bg-amber-500/10 text-amber-700 dark:text-amber-300" },
-    approved: { label: "Approved", cls: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
-    executed: { label: "Executed", cls: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
-    rejected: { label: "Rejected", cls: "bg-red-500/10 text-red-700 dark:text-red-300" },
-    execution_failed: { label: "Failed", cls: "bg-red-500/10 text-red-700 dark:text-red-300" },
-    expired: { label: "Expired", cls: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400" },
+  const map: Record<string, { label: string; variant: StatusVariant }> = {
+    pending: { label: "Pending", variant: "warning" },
+    approved: { label: "Approved", variant: "success" },
+    executed: { label: "Executed", variant: "success" },
+    rejected: { label: "Rejected", variant: "destructive" },
+    execution_failed: { label: "Failed", variant: "destructive" },
+    expired: { label: "Expired", variant: "default" },
   };
-  const m = map[status] ?? { label: status, cls: "bg-muted text-muted-foreground" };
+  const m = map[status] ?? { label: status, variant: "default" as StatusVariant };
   return (
-    <Badge variant="default" className={cn("h-5 px-2 text-[10px]", m.cls)}>
+    <Badge variant={m.variant} className="h-5 px-2 text-[10px]">
       {m.label}
     </Badge>
   );
@@ -355,10 +357,10 @@ function StatusBadge({ status }: { status: string }) {
 
 function ApprovalsListSkeleton() {
   return (
-    <ul className="divide-y rounded-xl border bg-card">
+    <ul className="divide-y rounded-2xl border bg-card">
       {Array.from({ length: 4 }).map((_, i) => (
         <li key={i} className="flex items-center gap-3 px-4 py-3">
-          <Skeleton className="h-9 w-9 shrink-0 rounded-lg" />
+          <Skeleton className="h-9 w-9 shrink-0 rounded-xl" />
           <div className="min-w-0 flex-1 space-y-1.5">
             <div className="flex items-center gap-2">
               <Skeleton
@@ -386,8 +388,8 @@ function EmptyState({ tab, status }: { tab: Tab; status: StatusFilter }) {
         ? "You haven't submitted anything for approval yet."
         : "Nothing matches that filter.";
   return (
-    <div className="rounded-xl border bg-card px-6 py-12 text-center">
-      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
+    <div className="rounded-2xl border bg-card px-6 py-12 text-center">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-tint text-brand">
         <CheckCircle2 className="h-5 w-5" />
       </div>
       <p className="mt-3 text-sm text-muted-foreground">{message}</p>

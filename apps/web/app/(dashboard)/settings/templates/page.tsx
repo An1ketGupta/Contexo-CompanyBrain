@@ -114,13 +114,9 @@ export default function TemplatesSettingsPage() {
         </Link>
         <div className="mt-2 flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-extrabold tracking-tight">Templates</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Saved prompts your team can pick from in the chat composer. Use{" "}
-              <code className="rounded bg-muted px-1 text-[11px]">
-                {`{{variable}}`}
-              </code>{" "}
-              for fields the user fills in at send time.
+            <h1 className="text-3xl font-extrabold tracking-tight">Templates</h1>
+            <p className="mt-1.5 text-[15px] text-muted-foreground">
+              Saved prompts your team can pick from in the chat composer.
             </p>
           </div>
           <Button size="sm" onClick={openCreate}>
@@ -172,12 +168,12 @@ export default function TemplatesSettingsPage() {
           Loading templates…
         </div>
       ) : error ? (
-        <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <div className="rounded-2xl border border-destructive/30 bg-destructive-soft px-4 py-3 text-sm text-destructive-ink">
           {error}
         </div>
       ) : templates.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border bg-background px-6 py-12 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
+        <div className="rounded-2xl border border-dashed border-border bg-background px-6 py-12 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-tint text-brand">
             <LayoutTemplate className="h-5 w-5" />
           </div>
           <p className="mt-3 text-sm font-medium text-foreground">
@@ -278,8 +274,8 @@ function TemplateRow({
   onDelete: (tpl: PromptTemplate) => void;
 }) {
   return (
-    <li className="flex items-start gap-3 rounded-xl border border-border bg-background px-3 py-2.5">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+    <li className="flex items-start gap-3 rounded-2xl border border-border bg-background px-3 py-2.5">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-tint text-brand">
         <LayoutTemplate className="h-4 w-4" />
       </div>
       <div className="min-w-0 flex-1">
@@ -288,12 +284,12 @@ function TemplateRow({
             {tpl.title}
           </p>
           {tpl.is_builtin ? (
-            <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
+            <Badge variant="default" className="h-4 px-1.5 text-[10px]">
               Builtin
             </Badge>
           ) : tpl.is_shared ? (
             <Badge
-              variant="outline"
+              variant="brand"
               className="h-4 gap-0.5 px-1.5 text-[10px]"
             >
               <Users className="h-2.5 w-2.5" />

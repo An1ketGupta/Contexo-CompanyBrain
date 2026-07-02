@@ -149,7 +149,7 @@ export function UploadDialogHost() {
           />
 
           {hasQueue && (
-            <div className="max-h-64 overflow-y-auto rounded-md border border-border">
+            <div className="max-h-64 overflow-y-auto rounded-xl border border-border">
               <ul className="divide-y divide-border">
                 {items.map((item) => (
                   <QueueRow
@@ -231,21 +231,21 @@ function Dropzone({
       onClick={() => inputRef.current?.click()}
       onDragOver={(e) => {
         e.preventDefault();
-        dragRef.current?.classList.add("border-primary", "bg-primary/10");
+        dragRef.current?.classList.add("border-brand", "bg-brand-tint");
       }}
       onDragLeave={() => {
-        dragRef.current?.classList.remove("border-primary", "bg-primary/10");
+        dragRef.current?.classList.remove("border-brand", "bg-brand-tint");
       }}
       onDrop={(e) => {
         e.preventDefault();
-        dragRef.current?.classList.remove("border-primary", "bg-primary/10");
+        dragRef.current?.classList.remove("border-brand", "bg-brand-tint");
         if (e.dataTransfer.files.length > 0) onPick(e.dataTransfer.files);
       }}
       className={cn(
-        "flex cursor-pointer flex-col items-center justify-center rounded-md border-2 border-dashed px-4 py-8 text-center transition-colors",
+        "flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors",
         hasQueue
           ? "border-input"
-          : "border-input hover:border-primary/60 hover:bg-muted/40",
+          : "border-input hover:border-brand/60 hover:bg-brand-tint/40",
       )}
     >
       <UploadCloud className="mb-2 h-6 w-6 text-muted-foreground" />
@@ -303,7 +303,7 @@ function QueueRow({
                 item.status === "error"
                   ? "bg-destructive"
                   : item.status === "success"
-                    ? "bg-emerald-500"
+                    ? "bg-success"
                     : "bg-primary",
               )}
               style={{ width: `${item.progress}%` }}
@@ -320,7 +320,7 @@ function QueueRow({
         )}
       </div>
       {item.status === "success" ? (
-        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+        <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
       ) : item.status === "error" ? (
         <button
           type="button"

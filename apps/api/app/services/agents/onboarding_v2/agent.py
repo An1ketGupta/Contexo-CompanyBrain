@@ -13,12 +13,20 @@ park between human steps without losing context:
   loi_pending_hr_review  ── HR previews the filled LOI; may download .docx,
     │                       edit in Word, re-upload. Repeats until HR clicks
     │                       "Send for signature". Agent parks until then.
-    ▼
-  loi_pending_hr_sign  ── HR is emailed the (possibly-edited) LOI; downloads,
-    │                       prints, signs, scans, uploads
-    ▼
-  loi_signed_uploaded
     │
+    ├─(apps/esign configured)─▶ loi_pending_esign_signature ── HR → candidate
+    │                             signing envelope routed via apps/esign. Both
+    │                             sign in-app; apps/esign stamps the LOI doc and
+    │                             fires onboarding_v2/loi_signed_uploaded (the
+    │                             run status stays loi_pending_esign_signature —
+    │                             we advance off the doc's esign_status). ──┐
+    ▼                                                                       │
+  loi_pending_hr_sign  ── (fallback: apps/esign not configured) HR is        │
+    │                       emailed the LOI; downloads, prints, signs, scans, │
+    │                       uploads the signed PDF                            │
+    ▼                                                                        │
+  loi_signed_uploaded                                                        │
+    │◀───────────────────────────────────────────────────────────────────────┘
     ▼
   loi_sent_to_candidate ── Candidate email contains the signed LOI + a
     │                       token-gated public link to submit BGV refs.
@@ -297,6 +305,15 @@ class OnboardingV2Agent(BaseAgent):
             return {"status": current, "waiting_for": "hr_to_approve_loi_draft"}
         if current == "loi_pending_hr_sign":
             return await self._step_send_to_hr_for_signature()
+        if current == "loi_pending_esign_signature":
+            # Parked while the HR → candidate signing envelope is out. apps/esign
+            # fires onboarding_v2/loi_signed_uploaded once BOTH signers complete,
+            # re-kicking us here. It only updates onboarding_documents (not the
+            # run status), so advance off the doc's esign state. Guard against a
+            # stray kick mid-signing emailing the candidate before both signed.
+            if await self._loi_esign_completed():
+                return await self._step_send_loi_to_candidate()
+            return {"status": current, "waiting_for": "loi_esign_signatures"}
         if current == "loi_signed_uploaded":
             return await self._step_send_loi_to_candidate()
         if current == "loi_sent_to_candidate":
@@ -545,6 +562,25 @@ class OnboardingV2Agent(BaseAgent):
             await self.log_step("notify_hr_loi_ready", "completed")
         except Exception as exc:  # noqa: BLE001
             await self.log_step("notify_hr_loi_ready", "failed", error=str(exc))
+
+    async def _loi_esign_completed(self) -> bool:
+        """True once apps/esign has marked the LOI envelope fully signed.
+        apps/esign stamps onboarding_documents on the last signer (see
+        apps/esign/app/routers/public_sign.py) — the run status is not touched."""
+        svc = get_service_client()
+        doc = await asyncio.to_thread(
+            lambda: svc.table("onboarding_documents")
+            .select("esign_status, sign_status")
+            .eq("run_id", self.onboarding_run_id)
+            .eq("kind", "loi")
+            .maybe_single()
+            .execute()
+        )
+        row = (doc.data if doc else None) or {}
+        return (
+            row.get("esign_status") == "completed"
+            or row.get("sign_status") == "signed_by_candidate"
+        )
 
     # ── Step 2: Send signed LOI to candidate ───────────────────────────────
 

@@ -51,6 +51,11 @@
   --body: #3a3f46; /* Body copy — one step warmer than ink */
   --success: #12b76a;
   --success-tint: #e4f7ee;
+  /* "Ink" hues — darker than the solid tone, tuned for legible text/icons on
+     the matching soft tint (Actual reserves the bright hue for fills). */
+  --success-ink: #0f9c5b;
+  --amber-ink: #b25e09;
+  --destructive-ink: #c0343a;
   --pink: #e8508d;
   --pink-tint: #fce7f0;
   --violet: #7a5af8;
@@ -100,6 +105,11 @@
   --body: #c3c7cd;
   --success: #34d08a;
   --success-tint: #12241c;
+  /* Dark is light-on-dark: the bright hue already reads on the deep tint, so
+     the ink variants collapse onto it. */
+  --success-ink: #34d08a;
+  --amber-ink: #f7b84b;
+  --destructive-ink: #f2555a;
   --pink: #f06fa4;
   --pink-tint: #2a1620;
   --violet: #9a80fb;
@@ -137,6 +147,9 @@
   --color-body: var(--body);
   --color-success: var(--success);
   --color-success-tint: var(--success-tint);
+  --color-success-ink: var(--success-ink);
+  --color-amber-ink: var(--amber-ink);
+  --color-destructive-ink: var(--destructive-ink);
   --color-pink: var(--pink);
   --color-pink-tint: var(--pink-tint);
   --color-violet: var(--violet);

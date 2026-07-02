@@ -83,7 +83,7 @@ export function BulkActionBar({
       <div
         role="region"
         aria-label="Bulk actions"
-        className="mb-2 flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm"
+        className="mb-2 flex items-center gap-2 rounded-xl border border-brand/30 bg-brand-tint px-3 py-2 text-sm"
       >
         <span className="font-medium text-foreground">
           {count} {noun} selected

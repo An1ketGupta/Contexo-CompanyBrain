@@ -37,7 +37,11 @@ from app.models.onboarding_v2 import (
     TemplateAnalyzeResponse,
     TemplateApplyMappingsRequest,
     TemplateApplyMappingsResponse,
+    TemplateBlocksResponse,
+    TemplateEditTextRequest,
+    TemplateEditTextResponse,
     TemplateMappingItem,
+    TemplateTextBlock,
 )
 from app.services.agents.onboarding_v2 import storage as ob_storage
 
@@ -2441,6 +2445,164 @@ async def apply_template_mappings(
         template_kind=template_kind,
         applied_count=len(body.mappings),
         preview_url=preview_url,
+    )
+
+
+# ── Flat-text review: edit the template as text, preview on demand ──────────
+
+
+@router.get(
+    "/templates/{document_id}/blocks",
+    response_model=TemplateBlocksResponse,
+)
+async def get_template_blocks(
+    document_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> TemplateBlocksResponse:
+    """Return the current DOCX as an ordered list of editable text blocks.
+
+    HR reviews and edits these lines directly (placeholders stay visible),
+    then persists via POST /templates/{id}/edit-text. Read-only — safe to call
+    repeatedly."""
+    _, org_id, _ = _require_user(current_user)
+    svc = get_service_client()
+
+    from app.services.agents.onboarding_v2.template_analyzer import (
+        extract_editable_blocks,
+    )
+
+    docx_bytes, doc_row, _ = await _load_template_docx(
+        document_id=document_id, org_id=org_id, svc=svc
+    )
+    template_kind = doc_row.get("template_kind") or "loi"
+
+    try:
+        blocks = extract_editable_blocks(docx_bytes)
+    except Exception as exc:  # noqa: BLE001 — surface as 422 to HR
+        log.warning("template_blocks.extract_failed doc=%s err=%s", document_id, exc)
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Couldn't read this DOCX. It may be corrupted or password-protected. ({exc})",
+        ) from exc
+
+    return TemplateBlocksResponse(
+        document_id=document_id,
+        template_kind=template_kind,
+        blocks=[
+            TemplateTextBlock(index=b.index, text=b.text, kind=b.kind) for b in blocks
+        ],
+    )
+
+
+@router.post(
+    "/templates/{document_id}/edit-text",
+    response_model=TemplateEditTextResponse,
+)
+async def edit_template_text(
+    document_id: str,
+    body: TemplateEditTextRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> TemplateEditTextResponse:
+    """Write HR's edited text blocks back into the template DOCX in place.
+
+    Each block's `index` locates the paragraph; its `text` overwrites that
+    paragraph's runs, preserving fonts/tables/headers and existing
+    `{{ placeholders }}`. Before persisting we dry-render with sample data so a
+    broken edit (unbalanced braces, unknown variable) is rejected with a clear
+    message rather than silently poisoning the template. Forces the template
+    back to `draft` — HR still has to Save to promote it. Returns a fresh raw
+    preview URL (placeholders visible)."""
+    _, org_id, _ = _require_user(current_user)
+    svc = get_service_client()
+
+    from app.services.agents.onboarding_v2.template_analyzer import (
+        TemplateAnalyzerError,
+        apply_text_edits,
+        validate_rendered,
+    )
+
+    docx_bytes, doc_row, storage_path = await _load_template_docx(
+        document_id=document_id, org_id=org_id, svc=svc
+    )
+    template_kind = doc_row.get("template_kind") or "loi"
+
+    edits = {b.index: b.text for b in body.edits}
+    try:
+        new_docx, changed = apply_text_edits(docx_bytes=docx_bytes, edits=edits)
+    except Exception as exc:  # noqa: BLE001 — surface as 422 to HR
+        log.warning("template_edit_text.apply_failed doc=%s err=%s", document_id, exc)
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Couldn't apply your edits to the document. ({exc})",
+        ) from exc
+
+    # Guard: a broken edit (unbalanced {{ }}, unknown variable) must not reach
+    # a run. Dry-render with sample data; on failure, reject WITHOUT persisting
+    # so the good version stays intact and HR sees exactly what to fix.
+    try:
+        await validate_rendered(new_docx, template_kind=template_kind)
+    except TemplateAnalyzerError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+
+    def _upload() -> None:
+        svc.storage.from_(ob_storage.STORAGE_BUCKET).upload(
+            path=storage_path,
+            file=new_docx,
+            file_options={
+                "content-type": (
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                ),
+                "upsert": "true",
+            },
+        )
+
+    await asyncio.to_thread(_upload)
+
+    await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .update({"template_status": "draft", "file_size_bytes": len(new_docx)})
+        .eq("id", document_id)
+        .eq("org_id", org_id)
+        .execute()
+    )
+
+    # Raw preview — DOCX as-is, placeholders visible, no sample data. Matches
+    # the "show the template as-is" review preview. Best-effort: validation
+    # already passed the strict render, so this should essentially always work.
+    preview_url: str | None = None
+    preview_error: str | None = None
+    try:
+        from app.services.pdf import convert_docx_to_pdf
+
+        pdf_bytes = await convert_docx_to_pdf(new_docx)
+        preview_path = f"orgs/{org_id}/onboarding/_previews/{document_id}.raw.pdf"
+
+        def _preview_upload() -> None:
+            svc.storage.from_(ob_storage.STORAGE_BUCKET).upload(
+                path=preview_path,
+                file=pdf_bytes,
+                file_options={"content-type": "application/pdf", "upsert": "true"},
+            )
+
+        await asyncio.to_thread(_preview_upload)
+        preview_url = await ob_storage.mint_signed_url(preview_path)
+    except Exception as exc:  # noqa: BLE001 — preview is best-effort
+        preview_error = (
+            f"Saved your edits, but couldn't render a preview ({type(exc).__name__})."
+        )
+        log.info("template_edit_text.preview_failed doc=%s err=%s", document_id, exc)
+
+    log.info(
+        "template_edit_text.success org=%s doc=%s kind=%s changed=%d",
+        org_id, document_id, template_kind, changed,
+    )
+
+    return TemplateEditTextResponse(
+        document_id=document_id,
+        template_kind=template_kind,
+        changed_count=changed,
+        preview_url=preview_url,
+        preview_error=preview_error,
     )
 
 

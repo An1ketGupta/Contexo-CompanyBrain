@@ -113,22 +113,22 @@ export function TemplatePopover({ onSelect, trigger }: Props) {
           ref={triggerRef}
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md leading-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label="Templates"
           title="Templates"
         >
-          {trigger}
+          <span className="block leading-none">{trigger}</span>
         </button>
       ) : (
         <button
           ref={triggerRef}
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md leading-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label="Templates"
           title="Insert a template"
         >
-          <LayoutTemplate className="h-4 w-4" />
+          <LayoutTemplate className="block h-4 w-4" />
         </button>
       )}
 

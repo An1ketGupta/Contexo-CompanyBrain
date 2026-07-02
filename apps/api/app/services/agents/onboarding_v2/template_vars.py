@@ -133,8 +133,10 @@ TEMPLATE_VARIABLES: list[TemplateVar] = [
         "description": (
             "Place this where HR's signature should appear on the document. "
             "Renders as a sentinel marker (not visible text) that the e-sign "
-            "service replaces with HR's drawn/typed signature. Optional — "
-            "if omitted, the signature is placed at the bottom of the last page."
+            "service replaces with HR's drawn/typed signature. May be placed "
+            "more than once — HR's signature is stamped at every occurrence. "
+            "Optional — if omitted, the signature is placed at the bottom of "
+            "the last page."
         ),
         "example": "",
     },
@@ -143,7 +145,8 @@ TEMPLATE_VARIABLES: list[TemplateVar] = [
         "label": "Candidate signature location",
         "description": (
             "Place this where the candidate's signature should appear. Same "
-            "sentinel-marker mechanism as hr_signature_block. Optional."
+            "sentinel-marker mechanism as hr_signature_block, including "
+            "stamping at every occurrence when placed more than once. Optional."
         ),
         "example": "",
     },

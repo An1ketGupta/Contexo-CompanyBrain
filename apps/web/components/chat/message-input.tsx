@@ -71,13 +71,13 @@ export function MessageInput({
 
         <div
           className={cn(
-            "flex items-end gap-2 rounded-2xl border border-input bg-background px-3 py-2 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/25",
+            "flex items-center gap-2 rounded-2xl border border-input bg-background px-3 py-2 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/25",
             disabled && "opacity-60",
           )}
         >
           {/* Template picker — pre-fills the textarea with a saved prompt. The
               popover anchors above this button so it doesn't clip the input. */}
-          <div className="pb-1">
+          <div>
             <TemplatePopover
               onSelect={(text) => {
                 setValue((prev) => (prev ? `${prev.trimEnd()}\n${text}` : text));
@@ -103,24 +103,24 @@ export function MessageInput({
               onClick={submit}
               disabled={!canSubmit}
               className={cn(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors",
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full leading-none transition-colors",
                 canSubmit
                   ? "bg-primary text-primary-foreground hover:bg-primary/90"
                   : "bg-muted text-muted-foreground",
               )}
               aria-label="Send"
             >
-              <Send className="h-4 w-4" />
+              <Send className="block h-4 w-4" />
             </button>
           ) : (
             <button
               type="button"
               onClick={onStop}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-foreground text-background transition-colors hover:bg-foreground/90"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-foreground text-background leading-none transition-colors hover:bg-foreground/90"
               aria-label="Stop"
               title="Stop generating"
             >
-              <Square className="h-3.5 w-3.5 fill-current" />
+              <Square className="block h-3.5 w-3.5 fill-current" />
             </button>
           )}
         </div>

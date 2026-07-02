@@ -280,6 +280,40 @@ class TemplateApplyMappingsResponse(BaseModel):
     preview_url: str | None = None
 
 
+class TemplateTextBlock(BaseModel):
+    """One editable line of a template — a paragraph, table cell, header, or
+    footer. `index` is the stable position key the write-back step uses to
+    locate the paragraph again; the UI must round-trip it unchanged."""
+
+    index: int = Field(..., ge=0)
+    text: str = Field(default="", max_length=20000)
+    kind: str = Field(default="body")
+
+
+class TemplateBlocksResponse(BaseModel):
+    """Returned by GET /templates/{id}/blocks — the current DOCX rendered as
+    an ordered list of editable text blocks (placeholders visible)."""
+
+    document_id: str
+    template_kind: str
+    blocks: list[TemplateTextBlock] = Field(default_factory=list)
+
+
+class TemplateEditTextRequest(BaseModel):
+    """HR's edited text blocks — written back into the DOCX paragraph runs in
+    place, preserving formatting."""
+
+    edits: list[TemplateTextBlock] = Field(..., max_length=5000)
+
+
+class TemplateEditTextResponse(BaseModel):
+    document_id: str
+    template_kind: str
+    changed_count: int
+    preview_url: str | None = None
+    preview_error: str | None = None
+
+
 # ── Sources: published jobs + their pipeline candidates for the onboarding
 # entry point. Lets HR pick a candidate from the recruiting pipeline instead
 # of retyping identity fields.

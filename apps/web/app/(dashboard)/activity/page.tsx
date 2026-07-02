@@ -38,32 +38,32 @@ export default function TeamActivityPage() {
     <div className="mx-auto max-w-3xl space-y-6 p-6 md:p-8">
       <header className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-extrabold tracking-tight">
+          <h1 className="text-3xl font-extrabold tracking-tight">
             Team activity
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1.5 text-[15px] text-muted-foreground">
             What teammates have been generating, uploading, and sharing across
             the workspace.
           </p>
         </div>
-        <div className="rounded-xl bg-brand-tint p-2.5 text-brand">
-          <Users className="h-4 w-4" />
+        <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-brand-tint text-brand">
+          <Users className="h-5 w-5" />
         </div>
       </header>
 
       {isLoading ? (
         <ActivitySkeleton />
       ) : error ? (
-        <div className="rounded-xl border border-destructive/40 bg-destructive-soft px-4 py-3 text-sm text-destructive">
+        <div className="rounded-2xl border border-destructive/30 bg-destructive-soft px-4 py-3 text-sm text-destructive-ink">
           {(error as Error).message}
         </div>
       ) : !data || data.length === 0 ? (
-        <p className="rounded-xl border border-border bg-background px-4 py-8 text-center text-sm text-muted-foreground">
+        <p className="rounded-2xl border border-border bg-background px-4 py-8 text-center text-sm text-muted-foreground">
           No activity yet. As your team uploads documents and generates content,
           it&apos;ll show up here.
         </p>
       ) : (
-        <ul className="divide-y divide-border rounded-xl border border-border bg-background">
+        <ul className="divide-y divide-border rounded-2xl border border-border bg-background">
           {data.map((item) => (
             <li key={item.id} className="flex items-start gap-3 px-4 py-3">
               <Avatar name={item.user_name} />
@@ -86,7 +86,7 @@ export default function TeamActivityPage() {
 
 function ActivitySkeleton() {
   return (
-    <ul className="divide-y divide-border rounded-xl border border-border bg-background">
+    <ul className="divide-y divide-border rounded-2xl border border-border bg-background">
       {Array.from({ length: 6 }).map((_, i) => (
         <li key={i} className="flex items-start gap-3 px-4 py-3">
           <Skeleton className="h-8 w-8 shrink-0 rounded-full" />

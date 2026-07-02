@@ -101,14 +101,14 @@ export function TagDialog({
         </DialogHeader>
 
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-input bg-background p-2 min-h-10">
+          <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-input bg-background p-2 min-h-10">
             {pending.length === 0 && (
               <span className="text-xs text-muted-foreground">No tags yet.</span>
             )}
             {pending.map((tag) => (
               <span
                 key={tag}
-                className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary"
+                className="inline-flex items-center gap-1 rounded-full bg-brand-tint px-2 py-0.5 text-xs font-semibold text-brand"
               >
                 {tag}
                 <button
@@ -154,7 +154,7 @@ export function TagDialog({
 
           {suggestions.length > 0 && (
             <div>
-              <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              <p className="mb-1.5 font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                 Existing tags
               </p>
               <div className="flex flex-wrap gap-1.5">
@@ -163,7 +163,7 @@ export function TagDialog({
                     key={s}
                     type="button"
                     onClick={() => add(s)}
-                    className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                    className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] font-semibold text-muted-foreground transition-colors hover:border-brand/40 hover:bg-brand-tint hover:text-brand"
                   >
                     + {s}
                   </button>

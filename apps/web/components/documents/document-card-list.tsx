@@ -139,7 +139,7 @@ function DocumentCard({
   const tags = doc.tags ?? [];
   const errorReason = extractErrorReason(doc.metadata);
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-border bg-background p-3">
+    <div className="flex items-center gap-3 rounded-2xl border border-border bg-background p-3">
       <FileIcon type={doc.file_type} className="h-5 w-5 shrink-0" />
       <div className="min-w-0 flex-1">
         <p className="line-clamp-1 text-sm font-medium text-foreground">
@@ -151,7 +151,7 @@ function DocumentCard({
               <span className="rounded-full bg-muted px-1.5 py-0.5 font-medium text-muted-foreground">
                 v{doc.current_version_number}
               </span>
-              <span>Â·</span>
+              <span>·</span>
             </>
           )}
           <StatusBadge status={doc.status} errorReason={errorReason} />
@@ -188,7 +188,7 @@ function DocumentCard({
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
             aria-label="Document actions"
           >
             <MoreVertical className="h-4 w-4" />

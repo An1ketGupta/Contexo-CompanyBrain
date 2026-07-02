@@ -457,6 +457,124 @@ def _replace_in_paragraph(paragraph: Paragraph, needle: str, replacement: str) -
     return count
 
 
+# ── Flat-text editing (paragraph-in-place) ─────────────────────────────────
+#
+# HR reviews a template as flat, editable text — one field per paragraph /
+# table cell / header / footer line. When they save, we match each edited
+# line back to its original DOCX paragraph *by position* and rewrite the run
+# text in place. This preserves fonts, tables, letterheads, and existing
+# `{{ placeholders }}`; HR can reword freely but can't add/remove/reorder
+# paragraphs inline (that still goes through Download → edit → Replace .docx).
+
+
+@dataclass(frozen=True)
+class EditableBlock:
+    """One editable line of a template.
+
+    `index` is the position in the canonical paragraph enumeration — it is the
+    stable key the write-back step uses to locate the paragraph again, so the
+    SAME enumeration must drive both extraction and apply. `kind` is a display
+    hint ("body" | "table" | "header" | "footer").
+    """
+
+    index: int
+    text: str
+    kind: str
+
+
+def _canonical_paragraphs(doc: Any) -> list[tuple[Paragraph, str]]:
+    """Enumerate every paragraph in a stable, document-first order.
+
+    Body paragraphs and table cells are walked in true document order (so a
+    table's cells appear where the table sits), followed by header and footer
+    paragraphs. This ordering is an implementation detail — the only contract
+    is that it is *deterministic* and *identical* between extraction and
+    write-back, so a block's `index` always resolves to the same paragraph.
+    """
+    from docx.oxml.ns import qn
+
+    out: list[tuple[Paragraph, str]] = []
+    body = doc.element.body
+    for child in body.iterchildren():
+        if child.tag == qn("w:p"):
+            out.append((Paragraph(child, doc), "body"))
+        elif child.tag == qn("w:tbl"):
+            # `iter` yields every descendant paragraph (including nested
+            # tables) once, in document order.
+            for p_elem in child.iter(qn("w:p")):
+                out.append((Paragraph(p_elem, doc), "table"))
+
+    for section in doc.sections:
+        if section.header:
+            for p in section.header.paragraphs:
+                out.append((p, "header"))
+        if section.footer:
+            for p in section.footer.paragraphs:
+                out.append((p, "footer"))
+
+    return out
+
+
+def extract_editable_blocks(docx_bytes: bytes) -> list[EditableBlock]:
+    """Return the non-empty paragraphs of a DOCX as editable blocks.
+
+    Blank/spacing paragraphs are skipped from the editable list but keep their
+    slot in the canonical enumeration, so every block's `index` still points
+    at the right paragraph on write-back.
+    """
+    doc = Document(io.BytesIO(docx_bytes))
+    blocks: list[EditableBlock] = []
+    for idx, (para, kind) in enumerate(_canonical_paragraphs(doc)):
+        text = para.text
+        if text and text.strip():
+            blocks.append(EditableBlock(index=idx, text=text, kind=kind))
+    return blocks
+
+
+def _set_paragraph_text(paragraph: Paragraph, new_text: str) -> None:
+    """Overwrite a paragraph's text, preserving its first run's formatting.
+
+    Word splits styled text across runs; we write the whole new string into
+    the first run and blank the rest (same trick as `_replace_in_paragraph`).
+    Sub-run formatting on the replaced span collapses to the first run's
+    style — acceptable for paragraph-level editing.
+    """
+    runs = paragraph.runs
+    if not runs:
+        # No runs to inherit style from (shouldn't happen for a non-empty
+        # block, but guard anyway) — add a plain run.
+        paragraph.add_run(new_text)
+        return
+    runs[0].text = new_text
+    for r in runs[1:]:
+        r.text = ""
+
+
+def apply_text_edits(*, docx_bytes: bytes, edits: dict[int, str]) -> tuple[bytes, int]:
+    """Rewrite paragraphs at the given canonical indices with new text.
+
+    `edits` maps a block `index` (from `extract_editable_blocks`) to its new
+    text. Indices out of range are ignored; paragraphs whose text is unchanged
+    are left untouched. Returns the new DOCX bytes and the number of
+    paragraphs actually changed.
+    """
+    doc = Document(io.BytesIO(docx_bytes))
+    paras = _canonical_paragraphs(doc)
+    changed = 0
+    for idx, new_text in edits.items():
+        if idx < 0 or idx >= len(paras):
+            continue
+        para, _kind = paras[idx]
+        if para.text == new_text:
+            continue
+        _set_paragraph_text(para, new_text)
+        changed += 1
+
+    out = io.BytesIO()
+    doc.save(out)
+    return out.getvalue(), changed
+
+
 # ── Validation ─────────────────────────────────────────────────────────────
 
 

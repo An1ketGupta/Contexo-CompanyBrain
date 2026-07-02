@@ -6,22 +6,22 @@ import { Skeleton } from "@/components/ui/skeleton";
  */
 export default function DocumentsLoading() {
   return (
-    <div className="mx-auto max-w-5xl p-6 md:p-8">
+    <div className="mx-auto max-w-6xl p-6 md:p-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-2">
           <Skeleton className="h-5 w-32" />
           <Skeleton className="h-3 w-64" />
         </div>
-        <Skeleton className="h-9 w-36 rounded-md" />
+        <Skeleton className="h-9 w-36 rounded-full" />
       </div>
 
       <div className="mb-4 flex flex-wrap gap-2">
-        <Skeleton className="h-8 w-64 rounded-md" />
-        <Skeleton className="h-8 w-28 rounded-md" />
-        <Skeleton className="h-8 w-28 rounded-md" />
+        <Skeleton className="h-9 w-64 rounded-[10px]" />
+        <Skeleton className="h-9 w-28 rounded-[10px]" />
+        <Skeleton className="h-9 w-28 rounded-[10px]" />
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-border bg-background">
+      <div className="overflow-hidden rounded-2xl border border-border bg-background">
         <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-4 py-2.5">
           <Skeleton className="h-3 w-16" />
           <div className="ml-auto flex gap-4">

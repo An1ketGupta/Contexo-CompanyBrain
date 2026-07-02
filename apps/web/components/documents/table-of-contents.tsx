@@ -54,7 +54,7 @@ export function TableOfContents({ entries }: TableOfContentsProps) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search sections…"
-            className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className="h-8 w-full rounded-[10px] border border-input bg-background pl-8 pr-3 text-xs text-foreground shadow-sm transition-colors placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
           />
         </div>
       </div>

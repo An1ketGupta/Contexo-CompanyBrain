@@ -43,7 +43,7 @@ export function RecommendationsWidget() {
   const progress = totalVisible === 0 ? 0 : matchedCount / totalVisible;
 
   return (
-    <div className="mb-4 rounded-lg border border-border bg-card">
+    <div className="mb-4 rounded-2xl border border-border bg-card">
       <button
         type="button"
         onClick={() => setForceOpen(!open)}
@@ -60,7 +60,7 @@ export function RecommendationsWidget() {
         </div>
         <div className="hidden h-1.5 w-24 overflow-hidden rounded-full bg-muted sm:block">
           <div
-            className="h-full bg-emerald-500 transition-all"
+            className="h-full bg-success transition-all"
             style={{ width: `${progress * 100}%` }}
           />
         </div>
@@ -99,9 +99,9 @@ function RecommendationRow({
   return (
     <li
       className={cn(
-        "group flex items-start gap-2 rounded-md border border-border px-3 py-2 text-sm",
+        "group flex items-start gap-2 rounded-xl border border-border px-3 py-2 text-sm",
         done
-          ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200"
+          ? "border-success/30 bg-success-tint text-success-ink"
           : "bg-background",
       )}
     >
@@ -109,7 +109,7 @@ function RecommendationRow({
         className={cn(
           "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
           done
-            ? "border-emerald-500 bg-emerald-500 text-white"
+            ? "border-success bg-success text-white"
             : "border-muted-foreground/50",
         )}
       >

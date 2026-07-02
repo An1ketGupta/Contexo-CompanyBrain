@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useTemplates } from "@/hooks/use-templates";
 import type { PromptTemplate } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 // Agent2 Day 2 #39 — per-conversation "pinned context" the user wants the
 // LLM to keep in mind across every turn. Stored on conversations.pinned_context,
@@ -181,7 +182,10 @@ export function PinContextButton({
         ref={triggerRef}
         variant={isPinned ? "secondary" : "ghost"}
         size="sm"
-        className="gap-1.5 text-xs"
+        className={cn(
+          "gap-1.5 text-xs",
+          isPinned && "bg-brand-tint text-brand hover:bg-brand-tint/80",
+        )}
         aria-label={isPinned ? "Edit pinned context" : "Pin context for this conversation"}
         onClick={() => setOpen((v) => !v)}
       >
@@ -191,30 +195,35 @@ export function PinContextButton({
       {open && (
         <div
           ref={popoverRef}
-          className="absolute right-0 z-50 mt-2 w-96 rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-md"
+          className="absolute right-0 z-50 mt-2 w-[26rem] overflow-hidden rounded-2xl border border-border bg-background text-foreground shadow-[0_16px_48px_-16px_rgba(16,24,40,0.28)]"
           role="dialog"
         >
-          <div className="space-y-2">
-            <div>
-              <p className="text-sm font-medium">Pin context for this conversation</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                The LLM will keep this in mind across every turn. Use it to set
-                audience, project, or constraints once instead of repeating yourself.
+          {/* Header — tinted pin badge + intent, the Actual card lead-in. */}
+          <div className="flex items-start gap-3 px-4 pb-3 pt-4">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-tint text-brand">
+              <Pin className="size-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-bold tracking-tight text-foreground py-1">
+                Pin context for this conversation
               </p>
             </div>
+          </div>
+
+          <div className="space-y-3 px-4">
             {contextTemplates.length > 0 && (
-              <div className="rounded-md border border-border bg-muted/30 px-2 py-1.5 text-xs">
-                <div className="mb-1 flex items-center gap-1 font-medium text-muted-foreground">
-                  <Sparkles className="size-3" /> Apply a saved context
+              <div>
+                <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <Sparkles className="size-3 text-brand" /> Apply a saved context
                 </div>
-                <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap gap-1.5">
                   {contextTemplates.slice(0, 6).map((t) => (
                     <button
                       key={t.id}
                       type="button"
                       onClick={() => applyTemplate(t)}
                       disabled={saving}
-                      className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] hover:bg-primary/5 hover:border-primary/40 disabled:opacity-50"
+                      className="rounded-full border border-border bg-muted px-2.5 py-1 text-[11px] font-semibold text-body transition-colors hover:border-brand/40 hover:bg-brand-tint hover:text-brand disabled:opacity-50"
                       title={t.pinned_context ?? ""}
                     >
                       {t.title}
@@ -228,29 +237,29 @@ export function PinContextButton({
               onChange={(e) => setDraft(e.target.value.slice(0, MAX_LEN))}
               placeholder="e.g. We're writing for the Q3 enterprise renewal cohort. Reference the June 30 launch."
               rows={6}
-              className="resize-none text-sm"
+              className="min-h-28 resize-none rounded-xl text-sm leading-relaxed"
               disabled={saving}
             />
             {savingTemplateOpen && (
-              <div className="space-y-1.5 rounded-md border border-dashed border-border px-2 py-2">
-                <div className="text-[11px] font-medium text-muted-foreground">
-                  Save current context as a reusable template
+              <div className="space-y-2 rounded-xl border border-dashed border-border bg-muted/40 px-3 py-2.5">
+                <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Save as a reusable template
                 </div>
                 <input
                   value={templateTitle}
                   onChange={(e) => setTemplateTitle(e.target.value.slice(0, 120))}
                   placeholder="Title (e.g. Q3 Enterprise renewals)"
-                  className="w-full rounded-md border border-input bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
+                  className="w-full rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring"
                   disabled={savingTemplate}
                 />
-                <div className="flex justify-end gap-1.5">
+                <div className="flex justify-end gap-2">
                   <button
                     type="button"
                     onClick={() => {
                       setSavingTemplateOpen(false);
                       setTemplateTitle("");
                     }}
-                    className="text-[11px] text-muted-foreground hover:text-foreground"
+                    className="text-[11px] font-semibold text-muted-foreground transition-colors hover:text-foreground"
                     disabled={savingTemplate}
                   >
                     Cancel
@@ -259,50 +268,57 @@ export function PinContextButton({
                     type="button"
                     onClick={saveAsTemplate}
                     disabled={savingTemplate || !templateTitle.trim() || !draft.trim()}
-                    className="rounded-md bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground disabled:opacity-50"
+                    className="rounded-full bg-primary px-3 py-1 text-[11px] font-bold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
                   >
                     {savingTemplate ? "Saving…" : "Save template"}
                   </button>
                 </div>
               </div>
             )}
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">
-                {remaining} chars left
-              </span>
-              <div className="flex items-center gap-2">
-                {draft.trim() && !savingTemplateOpen && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setSavingTemplateOpen(true)}
-                    disabled={saving}
-                    className="text-xs"
-                    title="Save this preamble as a reusable context template"
-                  >
-                    <BookmarkPlus className="mr-1 size-3" /> Save as template
-                  </Button>
-                )}
-                {isPinned && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={clearAll}
-                    disabled={saving}
-                    className="text-xs"
-                  >
-                    <X className="mr-1 size-3" /> Unpin
-                  </Button>
-                )}
+          </div>
+
+          {/* Footer — mono char meter on the left, actions on the right. */}
+          <div className="mt-3 flex items-center justify-between gap-2 border-t border-border bg-muted/40 px-4 py-3">
+            <span
+              className={cn(
+                "font-mono text-[11px] font-bold uppercase tracking-wider tabular-nums",
+                remaining <= 100 ? "text-destructive" : "text-muted-foreground",
+              )}
+            >
+              {remaining} chars left
+            </span>
+            <div className="flex items-center gap-1">
+              {draft.trim() && !savingTemplateOpen && (
                 <Button
+                  variant="ghost"
                   size="sm"
-                  onClick={save}
-                  disabled={saving || !dirty}
+                  onClick={() => setSavingTemplateOpen(true)}
+                  disabled={saving}
                   className="text-xs"
+                  title="Save this preamble as a reusable context template"
                 >
-                  {saving ? "Saving…" : "Save"}
+                  <BookmarkPlus className="mr-1 size-3" /> Save as template
                 </Button>
-              </div>
+              )}
+              {isPinned && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearAll}
+                  disabled={saving}
+                  className="text-xs text-destructive hover:bg-destructive-soft hover:text-destructive"
+                >
+                  <X className="mr-1 size-3" /> Unpin
+                </Button>
+              )}
+              <Button
+                size="sm"
+                onClick={save}
+                disabled={saving || !dirty}
+                className="text-xs"
+              >
+                {saving ? "Saving…" : "Save"}
+              </Button>
             </div>
           </div>
         </div>

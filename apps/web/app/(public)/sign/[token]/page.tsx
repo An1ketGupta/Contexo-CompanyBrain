@@ -66,6 +66,14 @@ export default function SignDocumentPage() {
     };
   }, [token]);
 
+  function handleClear() {
+    if (mode === "draw") {
+      sigPadRef.current?.clear();
+    } else {
+      setTypedName("");
+    }
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!prefill || submitting) return;
@@ -232,15 +240,16 @@ export default function SignDocumentPage() {
               />
             </div>
           )}
-          {mode === "draw" ? (
-            <button
+          <div className="mt-3 flex justify-end">
+            <Button
               type="button"
-              onClick={() => sigPadRef.current?.clear()}
-              className="mt-2 text-[11px] text-muted-foreground hover:text-foreground"
+              variant="outline"
+              size="sm"
+              onClick={handleClear}
             >
               Clear
-            </button>
-          ) : null}
+            </Button>
+          </div>
         </div>
 
         <div className="flex items-start gap-2">

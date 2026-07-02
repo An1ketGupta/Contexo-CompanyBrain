@@ -2,10 +2,12 @@
 this pass (see plan: visible signature + audit trail, PAdES is a future
 add-on). Two operations:
 
-  1. stamp_signature() — finds the sentinel marker text this signer's
-     {{ hr_signature_block }} / {{ candidate_signature_block }} template
-     variable rendered as (see apps/api's template_vars.py), covers it, and
-     draws the signature (image or typed name) in its place. Falls back to
+  1. stamp_signature() — finds every occurrence of the sentinel marker text
+     this signer's {{ hr_signature_block }} / {{ candidate_signature_block }}
+     template variable rendered as (see apps/api's template_vars.py), covers
+     each one, and draws the signature (image or typed name) in its place. A
+     template may place the marker in more than one spot (e.g. a signature
+     required on multiple pages) — all occurrences are stamped. Falls back to
      a fixed bottom-of-last-page position if no marker is found, so a
      template without the placeholder never breaks signing.
 
@@ -32,6 +34,32 @@ SIGNATURE_MARKERS: dict[str, str] = {
 _MARKER_BOX_HEIGHT = 60.0
 _MARKER_BOX_WIDTH = 200.0
 _FALLBACK_MARGIN = 36.0
+_DUPLICATE_OVERLAP_RATIO = 0.5
+
+
+def _dedupe_rects(rects: list[fitz.Rect]) -> list[fitz.Rect]:
+    """Collapse near-duplicate hit boxes for what is visually one marker.
+
+    DOCX→PDF conversion (Gotenberg/LibreOffice) can make search_for() return
+    more than one rect for a single marker occurrence — e.g. bold emulation
+    redraws the glyph run slightly offset, or the placeholder was split
+    across adjacent runs in the source DOCX. Without this, each duplicate
+    hit gets its own signature stamp drawn on top of the others."""
+    merged: list[fitz.Rect] = []
+    for rect in rects:
+        match = next(
+            (
+                m
+                for m in merged
+                if (m & rect).get_area() > _DUPLICATE_OVERLAP_RATIO * min(m.get_area(), rect.get_area())
+            ),
+            None,
+        )
+        if match is not None:
+            merged[merged.index(match)] = match | rect
+        else:
+            merged.append(fitz.Rect(rect))
+    return merged
 
 
 class SignatureImageError(ValueError):
@@ -57,61 +85,100 @@ def stamp_signature(
     typed_name: str | None,
     signed_at: datetime,
 ) -> bytes:
-    """Return new PDF bytes with this signer's signature stamped in place
-    of their marker (or at a fallback position)."""
+    """Return new PDF bytes with this signer's signature stamped at every
+    occurrence of their marker (or at a single fallback position)."""
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
         marker = SIGNATURE_MARKERS.get(role)
-        rect = None
-        marker_page = None
+        # Collect every marker occurrence across all pages, not just the first.
+        targets: list[tuple[fitz.Page, fitz.Rect]] = []
         if marker:
             for page in doc:
-                hits = page.search_for(marker)
-                if hits:
-                    rect = hits[0]
-                    marker_page = page
-                    break
+                for rect in _dedupe_rects(page.search_for(marker)):
+                    targets.append((page, rect))
 
-        if rect is None:
-            # No marker found — fall back to the bottom of the last page,
-            # never fail the sign step over a missing placeholder.
-            marker_page = doc[-1]
-            rect = fitz.Rect(
-                _FALLBACK_MARGIN,
-                marker_page.rect.height - _FALLBACK_MARGIN - _MARKER_BOX_HEIGHT,
-                _FALLBACK_MARGIN + _MARKER_BOX_WIDTH,
-                marker_page.rect.height - _FALLBACK_MARGIN,
-            )
-        else:
-            # Cover the literal marker text with white before drawing over it.
-            marker_page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
-
-        if signature_image_base64:
-            img_bytes = _decode_signature_image(signature_image_base64)
-            marker_page.insert_image(rect, stream=img_bytes, keep_proportion=True)
-        else:
-            label = typed_name or signer_name
-            marker_page.insert_textbox(
-                rect,
-                label,
-                fontname="helv",
-                fontsize=18,
-                color=(0.1, 0.1, 0.5),
-                align=fitz.TEXT_ALIGN_LEFT,
-            )
-
-        caption_rect = fitz.Rect(rect.x0, rect.y1, rect.x1 + 150, rect.y1 + 14)
-        marker_page.insert_textbox(
-            caption_rect,
-            f"Signed by {signer_name} on {signed_at.strftime('%Y-%m-%d %H:%M UTC')}",
-            fontname="helv",
-            fontsize=7,
-            color=(0.4, 0.4, 0.4),
+        # Decode the signature image once and reuse it for every stamp.
+        img_bytes = (
+            _decode_signature_image(signature_image_base64)
+            if signature_image_base64
+            else None
         )
+
+        if not targets:
+            # No marker found — fall back to the bottom of the last page,
+            # never fail the sign step over a missing placeholder. Nothing
+            # to cover, so no white-out here.
+            fallback_page = doc[-1]
+            fallback_rect = fitz.Rect(
+                _FALLBACK_MARGIN,
+                fallback_page.rect.height - _FALLBACK_MARGIN - _MARKER_BOX_HEIGHT,
+                _FALLBACK_MARGIN + _MARKER_BOX_WIDTH,
+                fallback_page.rect.height - _FALLBACK_MARGIN,
+            )
+            _draw_stamp(
+                fallback_page,
+                fallback_rect,
+                img_bytes=img_bytes,
+                typed_name=typed_name,
+                signer_name=signer_name,
+                signed_at=signed_at,
+                cover_marker=False,
+            )
+        else:
+            for page, rect in targets:
+                _draw_stamp(
+                    page,
+                    rect,
+                    img_bytes=img_bytes,
+                    typed_name=typed_name,
+                    signer_name=signer_name,
+                    signed_at=signed_at,
+                    cover_marker=True,
+                )
 
         return doc.tobytes()
     finally:
         doc.close()
+
+
+def _draw_stamp(
+    page: "fitz.Page",
+    rect: "fitz.Rect",
+    *,
+    img_bytes: bytes | None,
+    typed_name: str | None,
+    signer_name: str,
+    signed_at: datetime,
+    cover_marker: bool,
+) -> None:
+    """Draw one signature stamp (image or typed name) plus its caption at
+    `rect` on `page`. Whites out the underlying marker text first when
+    `cover_marker` is set."""
+    if cover_marker:
+        # Cover the literal marker text with white before drawing over it.
+        page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
+
+    if img_bytes is not None:
+        page.insert_image(rect, stream=img_bytes, keep_proportion=True)
+    else:
+        label = typed_name or signer_name
+        page.insert_textbox(
+            rect,
+            label,
+            fontname="helv",
+            fontsize=18,
+            color=(0.1, 0.1, 0.5),
+            align=fitz.TEXT_ALIGN_LEFT,
+        )
+
+    caption_rect = fitz.Rect(rect.x0, rect.y1, rect.x1 + 150, rect.y1 + 14)
+    page.insert_textbox(
+        caption_rect,
+        f"Signed by {signer_name} on {signed_at.strftime('%Y-%m-%d %H:%M UTC')}",
+        fontname="helv",
+        fontsize=7,
+        color=(0.4, 0.4, 0.4),
+    )
 
 
 @dataclass

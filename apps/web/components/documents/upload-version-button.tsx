@@ -117,7 +117,7 @@ export function UploadVersionButton({
         onClick={() => inputRef.current?.click()}
         disabled={uploading}
         className={cn(
-          "inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline disabled:opacity-50",
+          "inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline disabled:opacity-50",
           className,
         )}
         title="Upload a new version of this document"

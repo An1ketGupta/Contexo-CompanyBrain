@@ -97,7 +97,7 @@ export function UploadWidget() {
     <div
       role="status"
       aria-live="polite"
-      className="fixed bottom-4 right-4 z-40 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border bg-background shadow-lg"
+      className="fixed bottom-4 right-4 z-40 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-border bg-background shadow-lg"
     >
       <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-3 py-2">
         {isRunning ? (
@@ -105,7 +105,7 @@ export function UploadWidget() {
         ) : summary.failed > 0 ? (
           <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />
         ) : (
-          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
         )}
         <p className="min-w-0 flex-1 truncate text-sm font-medium">{headline}</p>
         <button
@@ -150,7 +150,7 @@ export function UploadWidget() {
                   summary.failed > 0 && !isRunning
                     ? "bg-destructive"
                     : !isRunning && summary.done === summary.total
-                      ? "bg-emerald-500"
+                      ? "bg-success"
                       : "bg-primary",
                 )}
                 style={{ width: `${overallProgress}%` }}
@@ -208,7 +208,7 @@ function WidgetRow({
                 item.status === "error"
                   ? "bg-destructive"
                   : item.status === "success"
-                    ? "bg-emerald-500"
+                    ? "bg-success"
                     : "bg-primary",
               )}
               style={{ width: `${item.progress}%` }}
@@ -225,7 +225,7 @@ function WidgetRow({
         )}
       </div>
       {item.status === "success" ? (
-        <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+        <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
       ) : item.status === "error" ? (
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
       ) : inFlight ? (

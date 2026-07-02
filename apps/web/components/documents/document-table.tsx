@@ -131,7 +131,7 @@ export function DocumentTable({
   }, [documents]);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-background">
+    <div className="overflow-hidden rounded-2xl border border-border bg-background">
       <table className="w-full text-sm">
         <thead className="border-b border-border bg-muted/40 font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
           <tr>
@@ -446,14 +446,14 @@ function Row({
             {insights.toc.length > 0 && (
               <section>
                 <div className="mb-2 flex items-baseline justify-between">
-                  <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <h4 className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                     Contents
-                    <span className="ml-1.5 font-normal normal-case tracking-normal text-muted-foreground/60">
+                    <span className="ml-1.5 font-sans font-normal normal-case tracking-normal text-muted-foreground/60">
                       · {insights.toc.length}
                     </span>
                   </h4>
                 </div>
-                <div className="max-h-80 overflow-y-auto rounded-md border border-border/60 bg-background p-2">
+                <div className="max-h-80 overflow-y-auto rounded-xl border border-border/60 bg-background p-2">
                   <TableOfContents entries={insights.toc} />
                 </div>
               </section>
@@ -465,8 +465,8 @@ function Row({
               </p>
             )}
 
-            <section className="space-y-2 rounded-md border border-border bg-background p-3">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <section className="space-y-2 rounded-xl border border-border bg-background p-3">
+              <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                 Version history
               </div>
               <DocumentVersionHistory documentId={doc.id} />
