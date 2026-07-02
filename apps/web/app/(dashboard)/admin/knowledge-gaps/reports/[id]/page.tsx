@@ -105,8 +105,8 @@ export default function ReportDetailPage() {
         All reports
       </Button>
 
-      <div className="rounded-lg border bg-card p-5 mb-6">
-        <h1 className="text-xl font-semibold mb-1">
+      <div className="rounded-2xl border border-border bg-card p-5 mb-6">
+        <h1 className="text-2xl font-extrabold tracking-tight mb-1">
           Week of {startDate.toLocaleDateString()} – {endDate.toLocaleDateString()}
         </h1>
         <p className="text-sm text-muted-foreground mb-4">
@@ -123,7 +123,7 @@ export default function ReportDetailPage() {
       {data.status === "generating" ? (
         <GeneratingState />
       ) : data.clusters.length === 0 ? (
-        <p className="text-sm text-muted-foreground p-8 text-center border border-dashed rounded-lg">
+        <p className="text-sm text-muted-foreground p-8 text-center border border-dashed border-border bg-card rounded-2xl">
           No clusters above the priority threshold this week. 🎉
         </p>
       ) : (
@@ -161,8 +161,8 @@ export default function ReportDetailPage() {
 
 function GeneratingState() {
   return (
-    <div className="rounded-lg border bg-muted/30 p-10 text-center">
-      <Loader2 className="w-10 h-10 mx-auto text-primary animate-spin mb-3" />
+    <div className="rounded-2xl border border-border bg-card p-10 text-center">
+      <Loader2 className="w-10 h-10 mx-auto text-brand animate-spin mb-3" />
       <p className="text-sm text-muted-foreground">
         Clustering queries → LLM-naming topics → drafting suggested doc outlines.
       </p>
@@ -188,14 +188,14 @@ function ClusterCard({
 
   return (
     <div
-      className={`rounded-lg border bg-card overflow-hidden ${
+      className={`rounded-2xl border border-border bg-card overflow-hidden ${
         isResolved ? "opacity-60" : ""
       }`}
     >
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="w-full text-left p-4 flex items-center gap-4 hover:bg-accent/40 transition-colors"
+        className="w-full text-left p-4 flex items-center gap-4 hover:bg-muted/50 transition-colors"
       >
         <PriorityBadge score={cluster.priority_score} />
         <div className="flex-1 min-w-0">
@@ -325,13 +325,13 @@ function PriorityBadge({ score }: { score: number }) {
   const v = Math.round(score * 100);
   const tone =
     v >= 60
-      ? "bg-red-100 text-red-800"
+      ? "bg-destructive-soft text-destructive-ink"
       : v >= 35
-        ? "bg-amber-100 text-amber-800"
+        ? "bg-amber-tint text-amber-ink"
         : "bg-muted text-muted-foreground";
   return (
     <div
-      className={`shrink-0 w-12 h-12 rounded-md flex items-center justify-center text-sm font-semibold ${tone}`}
+      className={`shrink-0 w-12 h-12 rounded-xl flex items-center justify-center text-base font-extrabold tabular-nums ${tone}`}
     >
       {v}
     </div>
@@ -341,12 +341,12 @@ function PriorityBadge({ score }: { score: number }) {
 function StatusBadge({ status }: { status: ResolutionStatus }) {
   const styles: Record<ResolutionStatus, string> = {
     open: "bg-muted text-muted-foreground",
-    in_progress: "bg-blue-100 text-blue-700",
-    resolved: "bg-green-100 text-green-800",
+    in_progress: "bg-brand-tint text-brand",
+    resolved: "bg-success-tint text-success-ink",
     dismissed: "bg-muted text-muted-foreground",
   };
   return (
-    <span className={`text-xs px-2 py-0.5 rounded-full ${styles[status]}`}>
+    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${styles[status]}`}>
       {status.replace("_", " ")}
     </span>
   );

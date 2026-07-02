@@ -2,11 +2,23 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Circle,
+  FileText,
+  Mail,
+  MessageSquare,
+  type LucideIcon,
+  RefreshCw,
+  Send,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatCard } from "@/components/admin/stat-card";
+import { cn } from "@/lib/utils";
+import { formatAbsolute, formatRelativeShort } from "@/lib/date";
 
 type Period = "7d" | "30d" | "90d";
 
@@ -64,6 +76,20 @@ function formatDuration(seconds: number | null): string {
   return `${Math.round(seconds / 86_400)}d`;
 }
 
+const ACTION_ICONS: Record<string, LucideIcon> = {
+  candidate_sync: RefreshCw,
+  notion_create: FileText,
+  slack_notify: MessageSquare,
+  hiring_manager_email: Mail,
+  ats_publish: Send,
+  publish_attempt: Send,
+};
+
+function formatAction(action: string): string {
+  const label = action.replace(/_/g, " ");
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 export default function AdminRecruitingPage() {
   const [period, setPeriod] = useState<Period>("30d");
   const { data, error, isLoading } = useSWR<RecruitingAnalytics>(
@@ -74,24 +100,26 @@ export default function AdminRecruitingPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6 md:p-8">
-      <header className="flex items-center justify-between gap-3">
+      <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Recruiting analytics</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
+          <h1 className="text-2xl font-extrabold tracking-tight">
+            Recruiting analytics
+          </h1>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Hiring throughput, ATS distribution, and the audit trail for every
             publish action your org has run.
           </p>
         </div>
-        <div className="flex gap-1.5">
+        <div className="flex shrink-0 gap-1 rounded-xl bg-muted p-1">
           {PERIOD_OPTIONS.map((opt) => (
             <button
               key={opt.value}
               onClick={() => setPeriod(opt.value)}
               className={
-                "rounded-md border px-2.5 py-1 text-xs font-medium transition " +
+                "rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all " +
                 (period === opt.value
-                  ? "border-zinc-900 bg-zinc-900 text-white"
-                  : "border-border bg-background text-muted-foreground hover:border-zinc-400")
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground")
               }
             >
               {opt.label}
@@ -101,19 +129,20 @@ export default function AdminRecruitingPage() {
       </header>
 
       {error ? (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {error.message}
+        <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive-soft px-4 py-3 text-sm text-destructive-ink">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{error.message}</span>
         </div>
       ) : isLoading || !data ? (
-        <div className="grid gap-3 md:grid-cols-4">
-          <Skeleton className="h-24" />
-          <Skeleton className="h-24" />
-          <Skeleton className="h-24" />
-          <Skeleton className="h-24" />
+        <div className="grid gap-4 md:grid-cols-4">
+          <Skeleton className="h-28 rounded-2xl" />
+          <Skeleton className="h-28 rounded-2xl" />
+          <Skeleton className="h-28 rounded-2xl" />
+          <Skeleton className="h-28 rounded-2xl" />
         </div>
       ) : (
         <>
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-4">
             <StatCard
               label="Total requisitions"
               value={data.stats.total_requisitions.toString()}
@@ -137,8 +166,8 @@ export default function AdminRecruitingPage() {
           </div>
 
           <section className="grid gap-4 md:grid-cols-2">
-            <div className="rounded-lg border border-border bg-background p-4">
-              <h2 className="mb-3 text-sm font-medium">By ATS</h2>
+            <div className="rounded-2xl border border-border bg-card p-5">
+              <h2 className="mb-3 text-[15px] font-bold">By ATS</h2>
               {data.by_ats.length === 0 ? (
                 <p className="text-xs text-muted-foreground">No publishes yet.</p>
               ) : (
@@ -153,8 +182,8 @@ export default function AdminRecruitingPage() {
               )}
             </div>
 
-            <div className="rounded-lg border border-border bg-background p-4">
-              <h2 className="mb-3 text-sm font-medium">Top recruiters</h2>
+            <div className="rounded-2xl border border-border bg-card p-5">
+              <h2 className="mb-3 text-[15px] font-bold">Top recruiters</h2>
               {data.top_recruiters.length === 0 ? (
                 <p className="text-xs text-muted-foreground">No activity yet.</p>
               ) : (
@@ -180,57 +209,89 @@ export default function AdminRecruitingPage() {
             </div>
           </section>
 
-          <section className="rounded-lg border border-border bg-background p-4">
-            <h2 className="mb-3 text-sm font-medium">Recent audit log</h2>
+          <section className="rounded-2xl border border-border bg-card p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-[15px] font-bold">Recent audit log</h2>
+              {data.recent_audit.length > 0 ? (
+                <Badge variant="outline">{data.recent_audit.length}</Badge>
+              ) : null}
+            </div>
             {data.recent_audit.length === 0 ? (
               <p className="text-xs text-muted-foreground">No actions yet.</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead className="text-left text-[10px] uppercase tracking-wider text-muted-foreground">
-                    <tr>
-                      <th className="pb-2 pr-3">When</th>
-                      <th className="pb-2 pr-3">Action</th>
-                      <th className="pb-2 pr-3">ATS</th>
-                      <th className="pb-2 pr-3">Status</th>
-                      <th className="pb-2 pr-3">Duration</th>
-                      <th className="pb-2">Detail</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {data.recent_audit.map((row) => (
-                      <tr key={row.id}>
-                        <td className="py-2 pr-3 text-muted-foreground">
-                          {new Date(row.created_at).toLocaleString()}
-                        </td>
-                        <td className="py-2 pr-3 font-medium">{row.action}</td>
-                        <td className="py-2 pr-3 capitalize">
-                          {row.ats_platform ?? "—"}
-                        </td>
-                        <td className="py-2 pr-3">
+              <ul className="divide-y divide-border">
+                {data.recent_audit.map((row) => {
+                  const Icon = ACTION_ICONS[row.action] ?? Circle;
+                  const tone =
+                    row.status === "failure"
+                      ? "destructive"
+                      : row.status === "success"
+                        ? "success"
+                        : "muted";
+
+                  return (
+                    <li
+                      key={row.id}
+                      className="flex items-start gap-3 py-3 first:pt-0 last:pb-0"
+                    >
+                      <div
+                        className={cn(
+                          "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                          tone === "success" && "bg-success-tint text-success-ink",
+                          tone === "destructive" &&
+                            "bg-destructive-soft text-destructive-ink",
+                          tone === "muted" && "bg-muted text-muted-foreground",
+                        )}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="text-sm font-semibold">
+                            {formatAction(row.action)}
+                          </span>
+                          {row.ats_platform ? (
+                            <Badge variant="outline" className="capitalize">
+                              {row.ats_platform}
+                            </Badge>
+                          ) : null}
                           {row.status === "success" ? (
-                            <span className="inline-flex items-center gap-1 text-emerald-600">
-                              <CheckCircle2 className="h-3 w-3" /> ok
-                            </span>
+                            <Badge variant="success">
+                              <CheckCircle2 /> Success
+                            </Badge>
                           ) : row.status === "failure" ? (
-                            <span className="inline-flex items-center gap-1 text-red-600">
-                              <AlertTriangle className="h-3 w-3" /> fail
-                            </span>
+                            <Badge variant="destructive">
+                              <AlertTriangle /> Failed
+                            </Badge>
                           ) : (
-                            <span className="text-muted-foreground">skipped</span>
+                            <Badge variant="default">Skipped</Badge>
                           )}
-                        </td>
-                        <td className="py-2 pr-3 text-muted-foreground">
+                        </div>
+
+                        {row.error_message ? (
+                          <p
+                            className="mt-1 truncate font-mono text-xs text-destructive-ink"
+                            title={row.error_message}
+                          >
+                            {row.error_message}
+                          </p>
+                        ) : null}
+                      </div>
+
+                      <div
+                        className="flex shrink-0 flex-col items-end gap-0.5 text-xs text-muted-foreground"
+                        title={formatAbsolute(row.created_at)}
+                      >
+                        <span>{formatRelativeShort(row.created_at)}</span>
+                        <span className="tabular-nums">
                           {row.duration_ms ? `${row.duration_ms}ms` : "—"}
-                        </td>
-                        <td className="py-2 text-muted-foreground">
-                          {row.error_message ?? "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </section>
         </>

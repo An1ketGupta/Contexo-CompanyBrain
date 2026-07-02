@@ -9,18 +9,27 @@ interface StatCardProps {
    * "% of total" stats (active users / docs accessed).
    */
   progress?: number | null;
+  /**
+   * Optional delta line under the value (e.g. "+12% vs last period"). Tone
+   * drives the color per Actual's up/down/flat convention.
+   */
+  delta?: React.ReactNode;
+  deltaTone?: "up" | "down" | "flat";
   className?: string;
 }
 
 /**
- * Standalone replacement for Tremor's <Card><Metric>. Keeps Tailwind v4 happy
- * and matches the rest of the dashboard's shadcn/ui surface.
+ * Actual design-system stat tile. Cool-white card on the canvas, hairline
+ * border, generous 16px corners. Label is a JetBrains-Mono eyebrow; the value
+ * is the signature extrabold, tight-tracked number.
  */
 export function StatCard({
   label,
   value,
   hint,
   progress,
+  delta,
+  deltaTone = "flat",
   className,
 }: StatCardProps) {
   const pct =
@@ -31,21 +40,35 @@ export function StatCard({
   return (
     <div
       className={cn(
-        "rounded-xl border border-border bg-card p-4 shadow-sm",
+        "rounded-2xl border border-border bg-card p-5",
         className,
       )}
     >
-      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+      <p className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
         {label}
       </p>
-      <p className="mt-1 text-2xl font-semibold tracking-tight">{value}</p>
+      <p className="mt-2.5 text-[28px] font-extrabold leading-none tracking-tight tabular-nums">
+        {value}
+      </p>
+      {delta ? (
+        <p
+          className={cn(
+            "mt-2 text-xs font-bold",
+            deltaTone === "up" && "text-success-ink",
+            deltaTone === "down" && "text-destructive-ink",
+            deltaTone === "flat" && "text-muted-foreground",
+          )}
+        >
+          {delta}
+        </p>
+      ) : null}
       {hint ? (
-        <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+        <p className="mt-2 text-xs text-muted-foreground">{hint}</p>
       ) : null}
       {pct !== null ? (
-        <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-muted">
+        <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
           <div
-            className="h-full rounded-full bg-primary transition-all"
+            className="h-full rounded-full bg-brand transition-all"
             style={{ width: `${pct}%` }}
           />
         </div>

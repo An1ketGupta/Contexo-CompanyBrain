@@ -96,25 +96,25 @@ export default function AnalyticsPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6 md:p-8">
-      <header className="flex items-center justify-between gap-3">
+      <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-extrabold tracking-tight">
             Usage analytics
           </h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             How your team is using Nirnaya IQ — and what they're getting back.
           </p>
         </div>
-        <div className="flex shrink-0 gap-1 rounded-lg bg-muted p-1">
+        <div className="flex shrink-0 gap-1 rounded-xl bg-muted p-1">
           {PERIOD_OPTIONS.map((opt) => (
             <button
               key={opt.value}
               type="button"
               onClick={() => setPeriod(opt.value)}
               className={cn(
-                "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                "rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all",
                 period === opt.value
-                  ? "bg-background text-foreground shadow-sm"
+                  ? "bg-card text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -125,7 +125,7 @@ export default function AnalyticsPage() {
       </header>
 
       {error ? (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive-soft px-4 py-3 text-sm text-destructive-ink">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error.message}</span>
         </div>
@@ -208,9 +208,9 @@ function AnalyticsBody({
         />
       </div>
 
-      <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
+      <section className="rounded-2xl border border-border bg-card p-5">
         <div className="mb-4 flex items-baseline justify-between">
-          <h2 className="text-sm font-medium">Queries over time</h2>
+          <h2 className="text-[15px] font-bold">Queries over time</h2>
           <p className="text-xs text-muted-foreground">last {period}</p>
         </div>
         {daily_queries.length === 0 ? (
@@ -223,16 +223,16 @@ function AnalyticsBody({
       <TimeSavedSection timeSavings={timeSavings} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
-          <h2 className="mb-4 text-sm font-medium">Query types</h2>
+        <section className="rounded-2xl border border-border bg-card p-5">
+          <h2 className="mb-4 text-[15px] font-bold">Query types</h2>
           {intent_breakdown.length === 0 ? (
             <EmptyChart label="Not enough data yet." />
           ) : (
             <IntentBreakdownChart data={intent_breakdown} />
           )}
         </section>
-        <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
-          <h2 className="mb-4 text-sm font-medium">Most cited documents</h2>
+        <section className="rounded-2xl border border-border bg-card p-5">
+          <h2 className="mb-4 text-[15px] font-bold">Most cited documents</h2>
           {top_documents.length === 0 ? (
             <p className="py-12 text-center text-sm text-muted-foreground">
               No documents have been cited in this window.
@@ -257,10 +257,10 @@ function AnalyticsBody({
       </div>
 
       {top_copied.length > 0 && (
-        <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
+        <section className="rounded-2xl border border-border bg-card p-5">
           <div className="mb-4 flex items-center gap-1.5">
             <Copy className="h-3.5 w-3.5 text-muted-foreground" />
-            <h2 className="text-sm font-medium">Most copied outputs</h2>
+            <h2 className="text-[15px] font-bold">Most copied outputs</h2>
           </div>
           <ul className="space-y-2">
             {top_copied.map((msg, i) => (
@@ -291,8 +291,8 @@ function AnalyticsBody({
         </section>
       )}
 
-      <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
-        <h2 className="mb-3 text-sm font-medium">User breakdown</h2>
+      <section className="rounded-2xl border border-border bg-card p-5">
+        <h2 className="mb-3 text-[15px] font-bold">User breakdown</h2>
         {user_breakdown.length === 0 ? (
           <p className="py-12 text-center text-sm text-muted-foreground">
             No user activity in this window yet.
@@ -301,10 +301,10 @@ function AnalyticsBody({
           <div className="-mx-4 overflow-x-auto md:mx-0">
             <table className="w-full min-w-[480px] text-sm">
               <thead>
-                <tr className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
-                  <th className="pb-2 font-medium">User</th>
-                  <th className="pb-2 font-medium">Queries</th>
-                  <th className="pb-2 font-medium">Last active</th>
+                <tr className="border-b text-left font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+                  <th className="pb-2.5">User</th>
+                  <th className="pb-2.5">Queries</th>
+                  <th className="pb-2.5">Last active</th>
                 </tr>
               </thead>
               <tbody>
@@ -350,7 +350,7 @@ function TimeSavedSection({
   return (
     <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
       <div className="mb-4 flex items-baseline justify-between">
-        <h2 className="flex items-center gap-1.5 text-sm font-medium">
+        <h2 className="flex items-center gap-1.5 text-[15px] font-bold">
           <Clock className="h-3.5 w-3.5 text-muted-foreground" />
           Time saved
         </h2>
@@ -367,10 +367,10 @@ function TimeSavedSection({
       ) : (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
           <div className="md:col-span-1">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            <p className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
               Org total
             </p>
-            <p className="mt-1 text-3xl font-semibold tracking-tight tabular-nums">
+            <p className="mt-1.5 text-3xl font-extrabold tracking-tight tabular-nums">
               {timeSavings.total_hours_this_month}h
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -378,7 +378,7 @@ function TimeSavedSection({
             </p>
           </div>
           <div className="md:col-span-2">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            <p className="mb-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
               Top contributors
             </p>
             {timeSavings.per_user.length === 0 ? (
@@ -417,7 +417,7 @@ function AnalyticsSkeleton() {
         {Array.from({ length: 5 }).map((_, i) => (
           <div
             key={i}
-            className="space-y-2 rounded-lg border border-border bg-card p-4"
+            className="space-y-2.5 rounded-2xl border border-border bg-card p-5"
           >
             <Skeleton className="h-3 w-20" />
             <Skeleton className="h-8 w-16" />
@@ -429,7 +429,7 @@ function AnalyticsSkeleton() {
         {Array.from({ length: 2 }).map((_, i) => (
           <div
             key={i}
-            className="space-y-3 rounded-lg border border-border bg-card p-5"
+            className="space-y-3 rounded-2xl border border-border bg-card p-5"
           >
             <Skeleton className="h-4 w-36" />
             <Skeleton className="h-56 w-full" />

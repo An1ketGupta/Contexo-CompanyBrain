@@ -76,12 +76,12 @@ export default function CoverageScorePage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
-      <header className="flex items-start justify-between gap-3">
+      <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">
-            Knowledge Base Coverage
+          <h1 className="text-2xl font-extrabold tracking-tight">
+            Knowledge base coverage
           </h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             How completely your documents cover the eight knowledge areas every
             business needs.
           </p>
@@ -91,7 +91,7 @@ export default function CoverageScorePage() {
           onClick={recompute}
           disabled={refreshing}
           className={cn(
-            "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium",
+            "inline-flex shrink-0 items-center gap-1.5 rounded-full border border-input bg-card px-4 py-2 text-xs font-bold",
             "transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60",
           )}
         >
@@ -103,7 +103,7 @@ export default function CoverageScorePage() {
       </header>
 
       {error ? (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive-soft px-4 py-3 text-sm text-destructive-ink">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error.message}</span>
         </div>
@@ -137,7 +137,7 @@ function CoverageBody({ data }: { data: CoverageResponse }) {
       />
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold">Categories</h2>
+        <h2 className="mb-3 text-[15px] font-bold">Categories</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {data.categories.map((cat) => (
             <CategoryCard key={cat.id} cat={cat} />
@@ -167,13 +167,13 @@ function ScoreCard({
 }) {
   const stroke =
     scorePercent >= 75
-      ? "#10b981" // emerald
+      ? "var(--success)"
       : scorePercent >= 50
-        ? "#f59e0b" // amber
-        : "#ef4444"; // red
+        ? "var(--amber)"
+        : "var(--destructive)";
 
   return (
-    <div className="flex flex-col items-center gap-6 rounded-xl border border-border bg-background p-6 sm:flex-row sm:items-center">
+    <div className="flex flex-col items-center gap-6 rounded-2xl border border-border bg-card p-6 sm:flex-row sm:items-center">
       <div className="relative h-24 w-24 shrink-0">
         <svg viewBox="0 0 36 36" className="h-24 w-24 -rotate-90">
           <circle
@@ -196,14 +196,14 @@ function ScoreCard({
           />
         </svg>
         <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-xl font-semibold tracking-tight">
+          <span className="text-2xl font-extrabold tracking-tight tabular-nums">
             {scorePercent}%
           </span>
         </div>
       </div>
 
       <div className="text-center sm:text-left">
-        <p className="text-base font-semibold">
+        <p className="text-lg font-bold tracking-tight">
           {covered} of {total} categories covered
         </p>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -226,16 +226,16 @@ function CategoryCard({ cat }: { cat: CoverageCategory }) {
   return (
     <div
       className={cn(
-        "flex items-start gap-3 rounded-xl border p-4 transition-colors",
+        "flex items-start gap-3 rounded-2xl border p-4 transition-colors",
         cat.covered
-          ? "border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/60 dark:bg-emerald-950/30"
-          : "border-rose-200 bg-rose-50/60 dark:border-rose-900/60 dark:bg-rose-950/30",
+          ? "border-success/30 bg-success-tint"
+          : "border-destructive/30 bg-destructive-soft",
       )}
     >
       <div
         className={cn(
           "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full",
-          cat.covered ? "bg-emerald-500" : "bg-rose-400",
+          cat.covered ? "bg-success" : "bg-destructive",
         )}
         aria-hidden="true"
       >
@@ -251,7 +251,7 @@ function CategoryCard({ cat }: { cat: CoverageCategory }) {
           <p className="text-sm font-medium">{cat.label}</p>
           {cat.evidence === "semantic" ? (
             <span
-              className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+              className="inline-flex items-center gap-1 rounded-full bg-violet-tint px-1.5 py-0.5 text-[10px] font-bold text-violet"
               title={`Matched semantically (${cat.semantic_hits} hits, avg sim ${cat.avg_similarity ?? "—"})`}
             >
               <Sparkles className="h-2.5 w-2.5" /> semantic
@@ -277,12 +277,12 @@ function CategoryCard({ cat }: { cat: CoverageCategory }) {
 
         {!cat.covered ? (
           <>
-            <p className="mt-1.5 text-xs text-rose-700 dark:text-rose-400">
+            <p className="mt-1.5 text-xs font-medium text-destructive-ink">
               {cat.gap_message}
             </p>
             <Link
               href="/documents"
-              className="mt-1 inline-block text-xs font-medium text-primary hover:underline"
+              className="mt-1 inline-block text-xs font-bold text-brand hover:underline"
             >
               Upload documents →
             </Link>
@@ -298,9 +298,9 @@ function GapsPanel({ gaps }: { gaps: CoverageCategory[] }) {
   if (!questions.length) return null;
 
   return (
-    <section className="rounded-xl border border-border bg-background p-4">
-      <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-        <Target className="h-4 w-4 text-amber-500" />
+    <section className="rounded-2xl border border-border bg-card p-5">
+      <div className="mb-3 flex items-center gap-2 text-[15px] font-bold">
+        <Target className="h-4 w-4 text-amber" />
         Questions your team can't answer yet
       </div>
       <ul className="space-y-1.5">
@@ -320,15 +320,15 @@ function GapsPanel({ gaps }: { gaps: CoverageCategory[] }) {
 
 function NoDocsEmpty() {
   return (
-    <div className="rounded-xl border border-dashed border-border px-6 py-12 text-center">
-      <p className="text-sm font-medium">No documents uploaded yet</p>
+    <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-12 text-center">
+      <p className="text-sm font-bold">No documents uploaded yet</p>
       <p className="mt-1 text-xs text-muted-foreground">
         Coverage scores compare your documents against eight canonical business
         categories. Add some documents first.
       </p>
       <Link
         href="/documents"
-        className="mt-4 inline-block text-sm font-medium text-primary hover:underline"
+        className="mt-4 inline-block text-sm font-bold text-brand hover:underline"
       >
         Upload your first document →
       </Link>
@@ -343,7 +343,7 @@ function CoverageSkeleton() {
         {Array.from({ length: 4 }).map((_, i) => (
           <div
             key={i}
-            className="space-y-2 rounded-lg border border-border bg-card p-4"
+            className="space-y-2.5 rounded-2xl border border-border bg-card p-5"
           >
             <Skeleton className="h-3 w-20" />
             <Skeleton className="h-8 w-16" />
@@ -354,7 +354,7 @@ function CoverageSkeleton() {
         {Array.from({ length: 6 }).map((_, i) => (
           <div
             key={i}
-            className="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3.5"
+            className="flex items-start gap-3 rounded-2xl border border-border bg-card px-4 py-3.5"
           >
             <Skeleton className="mt-0.5 h-5 w-5 shrink-0 rounded-full" />
             <div className="min-w-0 flex-1 space-y-1.5">

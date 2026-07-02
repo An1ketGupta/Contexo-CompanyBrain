@@ -69,8 +69,8 @@ export default function KnowledgeGapReportsPage() {
     <div className="container max-w-5xl mx-auto py-8 px-4">
       <div className="flex items-start justify-between mb-6 gap-4">
         <div>
-          <h1 className="text-2xl font-semibold flex items-center gap-2">
-            <TrendingUp className="w-6 h-6" />
+          <h1 className="text-2xl font-extrabold tracking-tight flex items-center gap-2">
+            <TrendingUp className="w-6 h-6 text-brand" />
             Knowledge gap reports
           </h1>
           <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
@@ -79,7 +79,7 @@ export default function KnowledgeGapReportsPage() {
             and confidence delta.
           </p>
         </div>
-        <Button onClick={generate} disabled={generating}>
+        <Button onClick={generate} disabled={generating} className="rounded-full">
           {generating ? (
             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
           ) : (
@@ -127,7 +127,7 @@ function ReportCard({
   return (
     <button
       onClick={onOpen}
-      className="w-full text-left rounded-lg border bg-card hover:bg-accent/40 transition-colors p-5 flex items-center gap-4"
+      className="w-full text-left rounded-2xl border border-border bg-card hover:bg-muted/50 transition-colors p-5 flex items-center gap-4"
     >
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
@@ -160,12 +160,12 @@ function ReportCard({
 
 function StatusPill({ status }: { status: ReportSummary["status"] }) {
   const styles: Record<ReportSummary["status"], string> = {
-    generating: "bg-blue-100 text-blue-700",
-    ready: "bg-green-100 text-green-800",
-    failed: "bg-red-100 text-red-800",
+    generating: "bg-brand-tint text-brand",
+    ready: "bg-success-tint text-success-ink",
+    failed: "bg-destructive-soft text-destructive-ink",
   };
   return (
-    <span className={`text-xs px-2 py-0.5 rounded-full ${styles[status]}`}>
+    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${styles[status]}`}>
       {status}
     </span>
   );
@@ -179,9 +179,9 @@ function EmptyState({
   generating: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-dashed p-12 text-center">
+    <div className="rounded-2xl border border-dashed border-border bg-card p-12 text-center">
       <AlertCircle className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-      <h2 className="text-lg font-semibold mb-2">No reports yet</h2>
+      <h2 className="text-lg font-bold mb-2">No reports yet</h2>
       <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
         Reports auto-generate every Monday at 09:00 UTC. You can also kick one
         off now to cluster the last 7 days of gap signals into a prioritized

@@ -75,23 +75,23 @@ export default function AdminQualityPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Output quality</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <h1 className="text-2xl font-extrabold tracking-tight">Output quality</h1>
+        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
           Weekly trend of message quality (0–10) computed from copy + feedback
           + confidence + sources.
         </p>
       </header>
 
       {isLoading ? (
-        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-40 w-full rounded-2xl" />
       ) : error ? (
-        <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm text-destructive-ink">
           Failed to load metrics. (Are you signed in as an admin?)
         </div>
       ) : (
         <>
-          <section className="rounded border bg-white p-6">
-            <h2 className="mb-3 text-sm font-medium">Weekly trend</h2>
+          <section className="rounded-2xl border border-border bg-card p-6">
+            <h2 className="mb-3 text-[15px] font-bold">Weekly trend</h2>
             {!data?.trend?.length ? (
               <p className="text-sm text-muted-foreground">
                 No data yet. Run a backfill to populate from the last 30 days.
@@ -99,7 +99,7 @@ export default function AdminQualityPage() {
             ) : (
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b text-left text-xs text-muted-foreground">
+                  <tr className="border-b text-left font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
                     <th className="pb-2">Week</th>
                     <th className="pb-2">Average score</th>
                     <th className="pb-2">Messages</th>
@@ -124,8 +124,8 @@ export default function AdminQualityPage() {
             )}
           </section>
 
-          <section className="rounded border bg-white p-6">
-            <h2 className="mb-3 text-sm font-medium">By category</h2>
+          <section className="rounded-2xl border border-border bg-card p-6">
+            <h2 className="mb-3 text-[15px] font-bold">By category</h2>
             {!data?.by_category?.length ? (
               <p className="text-sm text-muted-foreground">
                 No category breakdown available.
@@ -133,7 +133,7 @@ export default function AdminQualityPage() {
             ) : (
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b text-left text-xs text-muted-foreground">
+                  <tr className="border-b text-left font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
                     <th className="pb-2">Category</th>
                     <th className="pb-2">Average score</th>
                     <th className="pb-2">Messages</th>
@@ -154,8 +154,8 @@ export default function AdminQualityPage() {
         </>
       )}
 
-      <section className="rounded border bg-white p-6">
-        <h2 className="mb-3 text-sm font-medium">Settings</h2>
+      <section className="rounded-2xl border border-border bg-card p-6">
+        <h2 className="mb-3 text-[15px] font-bold">Settings</h2>
         <div className="flex items-end gap-3">
           <div className="space-y-1">
             <Label htmlFor="threshold">Alert when weekly avg drops below</Label>
@@ -171,14 +171,23 @@ export default function AdminQualityPage() {
               className="w-40"
             />
           </div>
-          <Button onClick={handleSaveThreshold} disabled={savingThreshold}>
+          <Button
+            onClick={handleSaveThreshold}
+            disabled={savingThreshold}
+            className="rounded-full"
+          >
             {savingThreshold ? "Saving…" : "Save threshold"}
           </Button>
-          <Button variant="outline" onClick={handleBackfill} disabled={backfilling}>
+          <Button
+            variant="outline"
+            onClick={handleBackfill}
+            disabled={backfilling}
+            className="rounded-full"
+          >
             {backfilling ? "Backfilling…" : "Backfill last 30 days"}
           </Button>
         </div>
-        {msg && <p className="mt-3 text-sm text-emerald-700">{msg}</p>}
+        {msg && <p className="mt-3 text-sm font-medium text-success-ink">{msg}</p>}
       </section>
     </div>
   );

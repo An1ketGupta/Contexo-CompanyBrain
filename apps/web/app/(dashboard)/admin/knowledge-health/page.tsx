@@ -164,8 +164,8 @@ export default function KnowledgeHealthPage() {
     <div className="mx-auto max-w-6xl space-y-6 p-6 md:p-8">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Knowledge health</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <h1 className="text-2xl font-extrabold tracking-tight">Knowledge health</h1>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Weekly autonomous scan of your knowledge base. Surfaces outdated docs,
             broken links, merge candidates, and unanswered queries — with AI-drafted
             stubs ready for review.
@@ -176,12 +176,12 @@ export default function KnowledgeHealthPage() {
             variant="outline"
             size="sm"
             onClick={() => setShowSettings((v) => !v)}
-            className="gap-2"
+            className="gap-2 rounded-full"
           >
             <Settings2 className="size-4" />
             Settings
           </Button>
-          <Button onClick={runScan} disabled={scanning} className="gap-2">
+          <Button onClick={runScan} disabled={scanning} className="gap-2 rounded-full">
             {scanning ? (
               <Loader2 className="size-4 animate-spin" />
             ) : (
@@ -197,7 +197,7 @@ export default function KnowledgeHealthPage() {
       )}
 
       {latestError ? (
-        <div className="flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
+        <div className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive-soft p-4 text-sm text-destructive-ink">
           <AlertTriangle className="size-4 shrink-0" />
           <span>{(latestError as Error).message}</span>
         </div>
@@ -226,10 +226,10 @@ function SettingsPanel({
   const [threshold, setThreshold] = useState(settings.curator_merge_threshold);
 
   return (
-    <section className="rounded-md border bg-card p-4">
-      <h2 className="text-sm font-medium">Curator settings</h2>
+    <section className="rounded-2xl border border-border bg-card p-5">
+      <h2 className="text-[15px] font-bold">Curator settings</h2>
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        <div className="flex items-center justify-between gap-3 rounded-md border bg-background p-3">
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/50 p-3">
           <div className="space-y-0.5">
             <Label className="text-sm font-medium">Weekly scan enabled</Label>
             <p className="text-xs text-muted-foreground">Runs Mondays 08:00 UTC.</p>
@@ -239,7 +239,7 @@ function SettingsPanel({
             onCheckedChange={(v) => onUpdate({ curator_enabled: Boolean(v) })}
           />
         </div>
-        <div className="flex items-center justify-between gap-3 rounded-md border bg-background p-3">
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/50 p-3">
           <div className="space-y-0.5">
             <Label className="text-sm font-medium">Check broken links</Label>
             <p className="text-xs text-muted-foreground">
@@ -253,7 +253,7 @@ function SettingsPanel({
             }
           />
         </div>
-        <div className="space-y-1.5 rounded-md border bg-background p-3">
+        <div className="space-y-1.5 rounded-xl border border-border bg-muted/50 p-3">
           <Label htmlFor="outdated-days" className="text-sm font-medium">
             Outdated cutoff (days)
           </Label>
@@ -276,7 +276,7 @@ function SettingsPanel({
             </span>
           </div>
         </div>
-        <div className="space-y-1.5 rounded-md border bg-background p-3">
+        <div className="space-y-1.5 rounded-xl border border-border bg-muted/50 p-3">
           <Label htmlFor="merge-threshold" className="text-sm font-medium">
             Merge similarity threshold
           </Label>
@@ -307,13 +307,13 @@ function SettingsPanel({
 
 function EmptyState({ onRun }: { onRun: () => void }) {
   return (
-    <div className="rounded-md border border-dashed p-10 text-center">
+    <div className="rounded-2xl border border-dashed border-border bg-card p-10 text-center">
       <Sparkles className="mx-auto size-8 text-muted-foreground" />
-      <p className="mt-3 text-sm font-medium">No reports yet.</p>
+      <p className="mt-3 text-sm font-bold">No reports yet.</p>
       <p className="mt-1 text-xs text-muted-foreground">
         The first weekly scan runs automatically on Monday. You can also run one now.
       </p>
-      <Button onClick={onRun} variant="outline" size="sm" className="mt-4">
+      <Button onClick={onRun} variant="outline" size="sm" className="mt-4 rounded-full">
         Run scan now
       </Button>
     </div>
@@ -329,7 +329,7 @@ function ReportView({ report }: { report: Report }) {
 
   if (report.status === "pending") {
     return (
-      <div className="flex items-center gap-3 rounded-md border bg-card p-4 text-sm">
+      <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 text-sm">
         <Loader2 className="size-4 animate-spin text-muted-foreground" />
         <div>
           <p className="font-medium">Scan in progress…</p>
@@ -341,10 +341,10 @@ function ReportView({ report }: { report: Report }) {
 
   if (report.status === "failed") {
     return (
-      <div className="flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
+      <div className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive-soft p-4 text-sm text-destructive-ink">
         <AlertTriangle className="size-4 shrink-0" />
         <div>
-          <p className="font-medium">Scan failed</p>
+          <p className="font-bold">Scan failed</p>
           <p className="text-xs text-muted-foreground">
             {report.error_message || "Unknown error. Try running the scan again."}
           </p>
@@ -355,31 +355,31 @@ function ReportView({ report }: { report: Report }) {
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard
           label="Outdated"
           value={counts.outdated ?? 0}
-          icon={<Clock className="size-4 text-amber-500" />}
+          icon={<Clock className="size-4 text-amber" />}
         />
         <StatCard
           label="Broken links"
           value={counts.broken_links ?? 0}
-          icon={<Link2Off className="size-4 text-red-500" />}
+          icon={<Link2Off className="size-4 text-destructive" />}
         />
         <StatCard
           label="Merge candidates"
           value={counts.merge_clusters ?? 0}
-          icon={<GitMerge className="size-4 text-blue-500" />}
+          icon={<GitMerge className="size-4 text-brand" />}
         />
         <StatCard
           label="Knowledge gaps"
           value={counts.gaps ?? 0}
-          icon={<FileWarning className="size-4 text-purple-500" />}
+          icon={<FileWarning className="size-4 text-violet" />}
         />
         <StatCard
           label="Stub drafts"
           value={counts.stubs ?? 0}
-          icon={<Sparkles className="size-4 text-emerald-500" />}
+          icon={<Sparkles className="size-4 text-success" />}
         />
       </section>
 
@@ -408,12 +408,14 @@ function StatCard({
   icon: React.ReactNode;
 }) {
   return (
-    <div className="rounded-md border bg-card p-3">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+    <div className="rounded-2xl border border-border bg-card p-5">
+      <div className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
         {icon}
         <span>{label}</span>
       </div>
-      <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
+      <p className="mt-2.5 text-[28px] font-extrabold leading-none tracking-tight tabular-nums">
+        {value}
+      </p>
     </div>
   );
 }
@@ -422,7 +424,7 @@ function OutdatedSection({ items }: { items: OutdatedDoc[] }) {
   if (items.length === 0) return null;
   return (
     <section>
-      <h2 className="text-sm font-semibold">Outdated documents</h2>
+      <h2 className="text-[15px] font-bold">Outdated documents</h2>
       <p className="mt-1 text-xs text-muted-foreground">
         Last updated more than your configured cutoff ago. Review and refresh, or
         archive if no longer relevant.
@@ -431,7 +433,7 @@ function OutdatedSection({ items }: { items: OutdatedDoc[] }) {
         {items.slice(0, 20).map((d) => (
           <li
             key={d.id}
-            className="flex items-center justify-between gap-3 rounded-md border bg-card p-3 text-sm"
+            className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-3 text-sm"
           >
             <div className="min-w-0 flex-1">
               <p className="truncate font-medium">{d.name || "(untitled)"}</p>
@@ -442,7 +444,7 @@ function OutdatedSection({ items }: { items: OutdatedDoc[] }) {
             </div>
             <a
               href={`/documents?focus=${encodeURIComponent(d.id)}`}
-              className="text-xs text-primary underline-offset-2 hover:underline"
+              className="text-xs font-medium text-brand underline-offset-2 hover:underline"
             >
               Open
             </a>
@@ -457,7 +459,7 @@ function BrokenLinkSection({ items }: { items: BrokenLink[] }) {
   if (items.length === 0) return null;
   return (
     <section>
-      <h2 className="text-sm font-semibold">Broken links</h2>
+      <h2 className="text-[15px] font-bold">Broken links</h2>
       <p className="mt-1 text-xs text-muted-foreground">
         URLs in document summaries that failed to resolve.
       </p>
@@ -465,7 +467,7 @@ function BrokenLinkSection({ items }: { items: BrokenLink[] }) {
         {items.slice(0, 30).map((l, idx) => (
           <li
             key={`${l.document_id}-${idx}`}
-            className="rounded-md border bg-card p-3 text-sm"
+            className="rounded-xl border border-border bg-card p-3 text-sm"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
@@ -497,14 +499,14 @@ function MergeSection({ items }: { items: MergeCluster[] }) {
   if (items.length === 0) return null;
   return (
     <section>
-      <h2 className="text-sm font-semibold">Merge candidates</h2>
+      <h2 className="text-[15px] font-bold">Merge candidates</h2>
       <p className="mt-1 text-xs text-muted-foreground">
         Documents the Curator identified as likely duplicates. Decide which to keep,
         merge, or archive.
       </p>
       <ul className="mt-3 space-y-2">
         {items.slice(0, 20).map((cluster, idx) => (
-          <li key={idx} className="rounded-md border bg-card p-3 text-sm">
+          <li key={idx} className="rounded-xl border border-border bg-card p-3 text-sm">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-medium text-muted-foreground">
                 {cluster.size} documents · {Math.round(cluster.avg_similarity * 100)}%
@@ -520,7 +522,7 @@ function MergeSection({ items }: { items: MergeCluster[] }) {
                   <span className="truncate">{m.name || "(untitled)"}</span>
                   <a
                     href={`/documents?focus=${encodeURIComponent(m.id)}`}
-                    className="text-xs text-primary underline-offset-2 hover:underline"
+                    className="text-xs font-medium text-brand underline-offset-2 hover:underline"
                   >
                     Open
                   </a>
@@ -545,7 +547,7 @@ function GapsSection({
   const stubByTopic = new Map(stubs.map((s) => [s.topic, s.draft_id] as const));
   return (
     <section>
-      <h2 className="text-sm font-semibold">Knowledge gaps</h2>
+      <h2 className="text-[15px] font-bold">Knowledge gaps</h2>
       <p className="mt-1 text-xs text-muted-foreground">
         Topics your team asked about but the knowledge base couldn&apos;t answer.
         Stubs for the top gaps have been drafted — review and approve them in the
@@ -555,7 +557,7 @@ function GapsSection({
         {items.slice(0, 20).map((g, idx) => {
           const draftId = stubByTopic.get(g.topic);
           return (
-            <li key={idx} className="rounded-md border bg-card p-3 text-sm">
+            <li key={idx} className="rounded-xl border border-border bg-card p-3 text-sm">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{g.topic}</p>
@@ -572,7 +574,7 @@ function GapsSection({
                   {draftId ? (
                     <a
                       href={`/admin/knowledge-gaps?draft=${encodeURIComponent(draftId)}`}
-                      className="text-xs text-primary underline-offset-2 hover:underline"
+                      className="text-xs font-medium text-brand underline-offset-2 hover:underline"
                     >
                       Review stub
                     </a>

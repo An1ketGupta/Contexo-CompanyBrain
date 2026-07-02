@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { AlertTriangle, TrendingUp } from "lucide-react";
 import { FileIcon } from "@/components/documents/file-icon";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StatCard } from "@/components/admin/stat-card";
 import type { DocumentFileType } from "@/lib/types";
 
 interface InsightsResponse {
@@ -52,10 +53,10 @@ export default function InsightsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-8 p-6 md:p-8">
       <header>
-        <h1 className="text-xl font-semibold tracking-tight">
+        <h1 className="text-2xl font-extrabold tracking-tight">
           Knowledge intelligence
         </h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
+        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
           Which documents the AI is actually drawing from — and which ones may
           be dead weight.
         </p>
@@ -64,27 +65,31 @@ export default function InsightsPage() {
       {isLoading ? (
         <InsightsSkeleton />
       ) : error ? (
-        <div className="rounded-lg border border-destructive/40 bg-destructive-soft px-4 py-3 text-sm text-destructive">
-          {(error as Error).message}
+        <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive-soft px-4 py-3 text-sm text-destructive-ink">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{(error as Error).message}</span>
         </div>
       ) : data ? (
         <>
           <Totals data={data.totals} />
 
           <section>
-            <h2 className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
-              <TrendingUp className="h-4 w-4 text-emerald-600" />
+            <h2 className="mb-3 flex items-center gap-2 text-[15px] font-bold text-foreground">
+              <TrendingUp className="h-4 w-4 text-success" />
               Most cited
             </h2>
             {data.top_documents.length === 0 ? (
-              <p className="rounded-lg border border-border bg-background px-4 py-3 text-sm text-muted-foreground">
+              <p className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
                 Nothing cited yet. As the team chats, this list fills in.
               </p>
             ) : (
-              <ol className="divide-y divide-border rounded-lg border border-border bg-background">
+              <ol className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card">
                 {data.top_documents.map((doc, i) => (
-                  <li key={doc.id} className="flex items-center gap-3 px-4 py-3">
-                    <span className="w-5 text-right text-xs font-medium tabular-nums text-muted-foreground">
+                  <li
+                    key={doc.id}
+                    className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/50"
+                  >
+                    <span className="w-5 text-right font-mono text-xs font-bold tabular-nums text-muted-foreground">
                       {i + 1}
                     </span>
                     <FileIcon
@@ -93,11 +98,11 @@ export default function InsightsPage() {
                     />
                     <Link
                       href={`/chat?document_id=${encodeURIComponent(doc.id)}`}
-                      className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
+                      className="min-w-0 flex-1 truncate text-sm font-semibold hover:underline"
                     >
                       {doc.name}
                     </Link>
-                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                    <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
                       {doc.citation_count.toLocaleString()} citation
                       {doc.citation_count === 1 ? "" : "s"}
                     </span>
@@ -108,8 +113,8 @@ export default function InsightsPage() {
           </section>
 
           <section>
-            <h2 className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
-              <AlertTriangle className="h-4 w-4 text-amber-500" />
+            <h2 className="mb-3 flex items-center gap-2 text-[15px] font-bold text-foreground">
+              <AlertTriangle className="h-4 w-4 text-amber" />
               Never cited
             </h2>
             <p className="mb-3 text-xs text-muted-foreground">
@@ -118,20 +123,23 @@ export default function InsightsPage() {
               team actually uses.
             </p>
             {data.unused_documents.length === 0 ? (
-              <p className="rounded-lg border border-border bg-background px-4 py-3 text-sm text-muted-foreground">
+              <p className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
                 Every ready document has been cited at least once.
               </p>
             ) : (
-              <ul className="divide-y divide-border rounded-lg border border-border bg-background">
+              <ul className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card">
                 {data.unused_documents.map((doc) => (
-                  <li key={doc.id} className="flex items-center gap-3 px-4 py-3">
+                  <li
+                    key={doc.id}
+                    className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/50"
+                  >
                     <FileIcon
                       type={doc.file_type}
                       className="h-4 w-4 shrink-0 text-muted-foreground"
                     />
                     <Link
                       href={`/chat?document_id=${encodeURIComponent(doc.id)}`}
-                      className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
+                      className="min-w-0 flex-1 truncate text-sm font-semibold hover:underline"
                     >
                       {doc.name}
                     </Link>
@@ -152,11 +160,11 @@ export default function InsightsPage() {
 function InsightsSkeleton() {
   return (
     <div className="space-y-8">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
           <div
             key={i}
-            className="space-y-2 rounded-lg border border-border bg-background px-4 py-3"
+            className="space-y-2.5 rounded-2xl border border-border bg-card p-5"
           >
             <Skeleton className="h-2.5 w-16" />
             <Skeleton className="h-7 w-14" />
@@ -166,7 +174,7 @@ function InsightsSkeleton() {
       {[0, 1].map((section) => (
         <section key={section}>
           <Skeleton className="mb-3 h-3.5 w-28" />
-          <ol className="divide-y divide-border rounded-lg border border-border bg-background">
+          <ol className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card">
             {Array.from({ length: 5 }).map((_, i) => (
               <li key={i} className="flex items-center gap-3 px-4 py-3">
                 <Skeleton className="h-3 w-4" />
@@ -193,19 +201,13 @@ function Totals({ data }: { data: InsightsResponse["totals"] }) {
     { label: "Total citations", value: data.citations },
   ];
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
       {items.map((it) => (
-        <div
+        <StatCard
           key={it.label}
-          className="rounded-lg border border-border bg-background px-4 py-3"
-        >
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-            {it.label}
-          </p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums">
-            {it.value.toLocaleString()}
-          </p>
-        </div>
+          label={it.label}
+          value={it.value.toLocaleString()}
+        />
       ))}
     </div>
   );

@@ -82,12 +82,12 @@ export default function KnowledgeGapsPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
-      <header className="flex items-center justify-between gap-3">
+      <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-extrabold tracking-tight">
             Knowledge gaps
           </h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Topics your team asked about but your knowledge base couldn&apos;t
             answer. The AI drafts stub documents for the most-asked topics.
           </p>
@@ -96,22 +96,23 @@ export default function KnowledgeGapsPage() {
           <Button
             variant="outline"
             size="sm"
+            className="rounded-full"
             onClick={() => {
               window.location.href = "/admin/knowledge-gaps/reports";
             }}
           >
             Weekly reports
           </Button>
-          <div className="flex gap-1 rounded-lg bg-muted p-1">
+          <div className="flex gap-1 rounded-xl bg-muted p-1">
           {PERIODS.map((p) => (
             <button
               key={p.value}
               type="button"
               onClick={() => setPeriod(p.value)}
               className={cn(
-                "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                "rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all",
                 period === p.value
-                  ? "bg-background text-foreground shadow-sm"
+                  ? "bg-card text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -123,14 +124,14 @@ export default function KnowledgeGapsPage() {
       </header>
 
       {error ? (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive-soft px-4 py-3 text-sm text-destructive-ink">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error.message}</span>
         </div>
       ) : null}
 
       {isLoading || !data ? (
-        <div className="overflow-hidden rounded-xl border border-border bg-card">
+        <div className="overflow-hidden rounded-2xl border border-border bg-card">
           {Array.from({ length: 5 }).map((_, i) => (
             <div
               key={i}
@@ -150,9 +151,9 @@ export default function KnowledgeGapsPage() {
           ))}
         </div>
       ) : data.items.length === 0 ? (
-        <div className="rounded-xl border border-border bg-card p-10 text-center">
+        <div className="rounded-2xl border border-border bg-card p-10 text-center">
           <FileQuestion className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
-          <p className="text-sm font-medium">No knowledge gaps in this window.</p>
+          <p className="text-sm font-bold">No knowledge gaps in this window.</p>
           <p className="mt-1 text-xs text-muted-foreground">
             Either your team found answers in your knowledge base, or the chat
             volume is too low to detect a pattern. Both are good news.
@@ -187,15 +188,15 @@ function GapsTable({
   onOpenDraft: (id: string) => void;
 }) {
   return (
-    <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+    <section className="overflow-hidden rounded-2xl border border-border bg-card">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[600px] text-sm">
         <thead>
-          <tr className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
-            <th className="px-4 py-2.5 font-medium">Topic</th>
-            <th className="px-4 py-2.5 font-medium">Times asked</th>
-            <th className="px-4 py-2.5 font-medium">Last asked</th>
-            <th className="px-4 py-2.5 font-medium">Status</th>
+          <tr className="border-b bg-muted/60 text-left font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+            <th className="px-4 py-3">Topic</th>
+            <th className="px-4 py-3">Times asked</th>
+            <th className="px-4 py-3">Last asked</th>
+            <th className="px-4 py-3">Status</th>
           </tr>
         </thead>
         <tbody>
@@ -208,7 +209,7 @@ function GapsTable({
                 key={item.topic}
                 className={cn(
                   "border-b border-border/50 last:border-0",
-                  hasDraft && "bg-amber-500/5",
+                  hasDraft && "bg-amber-tint/40",
                 )}
               >
                 <td className="px-4 py-3">
@@ -234,25 +235,19 @@ function GapsTable({
                       size="sm"
                       variant="outline"
                       onClick={() => onOpenDraft(item.draft!.draft_id)}
-                      className="gap-1"
+                      className="gap-1 rounded-full"
                     >
                       <Sparkles className="h-3 w-3" />
                       Review AI draft
                       <ChevronRight className="h-3 w-3" />
                     </Button>
                   ) : approved ? (
-                    <Badge
-                      variant="outline"
-                      className="gap-1 border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
-                    >
+                    <Badge variant="success" className="gap-1">
                       <CheckCircle2 className="h-3 w-3" />
                       Approved
                     </Badge>
                   ) : rejected ? (
-                    <Badge
-                      variant="outline"
-                      className="gap-1 text-muted-foreground"
-                    >
+                    <Badge variant="default" className="gap-1 text-muted-foreground">
                       <XCircle className="h-3 w-3" />
                       Dismissed
                     </Badge>
@@ -383,7 +378,7 @@ function DraftReviewDialog({
         </DialogHeader>
 
         {loadError ? (
-          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+          <div className="rounded-lg border border-destructive/30 bg-destructive-soft p-3 text-xs text-destructive-ink">
             {loadError}
           </div>
         ) : !draft ? (

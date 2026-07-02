@@ -59,8 +59,8 @@ export function DailyQueriesChart({ data }: { data: DailyPoint[] }) {
       <AreaChart data={data} margin={{ top: 5, right: 12, left: 0, bottom: 5 }}>
         <defs>
           <linearGradient id="queryGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.25} />
-            <stop offset="95%" stopColor="var(--primary)" stopOpacity={0} />
+            <stop offset="5%" stopColor="var(--brand)" stopOpacity={0.25} />
+            <stop offset="95%" stopColor="var(--brand)" stopOpacity={0} />
           </linearGradient>
         </defs>
         <CartesianGrid
@@ -97,7 +97,7 @@ export function DailyQueriesChart({ data }: { data: DailyPoint[] }) {
         <Area
           type="monotone"
           dataKey="count"
-          stroke="var(--primary)"
+          stroke="var(--brand)"
           strokeWidth={2}
           fill="url(#queryGradient)"
         />
@@ -144,7 +144,7 @@ export function IntentBreakdownChart({ data }: { data: IntentPoint[] }) {
           }}
           formatter={queryFormatter}
         />
-        <Bar dataKey="count" fill="var(--primary)" radius={[0, 4, 4, 0]} />
+        <Bar dataKey="count" fill="var(--brand)" radius={[0, 4, 4, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );

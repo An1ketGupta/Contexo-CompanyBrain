@@ -102,17 +102,17 @@ export default function KnowledgeHealthPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
       <header>
-        <h1 className="text-xl font-semibold tracking-tight">
+        <h1 className="text-2xl font-extrabold tracking-tight">
           Knowledge base health
         </h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
+        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
           Which documents the AI is actually drawing on — and which look stale.
           Recomputed nightly.
         </p>
       </header>
 
       {error ? (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive-soft px-4 py-3 text-sm text-destructive-ink">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error.message}</span>
         </div>
@@ -144,7 +144,7 @@ function KnowledgeHealthSkeleton() {
         {Array.from({ length: 4 }).map((_, i) => (
           <div
             key={i}
-            className="space-y-2 rounded-lg border border-border bg-card p-4"
+            className="space-y-2.5 rounded-2xl border border-border bg-card p-5"
           >
             <Skeleton className="h-3 w-16" />
             <Skeleton className="h-8 w-12" />
@@ -158,7 +158,7 @@ function KnowledgeHealthSkeleton() {
           {Array.from({ length: 4 }).map((_, i) => (
             <div
               key={i}
-              className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3"
+              className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3"
             >
               <Skeleton className="h-4 w-4 rounded" />
               <div className="min-w-0 flex-1 space-y-1.5">
@@ -227,7 +227,7 @@ function KnowledgeHealthBody({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs uppercase tracking-wider text-muted-foreground">
+        <span className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
           Show
         </span>
         {FILTERS.map((f) => (
@@ -247,7 +247,7 @@ function KnowledgeHealthBody({
       </div>
 
       {docs.length === 0 ? (
-        <p className="rounded-lg border border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
+        <p className="rounded-2xl border border-border bg-card px-4 py-8 text-center text-sm text-muted-foreground">
           {filter === "needs_attention"
             ? "Every document looks healthy. Nothing to review."
             : "No documents match this filter."}
@@ -308,8 +308,8 @@ function DocRow({
 }) {
   return (
     <div
-      className={`flex items-center gap-3 rounded-lg border bg-card px-4 py-3 ${
-        selected ? "border-primary/60 bg-primary/5" : "border-border"
+      className={`flex items-center gap-3 rounded-xl border bg-card px-4 py-3 transition-colors ${
+        selected ? "border-brand/40 bg-accent" : "border-border hover:bg-muted/40"
       }`}
     >
       <Checkbox
@@ -341,7 +341,7 @@ function DocRow({
       />
       <Link
         href={`/documents?id=${encodeURIComponent(doc.id)}`}
-        className="shrink-0 text-xs font-medium text-primary hover:underline"
+        className="shrink-0 text-xs font-bold text-brand hover:underline"
       >
         Review →
       </Link>
