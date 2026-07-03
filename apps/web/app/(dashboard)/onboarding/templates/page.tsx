@@ -4,47 +4,23 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import {
+  AlertTriangle,
   ArrowLeft,
-  CheckCircle2,
   ExternalLink,
   Eye,
   FileText,
   Loader2,
   Sparkles,
-  XCircle,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
-import { PageHeader } from "@/components/actual/kit";
+import { PageHeader, StatusPill } from "@/components/actual/kit";
 import { TemplateMapperModal } from "@/components/onboarding/template-mapper-modal";
-
-interface DocumentRow {
-  id: string;
-  name: string;
-  file_type: string | null;
-  template_kind: string | null;
-  created_at: string;
-}
-
-interface DocListResponse {
-  documents: DocumentRow[];
-  total: number;
-}
-
-interface TemplateStatusRow {
-  id: string;
-  name: string;
-  template_kind: string;
-}
+import {
+  TemplateSlot,
+  type TemplateStatusRow,
+} from "@/components/onboarding/template-slot";
+import { cn } from "@/lib/utils";
 
 interface TemplateStatusResponse {
   loi: TemplateStatusRow | null;
@@ -53,12 +29,39 @@ interface TemplateStatusResponse {
   induction: TemplateStatusRow | null;
 }
 
-const KIND_LABEL: Record<string, string> = {
-  loi: "Letter of Intent",
-  appointment_letter: "Appointment Letter",
-  nda: "NDA",
-  induction: "Induction",
-};
+interface IntegrationsStatusResponse {
+  drive?: {
+    available?: boolean;
+    connected?: boolean;
+  };
+}
+
+type TemplateKind = keyof TemplateStatusResponse;
+
+// Ordered to mirror the onboarding sequence: LOI → Appointment + NDA →
+// Induction. The one-line purpose is the microcopy on each config card.
+const TEMPLATES: { kind: TemplateKind; label: string; purpose: string }[] = [
+  {
+    kind: "loi",
+    label: "Letter of Intent",
+    purpose: "The first offer document sent to a candidate.",
+  },
+  {
+    kind: "appointment_letter",
+    label: "Appointment Letter",
+    purpose: "Formal appointment terms issued after background verification.",
+  },
+  {
+    kind: "nda",
+    label: "NDA",
+    purpose: "Confidentiality agreement bundled with the appointment.",
+  },
+  {
+    kind: "induction",
+    label: "Induction",
+    purpose: "Day-one induction pack sent once policies are acknowledged.",
+  },
+];
 
 const fetcher = async <T,>(url: string): Promise<T> => {
   const res = await fetch(url);
@@ -69,28 +72,27 @@ const fetcher = async <T,>(url: string): Promise<T> => {
 export default function OnboardingTemplatesPage() {
   const { data: status, mutate: refreshStatus } =
     useSWR<TemplateStatusResponse>("/api/onboarding/templates/status", fetcher);
-  const { data: docs, isLoading } = useSWR<DocListResponse>(
-    "/api/documents/list",
+  const { data: integrations } = useSWR<IntegrationsStatusResponse>(
+    "/api/integrations/status",
     fetcher,
   );
+  const driveConnected = Boolean(integrations?.drive?.connected);
+
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [mapper, setMapper] = useState<{
-    docId: string;
-    docName: string;
-    kind: string;
-  } | null>(null);
-
-  const docxDocs = useMemo(
-    () =>
-      (docs?.documents || []).filter((d) =>
-        (d.file_type || "").includes("officedocument.wordprocessing"),
-      ),
-    [docs],
+  const [mapper, setMapper] = useState<{ docId: string; kind: string } | null>(
+    null,
   );
 
+  const configuredCount = useMemo(
+    () => (status ? TEMPLATES.filter((t) => status[t.kind]).length : 0),
+    [status],
+  );
+  const allSet = status !== undefined && configuredCount === TEMPLATES.length;
+  const remaining = TEMPLATES.length - configuredCount;
+
   async function tagDoc(docId: string, kind: string) {
-    setBusy(`${docId}-${kind}`);
+    setBusy(kind);
     setError(null);
     try {
       const res = await fetch("/api/onboarding/templates", {
@@ -111,19 +113,10 @@ export default function OnboardingTemplatesPage() {
       await refreshStatus();
       // Open the AI mapper modal automatically — it will short-circuit and
       // close itself if the DOCX already has {{ placeholders }}.
-      const doc = docxDocs.find((d) => d.id === docId);
-      if (doc) {
-        setMapper({ docId, docName: doc.name, kind });
-      }
+      setMapper({ docId, kind });
     } finally {
       setBusy(null);
     }
-  }
-
-  function openMapperFor(docId: string, kind: string) {
-    const doc = docxDocs.find((d) => d.id === docId);
-    if (!doc) return;
-    setMapper({ docId, docName: doc.name, kind });
   }
 
   async function previewDoc(docId: string) {
@@ -164,114 +157,159 @@ export default function OnboardingTemplatesPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
-      <Link
-        href="/onboarding"
-        className="mb-5 inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" /> Back to onboarding
-      </Link>
+    <div className="mx-auto max-w-3xl space-y-8 p-6 md:p-8">
+      <div className="space-y-5">
+        <Link
+          href="/onboarding"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> Back to onboarding
+        </Link>
 
-      <div className="mb-8">
         <PageHeader
           eyebrow="Onboarding"
           title="Onboarding templates"
-          description={
-            <>
-              Tag the DOCX templates the Onboarding agent will fill per candidate.
-              Upload templates from the{" "}
-              <Link href="/documents" className="font-semibold text-brand underline-offset-2 hover:underline">
-                documents page
-              </Link>{" "}
-              first, then assign each one to the right slot.
-            </>
-          }
+          description="Assign a DOCX to each onboarding document. The Onboarding agent fills the {{ placeholders }} and generates the final file for every candidate."
         />
       </div>
 
       {error ? (
-        <div className="mb-4 rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm font-medium text-destructive">
-          {error}
+        <div className="flex items-start gap-3 rounded-2xl border border-destructive/30 bg-destructive-soft p-4">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          <p className="text-sm font-medium text-destructive">{error}</p>
         </div>
       ) : null}
 
-      {(["loi", "appointment_letter", "nda", "induction"] as const).map((kind) => {
-        const current = status?.[kind] ?? null;
-        return (
-          <section
-            key={kind}
-            className="mb-4 rounded-2xl border border-border bg-card p-5"
-          >
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <div>
-                <p className="text-sm font-bold text-foreground">
-                  {KIND_LABEL[kind]}
-                </p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {current ? (
-                    <span className="inline-flex items-center gap-1 font-semibold text-success">
-                      <CheckCircle2 className="h-3 w-3" />
-                      Active: {current.name}
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 font-semibold text-destructive">
-                      <XCircle className="h-3 w-3" />
-                      Not configured
-                    </span>
-                  )}
-                </p>
-              </div>
-            </div>
+      {/* ── Setup progress ─────────────────────────────────────────── */}
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+              Setup progress
+            </p>
+            <p className="mt-1.5 text-sm font-bold text-foreground">
+              {configuredCount} of {TEMPLATES.length} templates configured
+            </p>
+          </div>
+          {status === undefined ? null : allSet ? (
+            <StatusPill tone="green">All set</StatusPill>
+          ) : (
+            <StatusPill tone="amber">{remaining} remaining</StatusPill>
+          )}
+        </div>
+        <div className="mt-4 h-2 overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full bg-brand transition-all duration-500"
+            style={{
+              width: `${(configuredCount / TEMPLATES.length) * 100}%`,
+            }}
+          />
+        </div>
+      </div>
 
-            <TemplatePicker
-              kind={kind}
-              docs={docxDocs}
-              currentId={current?.id || null}
-              isLoading={isLoading}
-              busy={busy}
-              onSelect={(docId) => tagDoc(docId, kind)}
-            />
+      {/* ── Template slots ─────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <p className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+          Documents
+        </p>
 
-            {current ? (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => previewDoc(current.id)}
-                  disabled={busy === `preview-${current.id}`}
-                >
-                  {busy === `preview-${current.id}` ? (
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Eye className="mr-1.5 h-3.5 w-3.5" />
-                  )}
-                  Preview with sample data
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => openMapperFor(current.id, kind)}
-                >
-                  <Sparkles className="mr-1.5 h-3.5 w-3.5 text-violet" />
-                  AI convert blanks
-                </Button>
-                <a
-                  href="https://github.com/nirnayaiq/docs/blob/main/onboarding-template-vars.md"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  Variable reference <ExternalLink className="h-3 w-3" />
-                </a>
+        {TEMPLATES.map(({ kind, label, purpose }, i) => {
+          const current = status?.[kind] ?? null;
+          return (
+            <section
+              key={kind}
+              className="rounded-2xl border border-border bg-card p-5"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div
+                    className={cn(
+                      "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-extrabold",
+                      current
+                        ? "bg-brand text-brand-foreground"
+                        : "bg-muted text-muted-foreground",
+                    )}
+                  >
+                    {i + 1}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-foreground">{label}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {purpose}
+                    </p>
+                  </div>
+                </div>
+                {current ? (
+                  <StatusPill tone="green">Active</StatusPill>
+                ) : (
+                  <StatusPill tone="gray">Not configured</StatusPill>
+                )}
               </div>
-            ) : null}
-          </section>
-        );
-      })}
+
+              {current ? (
+                <div className="mt-4 flex items-center gap-2 rounded-xl border border-border bg-muted/40 px-3 py-2.5">
+                  <FileText className="h-4 w-4 shrink-0 text-brand" />
+                  <span className="truncate text-xs font-semibold text-foreground">
+                    {current.name}
+                  </span>
+                </div>
+              ) : null}
+
+              <div className="mt-4">
+                <TemplateSlot
+                  bare
+                  kind={kind}
+                  label={label}
+                  current={current}
+                  onAssign={(docId) => tagDoc(docId, kind)}
+                  onDriveImported={() => {
+                    void refreshStatus();
+                  }}
+                  isBusy={busy === kind}
+                  driveConnected={driveConnected}
+                />
+              </div>
+
+              {current ? (
+                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => previewDoc(current.id)}
+                    disabled={busy === `preview-${current.id}`}
+                  >
+                    {busy === `preview-${current.id}` ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Eye className="h-3.5 w-3.5" />
+                    )}
+                    Preview with sample data
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setMapper({ docId: current.id, kind })}
+                  >
+                    <Sparkles className="h-3.5 w-3.5 text-violet" />
+                    AI convert blanks
+                  </Button>
+                  <a
+                    href="https://github.com/nirnayaiq/docs/blob/main/onboarding-template-vars.md"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    Variable reference <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+              ) : null}
+            </section>
+          );
+        })}
+      </div>
 
       <TemplateMapperModal
         documentId={mapper?.docId ?? null}
-        documentName={mapper?.docName}
         templateKind={mapper?.kind ?? "loi"}
         open={mapper !== null}
         onOpenChange={(o) => {
@@ -284,64 +322,3 @@ export default function OnboardingTemplatesPage() {
     </div>
   );
 }
-
-function TemplatePicker({
-  kind,
-  docs,
-  currentId,
-  isLoading,
-  busy,
-  onSelect,
-}: {
-  kind: string;
-  docs: DocumentRow[];
-  currentId: string | null;
-  isLoading: boolean;
-  busy: string | null;
-  onSelect: (docId: string) => void;
-}) {
-  const [picked, setPicked] = useState<string>(currentId ?? "");
-
-  if (isLoading) return <Skeleton className="h-10 w-full" />;
-  if (docs.length === 0) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        No DOCX files in your knowledge base yet. Upload your template from the{" "}
-        <Link href="/documents" className="underline">
-          documents page
-        </Link>{" "}
-        first.
-      </p>
-    );
-  }
-  return (
-    <div className="flex items-center gap-2">
-      <Select value={picked} onValueChange={(v) => setPicked(v)}>
-        <SelectTrigger className="max-w-md">
-          <SelectValue placeholder="Pick a DOCX from your knowledge base…" />
-        </SelectTrigger>
-        <SelectContent>
-          {docs.map((d) => (
-            <SelectItem key={d.id} value={d.id}>
-              <span className="flex items-center gap-2">
-                <FileText className="h-3.5 w-3.5" />
-                {d.name}
-              </span>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Button
-        size="sm"
-        disabled={!picked || picked === currentId || busy?.startsWith(picked)}
-        onClick={() => onSelect(picked)}
-      >
-        {busy?.startsWith(picked) ? (
-          <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-        ) : null}
-        {currentId ? "Replace template" : "Assign template"}
-      </Button>
-    </div>
-  );
-}
-

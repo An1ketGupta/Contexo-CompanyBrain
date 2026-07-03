@@ -94,6 +94,40 @@ class TemplateAnalyzerError(RuntimeError):
 # operators (`.`, `|`, args) so we don't false-negative on `{{ var | upper }}`.
 _JINJA_PLACEHOLDER_RE = re.compile(r"\{\{\s*[A-Za-z_][\w.\|\s\(\)\'\",-]*\s*\}\}")
 
+# Any Jinja delimiter. A proposed blank that contains one is a *fragment* of an
+# existing placeholder (e.g. "{{ juri" sliced out of "{{ jurisdiction }}"), not
+# a real blank — substituting it would corrupt the placeholder into invalid
+# Jinja like `{{ {{ jurisdiction }} }}`.
+_JINJA_BRACES_RE = re.compile(r"\{\{|\}\}")
+
+# A genuine blank always carries a fill marker: underscores, bracket/angle/
+# single-curly delimiters, an ellipsis, or a dotted leader. The LLM sometimes
+# hallucinates ordinary prose ("th", "appo", "onboardin") as blanks — most
+# often on already-templated docs where there is nothing left to fill — and
+# substituting a bare word fragment shreds the surrounding sentence. Require at
+# least one marker so prose fragments are dropped.
+_BLANK_MARKER_RE = re.compile(r"[_\[\]<>{}]|…|\.{3,}")
+
+# Any existing `{{ ... }}` span. Used both to reject blanks that fall inside a
+# placeholder and to keep those spans verbatim during substitution.
+_JINJA_SPAN_RE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
+
+
+def _overlaps_existing_placeholder(blank: str, text: str) -> bool:
+    """True if any occurrence of `blank` in `text` overlaps an existing
+    `{{ ... }}` span. Replacing such an occurrence would corrupt the
+    placeholder, so the caller drops the mapping."""
+    spans = [(m.start(), m.end()) for m in _JINJA_SPAN_RE.finditer(text)]
+    if not spans:
+        return False
+    start = 0
+    while (i := text.find(blank, start)) != -1:
+        j = i + len(blank)
+        if any(s < j and i < e for (s, e) in spans):
+            return True
+        start = i + 1
+    return False
+
 
 def has_jinja_placeholders(docx_bytes: bytes) -> bool:
     """Return True if the DOCX already contains `{{ var }}` placeholders.
@@ -311,12 +345,30 @@ async def propose_mappings(
                 blank[:60],
             )
             continue
-        if _JINJA_PLACEHOLDER_RE.search(blank):
-            # The "blank" the LLM cited is itself a `{{ var }}` Jinja region.
-            # Re-templating it would be a no-op at best and a corruption at
-            # worst (e.g. nested braces). Drop it.
+        if _JINJA_BRACES_RE.search(blank):
+            # The blank contains Jinja braces — it's an existing `{{ var }}`
+            # region or a fragment of one (e.g. "{{ juri"). Re-templating it
+            # produces nested/broken braces like `{{ {{ jurisdiction }} }}`,
+            # which fails to render. Drop it.
             log.info(
-                "template_analyzer.skipping_jinja_region blank=%r",
+                "template_analyzer.skipping_jinja_fragment blank=%r",
+                blank[:60],
+            )
+            continue
+        if not _BLANK_MARKER_RE.search(blank):
+            # No fill marker (underscore/bracket/single-curly/ellipsis). The
+            # LLM almost certainly hallucinated ordinary prose as a blank —
+            # substituting a bare word fragment would corrupt the sentence.
+            log.info(
+                "template_analyzer.skipping_non_blank blank=%r",
+                blank[:60],
+            )
+            continue
+        if _overlaps_existing_placeholder(blank, docx_text):
+            # The blank sits inside an existing `{{ }}` span; replacing it
+            # would corrupt that placeholder. Drop it.
+            log.info(
+                "template_analyzer.skipping_inside_placeholder blank=%r",
                 blank[:60],
             )
             continue
@@ -432,6 +484,37 @@ def _iter_all_paragraphs(doc: Any) -> list[Paragraph]:
     return paragraphs
 
 
+def _replace_outside_placeholders(
+    text: str, needle: str, replacement: str
+) -> tuple[str, int]:
+    """Replace `needle` with `replacement`, but only in the parts of `text`
+    that are NOT already inside a `{{ ... }}` Jinja span.
+
+    This protects existing placeholders — and any inserted by an earlier
+    mapping in the same paragraph — from being turned into nested
+    `{{ {{ ... }} }}`, which is invalid Jinja and fails to render. It is the
+    last line of defence for the apply endpoint, which trusts client-supplied
+    mappings and so can't rely on the analyzer's proposal-time guards.
+
+    Returns the rewritten text and the number of replacements made.
+    """
+    if not needle:
+        return text, 0
+    parts: list[str] = []
+    count = 0
+    last = 0
+    for m in _JINJA_SPAN_RE.finditer(text):
+        segment = text[last:m.start()]
+        count += segment.count(needle)
+        parts.append(segment.replace(needle, replacement))
+        parts.append(m.group(0))  # keep the existing placeholder verbatim
+        last = m.end()
+    tail = text[last:]
+    count += tail.count(needle)
+    parts.append(tail.replace(needle, replacement))
+    return "".join(parts), count
+
+
 def _replace_in_paragraph(paragraph: Paragraph, needle: str, replacement: str) -> int:
     """Replace every occurrence of `needle` with `replacement` in a paragraph.
 
@@ -441,6 +524,9 @@ def _replace_in_paragraph(paragraph: Paragraph, needle: str, replacement: str) -
     back to the FIRST run and blank the rest. Loses sub-run formatting on
     the replaced spans, but the surrounding text keeps its original runs.
 
+    Occurrences inside existing `{{ ... }}` placeholders are left untouched so
+    substitution can never create nested braces.
+
     Returns the number of replacements performed.
     """
     runs = paragraph.runs
@@ -449,8 +535,9 @@ def _replace_in_paragraph(paragraph: Paragraph, needle: str, replacement: str) -
     full_text = "".join(r.text or "" for r in runs)
     if needle not in full_text:
         return 0
-    count = full_text.count(needle)
-    new_text = full_text.replace(needle, replacement)
+    new_text, count = _replace_outside_placeholders(full_text, needle, replacement)
+    if count == 0:
+        return 0
     runs[0].text = new_text
     for r in runs[1:]:
         r.text = ""

@@ -4,12 +4,15 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
+  Check,
+  CheckCircle2,
   ExternalLink,
   Eye,
   Loader2,
   Sparkles,
 } from "lucide-react";
 
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -109,6 +112,14 @@ const CONFIDENCE_STYLE: Record<MappingItem["confidence"], string> = {
   medium: "bg-amber-tint text-amber",
   low: "bg-muted text-muted-foreground",
 };
+
+// Vertical stepper shown while the analyzer runs. Order matches the async
+// pipeline in the effect below: analyze → apply-mappings → load blocks.
+const STEPS: { key: Stage; label: string }[] = [
+  { key: "analyzing", label: "Find blanks & placeholders" },
+  { key: "applying", label: "Convert blanks into placeholders" },
+  { key: "loading", label: "Load the template for review" },
+];
 
 async function readJson<T = unknown>(res: Response): Promise<T> {
   return (await res.json().catch(() => ({}))) as T;
@@ -358,98 +369,146 @@ export function TemplateMapperModal({
     stage === "editing" || stage === "previewing" || stage === "saving";
   const busy = stage === "previewing" || stage === "saving";
 
+  const currentStepIdx = STEPS.findIndex((s) => s.key === stage);
+  const headerTitle =
+    stage === "saved"
+      ? "Template saved"
+      : stage === "error"
+        ? "Couldn't check template"
+        : isEditing || stage === "preview"
+          ? "Review and save"
+          : "Checking template";
+  const HeaderIcon =
+    stage === "saved"
+      ? CheckCircle2
+      : stage === "error"
+        ? AlertTriangle
+        : Sparkles;
+  const headerChip =
+    stage === "saved"
+      ? "bg-success-tint text-success"
+      : stage === "error"
+        ? "bg-destructive-soft text-destructive"
+        : "bg-violet-tint text-violet";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-4xl">
+      <DialogContent className="rounded-2xl sm:max-w-4xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-violet" />
-            {stage === "saved"
-              ? "Template saved"
-              : isEditing || stage === "preview"
-                ? "Review and save"
-                : "Checking template"}
-          </DialogTitle>
-          <DialogDescription>
-            {documentName ? (
-              <>
-                <span className="font-medium text-foreground">{documentName}</span>
-                {" · "}
-              </>
-            ) : null}
-            {kindLabel}
-            {stage === "saved" ? (
-              <> · this template is now live. The Onboarding agent will use it for every new candidate.</>
-            ) : stage === "preview" ? (
-              <> · read-only preview. Go back to editing to make changes, or Save to publish.</>
-            ) : ""}
-          </DialogDescription>
+          <div className="flex items-start gap-3">
+            <span
+              className={cn(
+                "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
+                headerChip,
+              )}
+            >
+              <HeaderIcon className="h-[18px] w-[18px]" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <DialogTitle>{headerTitle}</DialogTitle>
+              <DialogDescription className="mt-1">
+                {documentName ? (
+                  <>
+                    <span className="font-semibold text-foreground">
+                      {documentName}
+                    </span>
+                    {" · "}
+                  </>
+                ) : null}
+                {kindLabel}
+                {stage === "saved" ? (
+                  <> · this template is now live. The Onboarding agent will use it for every new candidate.</>
+                ) : stage === "preview" ? (
+                  <> · read-only preview. Go back to editing to make changes, or Save to publish.</>
+                ) : ""}
+              </DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
 
-        {/* Progress strip */}
+        {/* Progress — vertical stepper */}
         {inProgress ? (
-          <div className="space-y-3 py-2">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              {stageLabel[stage]}
-            </div>
-            <ol className="space-y-1.5 text-xs">
-              {(["analyzing", "applying", "loading"] as const).map((s, i) => {
-                const order = ["analyzing", "applying", "loading"];
-                const currentIdx = order.indexOf(stage);
-                const thisIdx = order.indexOf(s);
-                const done = thisIdx < currentIdx;
-                const active = thisIdx === currentIdx;
-                return (
-                  <li
-                    key={s}
-                    className={
-                      "flex items-center gap-2 " +
-                      (active
-                        ? "text-foreground"
-                        : done
-                          ? "text-success"
-                          : "text-muted-foreground")
-                    }
-                  >
+          <ol className="py-1">
+            {STEPS.map((s, i) => {
+              const done = i < currentStepIdx;
+              const active = i === currentStepIdx;
+              const last = i === STEPS.length - 1;
+              return (
+                <li key={s.key} className="flex gap-3">
+                  <div className="flex flex-col items-center">
                     <span
-                      className={
-                        "flex h-4 w-4 items-center justify-center rounded-full text-[10px] " +
-                        (done
+                      className={cn(
+                        "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold transition-colors",
+                        done
                           ? "bg-success text-white"
                           : active
-                            ? "bg-foreground text-background"
-                            : "bg-muted")
-                      }
+                            ? "bg-brand text-brand-foreground"
+                            : "bg-muted text-muted-foreground",
+                      )}
                     >
-                      {done ? "✓" : i + 1}
+                      {done ? (
+                        <Check className="h-3.5 w-3.5" />
+                      ) : active ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        i + 1
+                      )}
                     </span>
-                    <span>
-                      {s === "analyzing" && "Find {{ }} placeholders and blank spots"}
-                      {s === "applying" && "Convert blanks into placeholders"}
-                      {s === "loading" && "Load the template text for review"}
-                    </span>
-                  </li>
-                );
-              })}
-            </ol>
-          </div>
+                    {!last ? (
+                      <span
+                        className={cn(
+                          "my-1 w-0.5 flex-1 rounded-full",
+                          done ? "bg-success" : "bg-border",
+                        )}
+                      />
+                    ) : null}
+                  </div>
+                  <div className={cn("min-w-0", last ? "pb-0" : "pb-5")}>
+                    <p
+                      className={cn(
+                        "text-sm font-bold",
+                        active || done
+                          ? "text-foreground"
+                          : "text-muted-foreground",
+                      )}
+                    >
+                      {s.label}
+                    </p>
+                    {active ? (
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {stageLabel[stage]}
+                      </p>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
         ) : null}
 
         {/* Error */}
         {stage === "error" && error ? (
-          <div className="rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm font-medium text-destructive">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <p>{error}</p>
-            </div>
+          <div className="flex items-start gap-3 rounded-2xl border border-destructive/30 bg-destructive-soft p-4 text-sm font-medium text-destructive">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>{error}</p>
+          </div>
+        ) : null}
+
+        {/* Saved confirmation */}
+        {stage === "saved" ? (
+          <div className="flex items-center gap-3 rounded-2xl border border-success/30 bg-success-tint p-4">
+            <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
+            <p className="text-sm font-medium text-success-ink">
+              Placeholders are wired up and the template is published.
+            </p>
           </div>
         ) : null}
 
         {/* AI warning (analyzer failed but we kept going) */}
         {isEditing && analysis?.warning ? (
-          <div className="rounded-xl border border-amber/30 bg-amber-tint p-2.5 text-xs text-amber">
-            {analysis.warning}
+          <div className="flex items-start gap-2 rounded-2xl border border-amber/30 bg-amber-tint p-3 text-xs font-medium text-amber-ink">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <p>{analysis.warning}</p>
           </div>
         ) : null}
 
@@ -457,35 +516,36 @@ export function TemplateMapperModal({
         {isEditing ? (
           <div className="space-y-3">
             {mappings.length > 0 ? (
-              <div className="rounded-md border border-border bg-muted/20 p-2">
+              <div className="rounded-xl border border-border bg-muted/40 p-3">
                 <button
                   type="button"
                   onClick={() => setShowMappings((v) => !v)}
-                  className="mb-1 text-xs font-medium text-foreground underline hover:no-underline"
+                  className="text-xs font-bold text-brand transition-colors hover:text-foreground"
                 >
-                  {showMappings ? "Hide" : "Show"} {mappings.length} mapping
+                  {showMappings ? "Hide" : "Show"} {mappings.length} auto-mapping
                   {mappings.length === 1 ? "" : "s"}
                 </button>
                 {showMappings ? (
-                  <ul className="max-h-32 space-y-1 overflow-y-auto text-[11px]">
+                  <ul className="mt-2 max-h-36 space-y-1.5 overflow-y-auto pr-1">
                     {mappings.map((m, i) => (
                       <li
                         key={`${m.blank_text}-${i}`}
-                        className="flex items-center justify-between gap-2"
+                        className="flex items-center gap-2 text-[11px]"
                       >
-                        <code className="truncate rounded bg-background px-1.5 py-0.5 font-mono text-foreground">
+                        <code className="truncate rounded-md bg-card px-1.5 py-0.5 font-mono text-foreground ring-1 ring-border">
                           {m.blank_text}
                         </code>
-                        <span className="text-muted-foreground">→</span>
-                        <code className="truncate rounded bg-background px-1.5 py-0.5 font-mono text-foreground">
+                        <span className="shrink-0 text-muted-foreground">→</span>
+                        <code className="truncate rounded-md bg-card px-1.5 py-0.5 font-mono text-brand ring-1 ring-border">
                           {`{{ ${m.variable} }}`}
                         </code>
                         <span
-                          className={
-                            "rounded-full px-1.5 py-0.5 text-[10px] font-medium " +
-                            CONFIDENCE_STYLE[m.confidence]
-                          }
+                          className={cn(
+                            "ml-auto inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold",
+                            CONFIDENCE_STYLE[m.confidence],
+                          )}
                         >
+                          <span className="h-1 w-1 rounded-full bg-current" />
                           {m.confidence}
                         </span>
                       </li>
@@ -496,7 +556,7 @@ export function TemplateMapperModal({
             ) : null}
 
             {blocks.length > 0 ? (
-              <div className="max-h-[52vh] overflow-y-auto rounded-md border border-border bg-white px-8 py-6 shadow-inner">
+              <div className="max-h-[52vh] overflow-y-auto rounded-2xl border border-border bg-white px-8 py-6 shadow-inner">
                 <div className="mx-auto max-w-2xl space-y-1.5">
                   {blocks.map((b) => {
                     const badge = BLOCK_KIND_LABEL[b.kind];
@@ -555,8 +615,9 @@ export function TemplateMapperModal({
         {/* Action-level errors (edit/save) — kept distinct from the
             initial analyze/apply errors which use the larger banner above. */}
         {actionError ? (
-          <div className="rounded-xl border border-amber/30 bg-amber-tint p-2.5 text-xs text-amber">
-            {actionError}
+          <div className="flex items-start gap-2 rounded-2xl border border-amber/30 bg-amber-tint p-3 text-xs font-medium text-amber-ink">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <p>{actionError}</p>
           </div>
         ) : null}
 
