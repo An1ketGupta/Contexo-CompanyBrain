@@ -139,34 +139,34 @@ export default function SupportTicketDetailPage({
           <ArrowLeft className="h-3 w-3" />
           Back to inbox
         </Link>
-        <Button variant="ghost" size="sm" onClick={() => router.refresh()}>
+        <Button variant="ghost" size="sm" onClick={() => router.refresh()} className="rounded-full">
           <RefreshCw className="mr-1 h-3 w-3" />
           Refresh
         </Button>
       </header>
 
       {bannerError && (
-        <div className="mb-4 flex items-center gap-2 rounded-md border border-red-500/20 bg-red-500/5 px-3 py-2 text-sm text-red-700">
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive-soft px-3 py-2 text-sm text-destructive-ink">
           <AlertCircle className="h-4 w-4" />
           {bannerError}
         </div>
       )}
       {successMsg && (
-        <div className="mb-4 flex items-center gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-700">
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-success/30 bg-success-tint px-3 py-2 text-sm text-success-ink">
           <CheckCircle2 className="h-4 w-4" />
           {successMsg}
         </div>
       )}
 
       {error && (
-        <div className="rounded-md border border-red-500/20 bg-red-500/5 px-3 py-2 text-sm text-red-700">
+        <div className="rounded-xl border border-destructive/30 bg-destructive-soft px-3 py-2 text-sm text-destructive-ink">
           {String(error.message || error)}
         </div>
       )}
       {(isLoading || !ticket) && !error && (
         <div className="space-y-4">
-          <Skeleton className="h-32 w-full" />
-          <Skeleton className="h-48 w-full" />
+          <Skeleton className="h-32 w-full rounded-2xl" />
+          <Skeleton className="h-48 w-full rounded-2xl" />
         </div>
       )}
 
@@ -174,11 +174,11 @@ export default function SupportTicketDetailPage({
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_280px]">
           <main className="space-y-6">
             {/* Inbound */}
-            <section className="rounded-md border">
-              <header className="border-b px-4 py-3">
+            <section className="rounded-2xl border border-border">
+              <header className="border-b border-border px-4 py-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <Mail className="h-4 w-4 text-muted-foreground" />
-                  <h2 className="font-medium">From {ticket.from_name || ticket.from_email}</h2>
+                  <h2 className="font-bold">From {ticket.from_name || ticket.from_email}</h2>
                   <Badge variant="outline" className="font-mono text-[10px]">
                     {ticket.category}
                   </Badge>
@@ -202,21 +202,21 @@ export default function SupportTicketDetailPage({
             </section>
 
             {/* AI draft */}
-            <section className="rounded-md border">
-              <header className="flex items-center justify-between border-b px-4 py-3">
+            <section className="rounded-2xl border border-border">
+              <header className="flex items-center justify-between border-b border-border px-4 py-3">
                 <div className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-purple-500" />
-                  <h2 className="font-medium">AI draft response</h2>
+                  <Sparkles className="h-4 w-4 text-violet" />
+                  <h2 className="font-bold">AI draft response</h2>
                   {ticket.ai_draft_confidence !== null && (
                     <Badge
                       variant="outline"
                       className={cn(
                         "font-mono text-[10px]",
                         ticket.ai_draft_confidence >= 7
-                          ? "bg-emerald-500/10 text-emerald-700"
+                          ? "bg-success-tint text-success-ink"
                           : ticket.ai_draft_confidence >= 4
-                            ? "bg-amber-500/10 text-amber-700"
-                            : "bg-red-500/10 text-red-700",
+                            ? "bg-amber-tint text-amber-ink"
+                            : "bg-destructive-soft text-destructive-ink",
                       )}
                     >
                       {ticket.ai_draft_confidence.toFixed(1)}/10
@@ -228,6 +228,7 @@ export default function SupportTicketDetailPage({
                   variant="outline"
                   disabled={busy !== null || ticket.status === "sent"}
                   onClick={() => doAction("regenerate")}
+                  className="rounded-full"
                 >
                   {busy === "regenerate" ? (
                     <Loader2 className="mr-1 h-3 w-3 animate-spin" />
@@ -265,7 +266,7 @@ export default function SupportTicketDetailPage({
                   />
                 </div>
               </div>
-              <footer className="flex flex-wrap items-center justify-between gap-2 border-t bg-muted/30 px-4 py-3">
+              <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-muted/50 px-4 py-3">
                 <span className="text-xs text-muted-foreground">
                   Will send to: <span className="font-mono">{ticket.from_email}</span>
                 </span>
@@ -275,6 +276,7 @@ export default function SupportTicketDetailPage({
                     size="sm"
                     disabled={busy !== null || ticket.status === "sent" || ticket.status === "rejected"}
                     onClick={() => doAction("reject")}
+                    className="rounded-full"
                   >
                     {busy === "reject" ? (
                       <Loader2 className="mr-1 h-3 w-3 animate-spin" />
@@ -287,6 +289,7 @@ export default function SupportTicketDetailPage({
                     size="sm"
                     disabled={!canSend || busy !== null}
                     onClick={() => doAction("send")}
+                    className="rounded-full"
                   >
                     {busy === "send" ? (
                       <Loader2 className="mr-1 h-3 w-3 animate-spin" />
@@ -302,8 +305,8 @@ export default function SupportTicketDetailPage({
 
           {/* Side panel */}
           <aside className="space-y-4">
-            <section className="rounded-md border p-4">
-              <h3 className="mb-2 text-sm font-medium">Status</h3>
+            <section className="rounded-2xl border border-border p-4">
+              <h3 className="mb-2 text-sm font-bold">Status</h3>
               <Badge variant="outline" className="font-mono text-[10px]">
                 {ticket.status}
               </Badge>
@@ -318,15 +321,15 @@ export default function SupportTicketDetailPage({
               {ticket.agent_run_id && (
                 <Link
                   href={`/admin/agent-runs?run=${ticket.agent_run_id}`}
-                  className="mt-2 inline-block text-xs text-primary hover:underline"
+                  className="mt-2 inline-block text-xs font-bold text-brand hover:underline"
                 >
                   View agent run →
                 </Link>
               )}
             </section>
 
-            <section className="rounded-md border p-4">
-              <h3 className="mb-2 text-sm font-medium">Sources used</h3>
+            <section className="rounded-2xl border border-border p-4">
+              <h3 className="mb-2 text-sm font-bold">Sources used</h3>
               {!ticket.ai_draft_sources || ticket.ai_draft_sources.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
                   No sources — the model didn't have relevant docs for this reply.

@@ -108,16 +108,16 @@ export default function AdminCertificationsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
       <div>
-        <h1 className="text-2xl font-semibold">Knowledge certifications</h1>
+        <h1 className="text-2xl font-extrabold tracking-tight">Knowledge certifications</h1>
         <p className="text-sm text-muted-foreground mt-1">
           LLM-generated multiple-choice quizzes that gate policy acknowledgement.
         </p>
       </div>
 
-      <Card>
+      <Card className="rounded-2xl">
         <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Wand2 className="size-4" /> Generate a quiz
+          <CardTitle className="flex items-center gap-2 text-[15px] font-bold">
+            <Wand2 className="size-4 text-brand" /> Generate a quiz
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -127,7 +127,7 @@ export default function AdminCertificationsPage() {
               value={docId}
               onChange={(e) => setDocId(e.target.value)}
             />
-            <Button onClick={generate} disabled={generating || !docId.trim()}>
+            <Button onClick={generate} disabled={generating || !docId.trim()} className="rounded-full">
               {generating ? <Loader2 className="size-4 mr-2 animate-spin" /> : null}
               Generate
             </Button>
@@ -141,9 +141,9 @@ export default function AdminCertificationsPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="rounded-2xl">
         <CardHeader>
-          <CardTitle className="text-base">Pass rates by document</CardTitle>
+          <CardTitle className="text-[15px] font-bold">Pass rates by document</CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -156,12 +156,12 @@ export default function AdminCertificationsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Document</TableHead>
-                  <TableHead className="text-right">Attempts</TableHead>
-                  <TableHead className="text-right">Passes</TableHead>
-                  <TableHead className="text-right">Unique passers</TableHead>
-                  <TableHead className="text-right">Pass rate</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="font-mono text-[11px] font-bold uppercase tracking-[0.06em]">Document</TableHead>
+                  <TableHead className="text-right font-mono text-[11px] font-bold uppercase tracking-[0.06em]">Attempts</TableHead>
+                  <TableHead className="text-right font-mono text-[11px] font-bold uppercase tracking-[0.06em]">Passes</TableHead>
+                  <TableHead className="text-right font-mono text-[11px] font-bold uppercase tracking-[0.06em]">Unique passers</TableHead>
+                  <TableHead className="text-right font-mono text-[11px] font-bold uppercase tracking-[0.06em]">Pass rate</TableHead>
+                  <TableHead className="text-right font-mono text-[11px] font-bold uppercase tracking-[0.06em]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -179,6 +179,7 @@ export default function AdminCertificationsPage() {
                         variant="outline"
                         size="sm"
                         onClick={() => setRequired(d.document_id, true)}
+                        className="rounded-full"
                       >
                         Require
                       </Button>
@@ -191,9 +192,9 @@ export default function AdminCertificationsPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="rounded-2xl">
         <CardHeader>
-          <CardTitle className="text-base">Latest attempt per user</CardTitle>
+          <CardTitle className="text-[15px] font-bold">Latest attempt per user</CardTitle>
         </CardHeader>
         <CardContent>
           {!report || report.by_user.length === 0 ? (
@@ -202,11 +203,11 @@ export default function AdminCertificationsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Document</TableHead>
-                  <TableHead className="text-right">Score</TableHead>
-                  <TableHead className="text-right">Result</TableHead>
-                  <TableHead className="text-right">When</TableHead>
+                  <TableHead className="font-mono text-[11px] font-bold uppercase tracking-[0.06em]">User</TableHead>
+                  <TableHead className="font-mono text-[11px] font-bold uppercase tracking-[0.06em]">Document</TableHead>
+                  <TableHead className="text-right font-mono text-[11px] font-bold uppercase tracking-[0.06em]">Score</TableHead>
+                  <TableHead className="text-right font-mono text-[11px] font-bold uppercase tracking-[0.06em]">Result</TableHead>
+                  <TableHead className="text-right font-mono text-[11px] font-bold uppercase tracking-[0.06em]">When</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -219,9 +220,9 @@ export default function AdminCertificationsPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       {u.passed ? (
-                        <CheckCircle2 className="size-4 text-green-600 inline" />
+                        <CheckCircle2 className="size-4 text-success inline" />
                       ) : (
-                        <XCircle className="size-4 text-red-600 inline" />
+                        <XCircle className="size-4 text-destructive inline" />
                       )}
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground text-xs">

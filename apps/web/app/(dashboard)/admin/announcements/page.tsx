@@ -28,12 +28,12 @@ const fetcher = async (url: string): Promise<ListResponse> => {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  draft: "bg-zinc-100 text-zinc-700",
-  scheduled: "bg-blue-100 text-blue-700",
-  sending: "bg-amber-100 text-amber-700",
-  sent: "bg-emerald-100 text-emerald-700",
-  failed: "bg-red-100 text-red-700",
-  cancelled: "bg-zinc-100 text-zinc-500",
+  draft: "bg-muted text-muted-foreground",
+  scheduled: "bg-brand-tint text-brand",
+  sending: "bg-amber-tint text-amber-ink",
+  sent: "bg-success-tint text-success-ink",
+  failed: "bg-destructive-soft text-destructive-ink",
+  cancelled: "bg-muted text-muted-foreground",
 };
 
 export default function AnnouncementsPage() {
@@ -47,14 +47,14 @@ export default function AnnouncementsPage() {
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-extrabold tracking-tight">
             Internal announcements
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             One prompt → email + Slack + Notion versions, scheduled to fire together.
           </p>
         </div>
-        <Button asChild>
+        <Button asChild className="rounded-full">
           <Link href="/admin/announcements/new" className="gap-2">
             <Plus className="size-4" />
             New announcement
@@ -63,17 +63,17 @@ export default function AnnouncementsPage() {
       </header>
 
       {error ? (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
+        <div className="rounded-xl border border-destructive/30 bg-destructive-soft p-4 text-sm text-destructive-ink">
           {(error as Error).message}
         </div>
       ) : isLoading ? (
         <div className="space-y-3">
           {[0, 1].map((i) => (
-            <Skeleton key={i} className="h-16 w-full" />
+            <Skeleton key={i} className="h-16 w-full rounded-2xl" />
           ))}
         </div>
       ) : !data?.announcements.length ? (
-        <div className="rounded-md border border-dashed p-10 text-center text-sm text-muted-foreground">
+        <div className="rounded-2xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
           No announcements yet. Click <strong>New announcement</strong> to draft one.
         </div>
       ) : (
@@ -82,7 +82,7 @@ export default function AnnouncementsPage() {
             <li key={a.id}>
               <Link
                 href={`/admin/announcements/${a.id}`}
-                className="flex items-center justify-between gap-3 rounded-md border bg-card p-3 hover:bg-accent"
+                className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-card p-3 transition-colors hover:bg-muted/50"
               >
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm">{a.request_text}</p>
@@ -94,7 +94,7 @@ export default function AnnouncementsPage() {
                         : `Drafted ${new Date(a.created_at).toLocaleString()}`}
                   </p>
                 </div>
-                <Badge className={STATUS_COLORS[a.status] ?? "bg-zinc-100 text-zinc-700"}>
+                <Badge className={STATUS_COLORS[a.status] ?? "bg-muted text-muted-foreground"}>
                   {a.status}
                 </Badge>
               </Link>

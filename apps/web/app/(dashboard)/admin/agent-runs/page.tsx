@@ -70,11 +70,11 @@ const fetcher = async (url: string) => {
 };
 
 const STATUS_META: Record<string, { label: string; cls: string; icon: React.ComponentType<{ className?: string }> }> = {
-  running: { label: "Running", cls: "bg-blue-500/10 text-blue-700 dark:text-blue-300", icon: Loader2 },
-  completed: { label: "Completed", cls: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300", icon: CheckCircle2 },
-  failed: { label: "Failed", cls: "bg-red-500/10 text-red-700 dark:text-red-300", icon: XCircle },
-  cancelled: { label: "Cancelled", cls: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400", icon: XCircle },
-  pending_approval: { label: "Awaiting approval", cls: "bg-amber-500/10 text-amber-700 dark:text-amber-300", icon: Clock },
+  running: { label: "Running", cls: "bg-brand-tint text-brand", icon: Loader2 },
+  completed: { label: "Completed", cls: "bg-success-tint text-success-ink", icon: CheckCircle2 },
+  failed: { label: "Failed", cls: "bg-destructive-soft text-destructive-ink", icon: XCircle },
+  cancelled: { label: "Cancelled", cls: "bg-muted text-muted-foreground", icon: XCircle },
+  pending_approval: { label: "Awaiting approval", cls: "bg-amber-tint text-amber-ink", icon: Clock },
 };
 
 export default function AgentRunsPage() {
@@ -117,7 +117,7 @@ export default function AgentRunsPage() {
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Agent runs</h1>
+        <h1 className="text-2xl font-extrabold tracking-tight">Agent runs</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Audit trail for every autonomous agent execution.
         </p>
@@ -177,7 +177,7 @@ export default function AgentRunsPage() {
       </div>
 
       {isLoading ? (
-        <ul className="divide-y rounded-md border bg-card">
+        <ul className="divide-y rounded-2xl border border-border bg-card">
           {Array.from({ length: 5 }).map((_, i) => (
             <li key={i} className="flex items-center gap-3 px-4 py-3">
               <Skeleton className="h-9 w-9 shrink-0 rounded-md" />
@@ -196,18 +196,18 @@ export default function AgentRunsPage() {
           ))}
         </ul>
       ) : error ? (
-        <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+        <div className="rounded-xl border border-destructive/30 bg-destructive-soft p-4 text-sm text-destructive-ink">
           {error instanceof Error ? error.message : "Couldn't load runs."}
         </div>
       ) : (data?.runs ?? []).length === 0 ? (
-        <div className="rounded-md border bg-card px-6 py-12 text-center">
+        <div className="rounded-2xl border border-border bg-card px-6 py-12 text-center">
           <Activity className="mx-auto h-8 w-8 text-muted-foreground/50" />
           <p className="mt-3 text-sm text-muted-foreground">
             No agent runs yet. They appear here as soon as an agent fires.
           </p>
         </div>
       ) : (
-        <ul className="divide-y rounded-md border bg-card">
+        <ul className="divide-y rounded-2xl border border-border bg-card">
           {(data?.runs ?? []).map((run) => (
             <RunRow key={run.id} run={run} onClick={() => setActiveId(run.id)} />
           ))}
@@ -270,34 +270,34 @@ export default function AgentRunsPage() {
                 </div>
 
                 {detail.data.error ? (
-                  <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                  <div className="rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm text-destructive-ink">
                     {detail.data.error}
                   </div>
                 ) : null}
 
                 <div>
-                  <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <div className="mb-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
                     Steps
                   </div>
                   <ol className="space-y-2">
                     {(detail.data.steps ?? []).map((s, i) => (
                       <li
                         key={i}
-                        className="rounded-md border bg-card p-3 text-[13px]"
+                        className="rounded-xl border border-border bg-card p-3 text-[13px]"
                       >
                         <div className="flex items-center justify-between">
                           <div className="font-medium">{s.step_name}</div>
                           <span
                             className={cn(
-                              "rounded-md px-2 py-0.5 text-[10px] font-medium",
+                              "rounded-md px-2 py-0.5 text-[10px] font-bold",
                               s.status === "completed" &&
-                                "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+                                "bg-success-tint text-success-ink",
                               s.status === "failed" &&
-                                "bg-red-500/10 text-red-700 dark:text-red-300",
+                                "bg-destructive-soft text-destructive-ink",
                               s.status === "started" &&
-                                "bg-blue-500/10 text-blue-700 dark:text-blue-300",
+                                "bg-brand-tint text-brand",
                               s.status === "skipped" &&
-                                "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
+                                "bg-muted text-muted-foreground",
                             )}
                           >
                             {s.status}
@@ -404,10 +404,10 @@ function FilterChip({
     <button
       onClick={onClick}
       className={cn(
-        "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+        "rounded-full px-2.5 py-1 text-xs font-bold transition-colors",
         active
-          ? "bg-muted text-foreground"
-          : "border border-input bg-background text-muted-foreground hover:bg-muted/50",
+          ? "bg-foreground text-background"
+          : "border border-input bg-card text-muted-foreground hover:bg-muted/50",
       )}
     >
       {label}
@@ -427,23 +427,23 @@ function StatCard({
   tone?: "warn";
 }) {
   return (
-    <div className="rounded-md border bg-card p-3">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon className={cn("h-3.5 w-3.5", tone === "warn" && "text-amber-500")} />
+    <div className="rounded-2xl border border-border bg-card p-4">
+      <div className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+        <Icon className={cn("h-3.5 w-3.5", tone === "warn" && "text-amber")} />
         {label}
       </div>
-      <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
+      <div className="mt-1.5 text-[28px] font-extrabold leading-none tabular-nums">{value}</div>
     </div>
   );
 }
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="rounded-md border bg-muted/30 px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+    <div className="rounded-xl border border-border bg-muted/50 px-3 py-2">
+      <div className="font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
         {label}
       </div>
-      <div className="text-sm font-medium">{value}</div>
+      <div className="text-sm font-bold">{value}</div>
     </div>
   );
 }
@@ -457,11 +457,11 @@ function Collapsible({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-md border bg-card">
+    <div className="rounded-xl border border-border bg-card">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between px-3 py-2 text-xs font-medium"
+        className="flex w-full items-center justify-between px-3 py-2 text-xs font-bold"
       >
         <span>{label}</span>
         <ChevronRight className={cn("h-4 w-4 transition-transform", open && "rotate-90")} />

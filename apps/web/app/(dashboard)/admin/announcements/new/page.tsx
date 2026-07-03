@@ -39,7 +39,7 @@ export default function NewAnnouncementPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-6 md:p-8">
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight">New announcement</h1>
+        <h1 className="text-2xl font-extrabold tracking-tight">New announcement</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Describe what to communicate. The AI drafts email / Slack / Notion versions
           grounded in your KB. You pick channels and a send time.
@@ -63,7 +63,7 @@ export default function NewAnnouncementPage() {
           />
         </div>
         <div className="flex justify-end gap-2">
-          <Button type="submit" disabled={submitting} className="gap-2">
+          <Button type="submit" disabled={submitting} className="gap-2 rounded-full">
             <Sparkles className="size-4" />
             {submitting ? "Drafting…" : "Draft announcement"}
           </Button>

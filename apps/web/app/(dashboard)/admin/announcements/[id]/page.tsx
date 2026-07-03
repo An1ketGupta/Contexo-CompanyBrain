@@ -218,7 +218,7 @@ export default function AnnouncementDetailPage() {
     <div className="mx-auto max-w-4xl space-y-6 p-6 md:p-8">
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-extrabold tracking-tight">
             {emailSubject || "Untitled announcement"}
           </h1>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -228,7 +228,7 @@ export default function AnnouncementDetailPage() {
         <Badge>{a.status}</Badge>
       </header>
 
-      <div className="flex gap-1 border-b">
+      <div className="flex w-fit gap-1 rounded-xl bg-muted p-1">
         <TabButton active={tab === "email"} onClick={() => setTab("email")} label="Email" />
         <TabButton active={tab === "slack"} onClick={() => setTab("slack")} label="Slack" />
         <TabButton active={tab === "notion"} onClick={() => setTab("notion")} label="Notion" />
@@ -298,8 +298,8 @@ export default function AnnouncementDetailPage() {
         </section>
       )}
 
-      <section className="rounded-md border bg-card p-4">
-        <h2 className="text-sm font-medium">Channels & schedule</h2>
+      <section className="rounded-2xl border border-border bg-card p-5">
+        <h2 className="text-[15px] font-bold">Channels & schedule</h2>
         <div className="mt-3 space-y-3">
           <div className="space-y-1.5">
             <Label htmlFor="recipients">Email recipients</Label>
@@ -351,7 +351,7 @@ export default function AnnouncementDetailPage() {
       </section>
 
       {a.status !== "draft" && (
-        <section className="rounded-md border bg-muted/30 p-4 text-xs text-muted-foreground">
+        <section className="rounded-2xl border border-border bg-muted/50 p-4 text-xs text-muted-foreground">
           {a.status === "scheduled" && a.scheduled_for && (
             <p>Will send at {new Date(a.scheduled_for).toLocaleString()}.</p>
           )}
@@ -369,23 +369,23 @@ export default function AnnouncementDetailPage() {
               )}
             </ul>
           )}
-          {a.error_message && <p className="text-destructive">{a.error_message}</p>}
+          {a.error_message && <p className="text-destructive-ink">{a.error_message}</p>}
         </section>
       )}
 
       <div className="flex justify-end gap-2">
         {(a.status === "draft" || a.status === "scheduled") && (
-          <Button variant="outline" onClick={cancel} disabled={working} className="gap-2">
+          <Button variant="outline" onClick={cancel} disabled={working} className="gap-2 rounded-full">
             <X className="size-4" />
             Cancel
           </Button>
         )}
         {isDraft && (
           <>
-            <Button variant="outline" onClick={saveDraft} disabled={working}>
+            <Button variant="outline" onClick={saveDraft} disabled={working} className="rounded-full">
               Save draft
             </Button>
-            <Button onClick={schedule} disabled={working} className="gap-2">
+            <Button onClick={schedule} disabled={working} className="gap-2 rounded-full">
               {working ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
@@ -395,7 +395,7 @@ export default function AnnouncementDetailPage() {
             </Button>
           </>
         )}
-        <Button variant="ghost" onClick={() => router.push("/admin/announcements")}>
+        <Button variant="ghost" onClick={() => router.push("/admin/announcements")} className="rounded-full">
           Back
         </Button>
       </div>
@@ -417,10 +417,10 @@ function TabButton({
       type="button"
       onClick={onClick}
       className={
-        "border-b-2 px-3 py-2 text-sm font-medium " +
+        "rounded-lg px-3 py-1.5 text-sm font-bold transition-colors " +
         (active
-          ? "border-foreground text-foreground"
-          : "border-transparent text-muted-foreground hover:text-foreground")
+          ? "bg-card text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground")
       }
     >
       {label}

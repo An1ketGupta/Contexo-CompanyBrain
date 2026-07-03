@@ -116,7 +116,7 @@ export default function AdminCompliancePage() {
   if (error) {
     return (
       <div className="mx-auto max-w-6xl px-4 py-8 md:px-8">
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+        <div className="rounded-xl border border-destructive/30 bg-destructive-soft p-4 text-sm text-destructive-ink">
           {error.message}
         </div>
       </div>
@@ -132,8 +132,8 @@ export default function AdminCompliancePage() {
       <div className="mb-6 flex items-start justify-between gap-3">
         <div>
           <div className="mb-1 flex items-center gap-2">
-            <ShieldCheck className="h-5 w-5 text-blue-600" />
-            <h1 className="text-2xl font-semibold tracking-tight">
+            <ShieldCheck className="h-5 w-5 text-brand" />
+            <h1 className="text-2xl font-extrabold tracking-tight">
               Policy compliance
             </h1>
           </div>
@@ -142,7 +142,7 @@ export default function AdminCompliancePage() {
             re-propagation or send reminder emails for pending items.
           </p>
         </div>
-        <Button asChild variant="outline" size="sm">
+        <Button asChild variant="outline" size="sm" className="rounded-full">
           <a href="/api/admin/compliance/export" download>
             <Download className="mr-1.5 h-4 w-4" /> Export CSV
           </a>
@@ -152,7 +152,7 @@ export default function AdminCompliancePage() {
       {/* Summary tiles */}
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
         <SummaryTile
-          icon={<ShieldCheck className="h-4 w-4 text-emerald-600" />}
+          icon={<ShieldCheck className="h-4 w-4 text-success" />}
           label="Overall completion"
           value={
             isLoading
@@ -161,29 +161,29 @@ export default function AdminCompliancePage() {
           }
         />
         <SummaryTile
-          icon={<FileText className="h-4 w-4 text-blue-600" />}
+          icon={<FileText className="h-4 w-4 text-brand" />}
           label="Policy docs"
           value={isLoading ? "…" : String(summary?.policy_documents ?? 0)}
         />
         <SummaryTile
-          icon={<AlertTriangle className="h-4 w-4 text-amber-600" />}
+          icon={<AlertTriangle className="h-4 w-4 text-amber" />}
           label="Pending acks"
           value={isLoading ? "…" : String(summary?.pending ?? 0)}
         />
         <SummaryTile
-          icon={<Users className="h-4 w-4 text-rose-600" />}
+          icon={<Users className="h-4 w-4 text-destructive" />}
           label="Users with pending"
           value={isLoading ? "…" : String(summary?.users_with_pending ?? 0)}
         />
       </div>
 
       {/* Tab switcher */}
-      <div className="mb-4 inline-flex rounded-md border bg-muted/40 p-1">
+      <div className="mb-4 inline-flex rounded-xl bg-muted p-1">
         <button
           className={cn(
-            "rounded px-3 py-1.5 text-sm font-medium",
+            "rounded-lg px-3 py-1.5 text-sm font-bold transition-colors",
             tab === "documents"
-              ? "bg-background shadow-sm"
+              ? "bg-card text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
           )}
           onClick={() => setTab("documents")}
@@ -192,9 +192,9 @@ export default function AdminCompliancePage() {
         </button>
         <button
           className={cn(
-            "rounded px-3 py-1.5 text-sm font-medium",
+            "rounded-lg px-3 py-1.5 text-sm font-bold transition-colors",
             tab === "users"
-              ? "bg-background shadow-sm"
+              ? "bg-card text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
           )}
           onClick={() => setTab("users")}
@@ -204,7 +204,7 @@ export default function AdminCompliancePage() {
       </div>
 
       {isLoading ? (
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
+        <div className="overflow-hidden rounded-2xl border border-border bg-card">
           <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-4 py-2.5">
             <Skeleton className="h-3 w-24" />
             <div className="ml-auto flex gap-4">
@@ -304,8 +304,8 @@ function ComplianceConfigCard() {
   }
 
   return (
-    <div className="rounded-lg border bg-card p-5">
-      <h3 className="mb-1 text-base font-medium">Reminder cadence</h3>
+    <div className="rounded-2xl border border-border bg-card p-5">
+      <h3 className="mb-1 text-[15px] font-bold">Reminder cadence</h3>
       <p className="mb-4 text-xs text-muted-foreground">
         How aggressively to chase pending acknowledgements. Defaults are
         sensible — only change if your team has different norms.
@@ -319,7 +319,7 @@ function ComplianceConfigCard() {
               type="number"
               min={1}
               max={30}
-              className="w-24 rounded-md border bg-background px-2 py-1 text-sm"
+              className="w-24 rounded-md border border-input bg-card px-2 py-1 text-sm"
               value={form.reminder_threshold_days}
               onChange={(e) =>
                 setForm({ ...form, reminder_threshold_days: e.target.value })
@@ -331,7 +331,7 @@ function ComplianceConfigCard() {
               type="number"
               min={0}
               max={10}
-              className="w-24 rounded-md border bg-background px-2 py-1 text-sm"
+              className="w-24 rounded-md border border-input bg-card px-2 py-1 text-sm"
               value={form.max_reminders}
               onChange={(e) => setForm({ ...form, max_reminders: e.target.value })}
             />
@@ -341,7 +341,7 @@ function ComplianceConfigCard() {
               type="number"
               min={1}
               max={14}
-              className="w-24 rounded-md border bg-background px-2 py-1 text-sm"
+              className="w-24 rounded-md border border-input bg-card px-2 py-1 text-sm"
               value={form.reminder_cadence_days}
               onChange={(e) =>
                 setForm({ ...form, reminder_cadence_days: e.target.value })
@@ -352,7 +352,7 @@ function ComplianceConfigCard() {
             <input
               type="text"
               placeholder="C0123ABCDEF"
-              className="w-48 rounded-md border bg-background px-2 py-1 font-mono text-sm"
+              className="w-48 rounded-md border border-input bg-card px-2 py-1 font-mono text-sm"
               value={form.policy_channel_id}
               onChange={(e) =>
                 setForm({ ...form, policy_channel_id: e.target.value })
@@ -373,7 +373,7 @@ function ComplianceConfigCard() {
             Auto-propagate documents tagged{" "}
             <code className="rounded bg-muted px-1 py-0.5 text-xs">policy</code>
           </label>
-          <Button size="sm" onClick={save} disabled={saving}>
+          <Button size="sm" onClick={save} disabled={saving} className="rounded-full">
             {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
             Save settings
           </Button>
@@ -429,8 +429,8 @@ function DigestCard() {
 
   const s = data?.stats;
   return (
-    <div className="rounded-lg border bg-card p-5">
-      <h3 className="mb-1 text-base font-medium">Weekly digest preview</h3>
+    <div className="rounded-2xl border border-border bg-card p-5">
+      <h3 className="mb-1 text-[15px] font-bold">Weekly digest preview</h3>
       <p className="mb-4 text-xs text-muted-foreground">
         Every Monday at 09:00 UTC each admin gets an email like this. Send
         yourself a test below.
@@ -446,7 +446,7 @@ function DigestCard() {
           <Mini label="Acks pending" value={String(s.ack_pending_count)} />
         </div>
       )}
-      <Button size="sm" onClick={sendNow} disabled={sending}>
+      <Button size="sm" onClick={sendNow} disabled={sending} className="rounded-full">
         {sending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
         Send me a test digest
       </Button>
@@ -456,9 +456,9 @@ function DigestCard() {
 
 function Mini({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border bg-muted/40 px-3 py-2">
+    <div className="rounded-xl border border-border bg-muted/50 px-3 py-2">
       <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="text-sm font-semibold">{value}</div>
+      <div className="text-sm font-bold">{value}</div>
     </div>
   );
 }
@@ -473,12 +473,12 @@ function SummaryTile({
   value: string;
 }) {
   return (
-    <div className="rounded-lg border bg-card p-4">
-      <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+    <div className="rounded-2xl border border-border bg-card p-4">
+      <div className="mb-1.5 flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
         {icon}
         <span>{label}</span>
       </div>
-      <div className="text-2xl font-semibold">{value}</div>
+      <div className="text-[28px] font-extrabold leading-none tabular-nums">{value}</div>
     </div>
   );
 }
@@ -496,7 +496,7 @@ function DocumentsTable({
 }) {
   if (docs.length === 0) {
     return (
-      <div className="rounded-lg border bg-card p-10 text-center text-sm text-muted-foreground">
+      <div className="rounded-2xl border border-border bg-card p-10 text-center text-sm text-muted-foreground">
         No policy documents propagated yet. Tag any document with{" "}
         <code className="rounded bg-muted px-1.5 py-0.5">policy</code> or mark
         it &ldquo;requires acknowledgement&rdquo; to start.
@@ -504,9 +504,9 @@ function DocumentsTable({
     );
   }
   return (
-    <div className="overflow-x-auto rounded-lg border bg-card">
+    <div className="overflow-x-auto rounded-2xl border border-border bg-card">
       <table className="w-full min-w-[640px] text-sm">
-        <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+        <thead className="bg-muted/60 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
           <tr>
             <th className="px-4 py-3 text-left">Document</th>
             <th className="px-3 py-3 text-left">Version</th>
@@ -574,15 +574,15 @@ function DocumentsTable({
 function UsersTable({ users }: { users: UserRow[] }) {
   if (users.length === 0) {
     return (
-      <div className="rounded-lg border bg-card p-10 text-center text-sm text-muted-foreground">
+      <div className="rounded-2xl border border-border bg-card p-10 text-center text-sm text-muted-foreground">
         No users in this org have been assigned acknowledgements yet.
       </div>
     );
   }
   return (
-    <div className="overflow-x-auto rounded-lg border bg-card">
+    <div className="overflow-x-auto rounded-2xl border border-border bg-card">
       <table className="w-full min-w-[640px] text-sm">
-        <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+        <thead className="bg-muted/60 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
           <tr>
             <th className="px-4 py-3 text-left">Employee</th>
             <th className="px-3 py-3 text-right">Acked</th>
@@ -642,12 +642,12 @@ function UsersTable({ users }: { users: UserRow[] }) {
 function CompletionBar({ pct }: { pct: number }) {
   const tone =
     pct >= 90
-      ? "bg-emerald-500"
+      ? "bg-success"
       : pct >= 60
-        ? "bg-blue-500"
+        ? "bg-brand"
         : pct >= 30
-          ? "bg-amber-500"
-          : "bg-rose-500";
+          ? "bg-amber"
+          : "bg-destructive";
   return (
     <div className="ml-auto flex w-32 items-center gap-2">
       <div className="h-1.5 flex-1 rounded-full bg-muted">

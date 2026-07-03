@@ -46,10 +46,10 @@ function formatDate(iso: string): string {
 }
 
 function progressColor(pct: number | null): string {
-  if (pct == null) return "bg-primary";
-  if (pct >= 80) return "bg-red-500";
-  if (pct >= 60) return "bg-amber-500";
-  return "bg-primary";
+  if (pct == null) return "bg-brand";
+  if (pct >= 80) return "bg-destructive";
+  if (pct >= 60) return "bg-amber";
+  return "bg-brand";
 }
 
 export default function RateLimitsPage() {
@@ -67,8 +67,8 @@ export default function RateLimitsPage() {
     <div className="mx-auto max-w-4xl space-y-6 p-6 md:p-8">
       <header>
         <div className="flex items-center gap-2">
-          <Gauge size={18} className="text-muted-foreground" />
-          <h1 className="text-xl font-semibold tracking-tight">Rate limits & quota</h1>
+          <Gauge size={18} className="text-brand" />
+          <h1 className="text-2xl font-extrabold tracking-tight">Rate limits & quota</h1>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
           Your team&apos;s monthly AI usage against the {quota?.plan ?? ""} plan.
@@ -77,23 +77,23 @@ export default function RateLimitsPage() {
       </header>
 
       {error && (
-        <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+        <div className="rounded-xl border border-destructive/30 bg-destructive-soft p-4 text-sm text-destructive-ink">
           {error.message}
         </div>
       )}
 
       {/* Org quota card */}
-      <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+      <section className="rounded-2xl border border-border bg-card p-5">
         {isLoading || !quota ? (
-          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full rounded-xl" />
         ) : (
           <>
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                <p className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
                   Monthly query quota
                 </p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums">
+                <p className="mt-1 text-[28px] font-extrabold leading-none tabular-nums">
                   {quota.used.toLocaleString()}{" "}
                   <span className="text-base font-normal text-muted-foreground">
                     / {quota.unlimited ? "∞" : quota.limit?.toLocaleString()}
@@ -127,7 +127,7 @@ export default function RateLimitsPage() {
             )}
 
             {quota.will_exceed && (
-              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+              <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-xs text-destructive-ink">
                 At your current run-rate, the team will use approximately{" "}
                 <span className="font-semibold tabular-nums">
                   {quota.projected_month_end.toLocaleString()}
@@ -144,14 +144,14 @@ export default function RateLimitsPage() {
       </section>
 
       {/* Per-user table */}
-      <section className="rounded-xl border border-border bg-card shadow-sm">
+      <section className="rounded-2xl border border-border bg-card">
         <div className="border-b border-border px-4 py-3">
-          <h2 className="text-sm font-semibold">Usage by team member</h2>
+          <h2 className="text-[15px] font-bold">Usage by team member</h2>
           <p className="text-xs text-muted-foreground">Last 30 days</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="border-b border-border text-left text-xs font-medium text-muted-foreground">
+            <thead className="border-b border-border text-left font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
               <tr>
                 <th className="px-4 py-2">User</th>
                 <th className="px-4 py-2 text-right">Today</th>
@@ -196,7 +196,7 @@ export default function RateLimitsPage() {
                     <td className="px-4 py-2">
                       <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
                         <div
-                          className="h-full rounded-full bg-primary"
+                          className="h-full rounded-full bg-brand"
                           style={{ width: `${share}%` }}
                         />
                       </div>

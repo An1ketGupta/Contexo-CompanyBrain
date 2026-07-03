@@ -146,8 +146,8 @@ export default function CompetitorMentionsPage() {
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
       <header>
         <div className="flex items-center gap-2">
-          <ShieldAlert className="h-5 w-5 text-amber-600" />
-          <h1 className="text-xl font-semibold tracking-tight">
+          <ShieldAlert className="h-5 w-5 text-amber" />
+          <h1 className="text-2xl font-extrabold tracking-tight">
             Competitor mentions
           </h1>
         </div>
@@ -163,25 +163,25 @@ export default function CompetitorMentionsPage() {
       </header>
 
       {topTerms.length > 0 && (
-        <section className="rounded-lg border border-border bg-card p-4">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <section className="rounded-2xl border border-border bg-card p-4">
+          <div className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
             Top mentioned terms (open)
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
             {topTerms.map(({ term, count }) => (
               <div
                 key={term}
-                className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100"
+                className="inline-flex items-center gap-1.5 rounded-full border border-amber/30 bg-amber-tint px-2 py-1 text-xs text-amber-ink"
               >
-                <span className="font-medium">{term}</span>
-                <span className="text-amber-700 dark:text-amber-300">
+                <span className="font-bold">{term}</span>
+                <span className="text-amber-ink/80">
                   ×{count}
                 </span>
                 <button
                   type="button"
                   onClick={() => dismiss({ term }, `term:${term}`)}
                   disabled={bulkBusy !== null}
-                  className="ml-1 rounded p-0.5 text-amber-700 transition-colors hover:bg-amber-100 disabled:opacity-50 dark:text-amber-300 dark:hover:bg-amber-500/20"
+                  className="ml-1 rounded p-0.5 text-amber-ink transition-colors hover:bg-amber/20 disabled:opacity-50"
                   title={`Dismiss all open mentions of "${term}"`}
                   aria-label={`Dismiss all open mentions of "${term}"`}
                 >
@@ -198,7 +198,7 @@ export default function CompetitorMentionsPage() {
       )}
 
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex gap-1 rounded-lg bg-muted p-1">
+        <div className="flex gap-1 rounded-xl bg-muted p-1">
           {STATUS_FILTERS.map((f) => (
             <button
               key={f.value}
@@ -208,9 +208,9 @@ export default function CompetitorMentionsPage() {
                 setSelected(new Set());
               }}
               className={cn(
-                "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                "rounded-lg px-3 py-1.5 text-xs font-bold transition-colors",
                 statusFilter === f.value
-                  ? "bg-background text-foreground shadow-sm"
+                  ? "bg-card text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -222,7 +222,7 @@ export default function CompetitorMentionsPage() {
         <select
           value={sourceFilter}
           onChange={(e) => setSourceFilter(e.target.value as SourceFilter)}
-          className="rounded-md border border-input bg-background px-2.5 py-1.5 text-xs"
+          className="rounded-md border border-input bg-card px-2.5 py-1.5 text-xs"
         >
           <option value="">All sources</option>
           <option value="chat">Chat</option>
@@ -233,7 +233,7 @@ export default function CompetitorMentionsPage() {
           value={termFilter}
           onChange={(e) => setTermFilter(e.target.value)}
           placeholder="Filter by term…"
-          className="rounded-md border border-input bg-background px-2.5 py-1.5 text-xs"
+          className="rounded-md border border-input bg-card px-2.5 py-1.5 text-xs"
         />
 
         {statusFilter === "open" && selected.size > 0 && (
@@ -243,7 +243,7 @@ export default function CompetitorMentionsPage() {
               dismiss({ ids: Array.from(selected) }, "bulk:selected")
             }
             disabled={bulkBusy !== null}
-            className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+            className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-amber px-3 py-1.5 text-xs font-bold text-white hover:bg-amber/90 disabled:opacity-50"
           >
             {bulkBusy === "bulk:selected" ? (
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -256,7 +256,7 @@ export default function CompetitorMentionsPage() {
       </div>
 
       {error ? (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive-soft px-4 py-3 text-sm text-destructive-ink">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error.message}</span>
         </div>
@@ -267,7 +267,7 @@ export default function CompetitorMentionsPage() {
           {Array.from({ length: 5 }).map((_, i) => (
             <li
               key={i}
-              className="rounded-lg border border-border bg-card px-4 py-3"
+              className="rounded-2xl border border-border bg-card px-4 py-3"
             >
               <Skeleton className="h-5 w-1/3" />
               <Skeleton className="mt-2 h-3 w-full" />
@@ -276,7 +276,7 @@ export default function CompetitorMentionsPage() {
           ))}
         </ul>
       ) : items.length === 0 ? (
-        <p className="rounded-lg border border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
+        <p className="rounded-2xl border border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
           No mentions
           {statusFilter !== "all" ? ` matching "${statusFilter}"` : ""} yet.
         </p>
@@ -298,10 +298,10 @@ export default function CompetitorMentionsPage() {
               <li
                 key={row.id}
                 className={cn(
-                  "rounded-lg border bg-card px-4 py-3",
+                  "rounded-2xl border bg-card px-4 py-3",
                   row.status === "dismissed"
                     ? "border-border opacity-70"
-                    : "border-amber-200/70 dark:border-amber-500/30",
+                    : "border-amber/30",
                 )}
               >
                 <div className="flex items-start gap-3">
@@ -316,7 +316,7 @@ export default function CompetitorMentionsPage() {
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">
+                      <span className="rounded-full bg-amber-tint px-2 py-0.5 font-bold text-amber-ink">
                         {row.matched_term}
                       </span>
                       <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">
@@ -343,7 +343,7 @@ export default function CompetitorMentionsPage() {
                       {row.conversation_id && (
                         <a
                           href={`/chat/${row.conversation_id}`}
-                          className="font-medium text-primary hover:underline"
+                          className="font-bold text-brand hover:underline"
                         >
                           Open conversation →
                         </a>
@@ -351,7 +351,7 @@ export default function CompetitorMentionsPage() {
                       {row.agent_run_id && (
                         <a
                           href={`/admin/agent-runs?run_id=${row.agent_run_id}`}
-                          className="font-medium text-primary hover:underline"
+                          className="font-bold text-brand hover:underline"
                         >
                           Open agent run →
                         </a>
@@ -368,7 +368,7 @@ export default function CompetitorMentionsPage() {
                       type="button"
                       onClick={() => dismiss({ ids: [row.id] }, `row:${row.id}`)}
                       disabled={bulkBusy !== null}
-                      className="shrink-0 rounded-md border border-input bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                      className="shrink-0 rounded-full border border-input bg-card px-2.5 py-1 text-xs font-bold text-foreground hover:bg-muted disabled:opacity-50"
                     >
                       {bulkBusy === `row:${row.id}` ? (
                         <Loader2 className="h-3 w-3 animate-spin" />

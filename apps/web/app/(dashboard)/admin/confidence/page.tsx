@@ -32,27 +32,20 @@ export default function ConfidenceSettingsPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-6 md:p-8">
       <header>
-        <h1 className="text-xl font-semibold tracking-tight">
+        <h1 className="text-2xl font-extrabold tracking-tight">
           Confidence thresholds
         </h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Tune when the chat confidence badge shows green / amber / red, and
-          set an optional block tier below which AI-generated content cannot
-          be posted to Slack, sent as email, or exported to Notion / Google
-          Docs. Scores are the average vector-similarity (0–10) of the chunks
-          cited in the answer.
-        </p>
       </header>
 
       {error ? (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive-soft px-4 py-3 text-sm text-destructive-ink">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error.message}</span>
         </div>
       ) : null}
 
       {isLoading || !data ? (
-        <div className="space-y-6 rounded-xl border border-border bg-card p-6">
+        <div className="space-y-6 rounded-2xl border border-border bg-card p-6">
           {[0, 1, 2].map((i) => (
             <div key={i} className="space-y-3">
               <div className="flex items-baseline justify-between">
@@ -136,7 +129,7 @@ function ThresholdEditor({
 
   return (
     <div className="space-y-6">
-      <section className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">
+      <section className="space-y-4 rounded-2xl border border-border bg-card p-5">
         <SliderRow
           label="High confidence (green)"
           description={`Average score ≥ ${(high / 10).toFixed(1)}/10 shows green.`}
@@ -154,7 +147,7 @@ function ThresholdEditor({
         />
 
         <div className="border-t pt-4">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <p className="mb-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
             Preview
           </p>
           <div className="flex flex-wrap items-center gap-2">
@@ -168,16 +161,14 @@ function ThresholdEditor({
         </div>
       </section>
 
-      <section className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">
+      <section className="space-y-4 rounded-2xl border border-border bg-card p-5">
         <div className="flex items-start gap-3">
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber" />
           <div>
-            <h2 className="text-sm font-medium">Outbound write block</h2>
+            <h2 className="text-[15px] font-bold">Outbound write block</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Below this confidence score, AI-generated content cannot be
-              Published to external destinations (Slack, Gmail, Notion, Google
-              Docs). Set to 0 to disable. The badge stays the same — only the
-              publish actions are gated.
+              Published to external destinations. Set to 0 to disable.
             </p>
           </div>
         </div>
@@ -206,7 +197,7 @@ function ThresholdEditor({
           {(initial.defaults.medium * 10).toFixed(1)} /{" "}
           {(initial.defaults.block * 10).toFixed(1)})
         </button>
-        <Button onClick={save} disabled={!dirty || saving}>
+        <Button onClick={save} disabled={!dirty || saving} className="rounded-full">
           {saving ? (
             <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
           ) : (
@@ -264,9 +255,9 @@ function PreviewBadge({
   score: string;
 }) {
   const styles = {
-    high: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-    medium: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-    low: "bg-red-500/10 text-red-700 dark:text-red-300",
+    high: "bg-success-tint text-success-ink",
+    medium: "bg-amber-tint text-amber-ink",
+    low: "bg-destructive-soft text-destructive-ink",
   } as const;
   const labels = { high: "High", medium: "Medium", low: "Low" } as const;
   return (

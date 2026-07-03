@@ -51,22 +51,22 @@ const STATUS_TABS: Array<{ key: string | null; label: string }> = [
 ];
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
-  pending: { label: "Pending", cls: "bg-amber-500/10 text-amber-700 dark:text-amber-300" },
-  drafted: { label: "Draft ready", cls: "bg-blue-500/10 text-blue-700 dark:text-blue-300" },
-  sent: { label: "Sent", cls: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
-  rejected: { label: "Rejected", cls: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400" },
-  drafting_failed: { label: "Failed", cls: "bg-red-500/10 text-red-700 dark:text-red-300" },
-  no_draft: { label: "Skipped (low conf.)", cls: "bg-zinc-500/10 text-zinc-600" },
+  pending: { label: "Pending", cls: "bg-amber-tint text-amber-ink" },
+  drafted: { label: "Draft ready", cls: "bg-brand-tint text-brand" },
+  sent: { label: "Sent", cls: "bg-success-tint text-success-ink" },
+  rejected: { label: "Rejected", cls: "bg-muted text-muted-foreground" },
+  drafting_failed: { label: "Failed", cls: "bg-destructive-soft text-destructive-ink" },
+  no_draft: { label: "Skipped (low conf.)", cls: "bg-muted text-muted-foreground" },
 };
 
 function confidenceBadge(score: number | null | undefined) {
   if (score === null || score === undefined) return null;
   const tone =
     score >= 7
-      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+      ? "bg-success-tint text-success-ink"
       : score >= 4
-        ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
-        : "bg-red-500/10 text-red-700 dark:text-red-300";
+        ? "bg-amber-tint text-amber-ink"
+        : "bg-destructive-soft text-destructive-ink";
   return (
     <Badge variant="outline" className={cn("font-mono text-[10px]", tone)}>
       <Sparkles className="mr-1 h-3 w-3" />
@@ -95,8 +95,8 @@ export default function SupportQueuePage() {
     <div className="mx-auto max-w-6xl px-6 py-8">
       <header className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-            <Inbox className="h-6 w-6" />
+          <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight">
+            <Inbox className="h-6 w-6 text-brand" />
             Support inbox
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -113,6 +113,7 @@ export default function SupportQueuePage() {
             size="sm"
             variant={statusFilter === tab.key ? "primary" : "outline"}
             onClick={() => setStatusFilter(tab.key)}
+            className="rounded-full"
           >
             {tab.label}
           </Button>
@@ -120,7 +121,7 @@ export default function SupportQueuePage() {
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 rounded-md border border-red-500/20 bg-red-500/5 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+        <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive-soft px-3 py-2 text-sm text-destructive-ink">
           <AlertCircle className="h-4 w-4" />
           {String(error.message || error)}
         </div>
@@ -129,30 +130,30 @@ export default function SupportQueuePage() {
       {isLoading && !data && (
         <div className="space-y-2">
           {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-16 w-full" />
+            <Skeleton key={i} className="h-16 w-full rounded-2xl" />
           ))}
         </div>
       )}
 
       {data && data.tickets.length === 0 && (
-        <div className="rounded-md border border-dashed py-12 text-center text-sm text-muted-foreground">
+        <div className="rounded-2xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">
           <Inbox className="mx-auto mb-2 h-8 w-8 opacity-50" />
           No tickets yet. Inbound emails to your org's address will appear here once classified.
         </div>
       )}
 
       {data && data.tickets.length > 0 && (
-        <div className="overflow-hidden rounded-md border">
+        <div className="overflow-hidden rounded-2xl border border-border">
           <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-sm">
-            <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
+            <thead className="bg-muted/60 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 text-left font-medium">From</th>
-                <th className="px-3 py-2 text-left font-medium">Subject</th>
-                <th className="px-3 py-2 text-left font-medium">Category</th>
-                <th className="px-3 py-2 text-left font-medium">AI confidence</th>
-                <th className="px-3 py-2 text-left font-medium">Status</th>
-                <th className="px-3 py-2 text-left font-medium">Created</th>
+                <th className="px-3 py-2 text-left">From</th>
+                <th className="px-3 py-2 text-left">Subject</th>
+                <th className="px-3 py-2 text-left">Category</th>
+                <th className="px-3 py-2 text-left">AI confidence</th>
+                <th className="px-3 py-2 text-left">Status</th>
+                <th className="px-3 py-2 text-left">Created</th>
                 <th />
               </tr>
             </thead>
@@ -202,7 +203,7 @@ export default function SupportQueuePage() {
                     <td className="px-3 py-2">
                       <Link
                         href={`/admin/support/${t.id}`}
-                        className="inline-flex items-center text-sm text-primary hover:underline"
+                        className="inline-flex items-center text-sm font-bold text-brand hover:underline"
                       >
                         Review <ChevronRight className="h-3 w-3" />
                       </Link>

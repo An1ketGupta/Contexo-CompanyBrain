@@ -46,8 +46,8 @@ export default function ModerationPage() {
     <div className="mx-auto max-w-4xl space-y-6 p-6 md:p-8">
       <header>
         <div className="flex items-center gap-2">
-          <Shield className="h-5 w-5 text-primary" />
-          <h1 className="text-xl font-semibold tracking-tight">
+          <Shield className="h-5 w-5 text-brand" />
+          <h1 className="text-2xl font-extrabold tracking-tight">
             Content moderation
           </h1>
         </div>
@@ -57,16 +57,16 @@ export default function ModerationPage() {
         </p>
       </header>
 
-      <div className="flex gap-1 rounded-lg bg-muted p-1 w-fit">
+      <div className="flex w-fit gap-1 rounded-xl bg-muted p-1">
         {FILTERS.map((f) => (
           <button
             key={f.value}
             type="button"
             onClick={() => setFilter(f.value)}
             className={cn(
-              "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+              "rounded-lg px-3 py-1.5 text-xs font-bold transition-colors",
               filter === f.value
-                ? "bg-background text-foreground shadow-sm"
+                ? "bg-card text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
@@ -76,7 +76,7 @@ export default function ModerationPage() {
       </div>
 
       {error ? (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive-soft px-4 py-3 text-sm text-destructive-ink">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error.message}</span>
         </div>
@@ -87,7 +87,7 @@ export default function ModerationPage() {
           {Array.from({ length: 5 }).map((_, i) => (
             <li
               key={i}
-              className="rounded-lg border border-border bg-card px-4 py-3"
+              className="rounded-2xl border border-border bg-card px-4 py-3"
             >
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1 space-y-2">
@@ -103,7 +103,7 @@ export default function ModerationPage() {
           ))}
         </ul>
       ) : data.length === 0 ? (
-        <p className="rounded-lg border border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
+        <p className="rounded-2xl border border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
           No moderation events
           {filter !== "all" ? ` matching "${filter}"` : ""} yet. Quiet is good.
         </p>
@@ -112,7 +112,7 @@ export default function ModerationPage() {
           {data.map((log) => (
             <li
               key={log.id}
-              className="rounded-lg border border-border bg-card px-4 py-3"
+              className="rounded-2xl border border-border bg-card px-4 py-3"
             >
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
@@ -128,10 +128,10 @@ export default function ModerationPage() {
                 <div className="flex shrink-0 flex-col items-end gap-1.5">
                   <span
                     className={cn(
-                      "rounded-full px-2 py-0.5 text-xs font-medium",
+                      "rounded-full px-2 py-0.5 text-xs font-bold",
                       log.result === "blocked"
-                        ? "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300"
-                        : "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
+                        ? "bg-destructive-soft text-destructive-ink"
+                        : "bg-amber-tint text-amber-ink",
                     )}
                   >
                     {log.result}
