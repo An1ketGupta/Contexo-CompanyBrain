@@ -63,8 +63,7 @@ export function DeleteDocumentDialog({
           <AlertDialogTitle>Delete this document?</AlertDialogTitle>
           <AlertDialogDescription>
             <span className="font-medium text-foreground">{document.name}</span>{" "}
-            and all of its chunks will be removed. The AI will no longer have
-            this context when answering questions. This can&apos;t be undone.
+            and all of its chunks will be removed.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

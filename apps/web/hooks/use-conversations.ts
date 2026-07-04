@@ -22,6 +22,9 @@ export interface ConversationSummary {
   is_archived?: boolean;
   archived_at?: string | null;
   archive_reason?: string | null;
+  // Migration 058 — team channels live in the same conversations table. The
+  // sidebar groups these into their own "Channels" section.
+  is_channel?: boolean;
   created_at: string;
   updated_at: string;
 }

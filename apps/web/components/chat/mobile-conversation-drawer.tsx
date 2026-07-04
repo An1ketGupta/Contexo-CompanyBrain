@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Archive,
+  Hash,
   MessageSquare,
   MessageSquarePlus,
   Pin,
@@ -62,7 +63,8 @@ export function MobileConversationDrawer({ activeId }: MobileConversationDrawerP
   const [deleting, setDeleting] = useState(false);
 
   const pinned = conversations.filter((c) => c.is_pinned);
-  const other = conversations.filter((c) => !c.is_pinned);
+  const channels = conversations.filter((c) => !c.is_pinned && c.is_channel);
+  const other = conversations.filter((c) => !c.is_pinned && !c.is_channel);
 
   const togglePin = async (c: ConversationSummary) => {
     try {
@@ -188,9 +190,30 @@ export function MobileConversationDrawer({ activeId }: MobileConversationDrawerP
                     />
                   ))}
                 </ul>
-                {!searching && other.length > 0 && (
+                {!searching && channels.length > 0 && (
                   <>
                     {pinned.length > 0 && (
+                      <div className="my-1.5 h-px bg-border/60" />
+                    )}
+                    <SectionLabel>Channels</SectionLabel>
+                    <ul className="space-y-0.5">
+                      {channels.map((c) => (
+                        <MobileRow
+                          key={c.id}
+                          convo={c}
+                          active={c.id === activeId}
+                          onNavigate={() => setOpen(false)}
+                          onTogglePin={() => togglePin(c)}
+                          onArchive={() => doArchive(c)}
+                          onDelete={() => setConfirmDelete(c)}
+                        />
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {!searching && other.length > 0 && (
+                  <>
+                    {(pinned.length > 0 || channels.length > 0) && (
                       <div className="my-1.5 h-px bg-border/60" />
                     )}
                     <SectionLabel>Recent</SectionLabel>
@@ -293,6 +316,7 @@ function MobileRow({
   const title = (convo.title ?? "").trim() || "Untitled";
   const isPinned = !!convo.is_pinned;
   const isArchived = !!convo.is_archived;
+  const isChannel = !!convo.is_channel;
 
   return (
     <li className="flex items-center gap-1">
@@ -306,6 +330,9 @@ function MobileRow({
             : "text-foreground hover:bg-muted",
         )}
       >
+        {isChannel && !isPinned && (
+          <Hash className="h-3 w-3 shrink-0 text-muted-foreground/70" />
+        )}
         {isPinned && (
           <Pin className="h-3 w-3 shrink-0 fill-current text-primary" />
         )}

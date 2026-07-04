@@ -88,8 +88,7 @@ export function DocumentCardList({
                   <span className="font-medium text-foreground">
                     {confirmDelete.name}
                   </span>{" "}
-                  and all of its chunks will be removed. The AI will no longer
-                  have this context. This can&apos;t be undone.
+                  and all of its chunks will be removed.
                 </>
               )}
             </AlertDialogDescription>

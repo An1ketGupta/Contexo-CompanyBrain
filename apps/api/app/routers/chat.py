@@ -777,7 +777,7 @@ async def list_conversations(
             client.table("conversations")
             .select(
                 "id, title, is_pinned, is_archived, archived_at, "
-                "archive_reason, created_at, updated_at"
+                "archive_reason, is_channel, created_at, updated_at"
             )
         )
         if archived_only:
@@ -825,6 +825,7 @@ async def list_conversations(
             "is_pinned": bool(r.get("is_pinned", False)),
             "is_archived": bool(r.get("is_archived", False)),
             "archived_at": r.get("archived_at"),
+            "is_channel": bool(r.get("is_channel", False)),
             "created_at": r["created_at"],
             "updated_at": r["updated_at"],
         }

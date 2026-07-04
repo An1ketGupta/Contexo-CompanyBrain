@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Archive,
+  Hash,
   MessageSquarePlus,
   MoreHorizontal,
   Pencil,
@@ -67,7 +68,14 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
     useArchivedCount();
 
   const pinnedConvos = conversations.filter((c) => c.is_pinned);
-  const otherConvos = conversations.filter((c) => !c.is_pinned);
+  // Channels (migration 058) get their own section below Pinned. Pinned
+  // channels stay in Pinned so a user's manual pin still wins.
+  const channelConvos = conversations.filter(
+    (c) => !c.is_pinned && c.is_channel,
+  );
+  const otherConvos = conversations.filter(
+    (c) => !c.is_pinned && !c.is_channel,
+  );
 
   const togglePin = async (c: ConversationSummary) => {
     try {
@@ -203,6 +211,27 @@ export function ConversationSidebar({ activeId }: ConversationSidebarProps) {
                     />
                   ))}
                 </ul>
+                {(channelConvos.length > 0 || otherConvos.length > 0) && (
+                  <div className="my-1.5 h-px bg-border/60" />
+                )}
+              </>
+            )}
+            {channelConvos.length > 0 && (
+              <>
+                <SectionLabel>Channels</SectionLabel>
+                <ul className="space-y-0.5">
+                  {channelConvos.map((c) => (
+                    <ConversationRow
+                      key={c.id}
+                      convo={c}
+                      active={c.id === activeId}
+                      onRename={() => setRenaming(c)}
+                      onDelete={() => setConfirmDelete(c)}
+                      onTogglePin={() => togglePin(c)}
+                      onArchive={() => doArchive(c)}
+                    />
+                  ))}
+                </ul>
                 {otherConvos.length > 0 && (
                   <div className="my-1.5 h-px bg-border/60" />
                 )}
@@ -319,6 +348,7 @@ function ConversationRow({
   const title = (convo.title ?? "").trim() || "Untitled";
   const isPinned = !!convo.is_pinned;
   const isArchived = !!convo.is_archived;
+  const isChannel = !!convo.is_channel;
 
   return (
     <li className="group relative">
@@ -331,6 +361,12 @@ function ConversationRow({
             : "text-muted-foreground hover:bg-muted hover:text-foreground",
         )}
       >
+        {isChannel && !isPinned && (
+          <Hash
+            className="h-3 w-3 shrink-0 text-muted-foreground/70"
+            aria-label="Channel"
+          />
+        )}
         {isPinned && (
           <Pin
             className="h-3 w-3 shrink-0 fill-current text-primary"

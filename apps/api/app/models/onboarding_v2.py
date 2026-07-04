@@ -233,14 +233,26 @@ class ImportTemplateFromDriveRequest(BaseModel):
 
 
 class TemplateMappingItem(BaseModel):
-    """One blank-text → variable mapping. The analyzer proposes these and HR
-    edits/confirms each one before they are applied to the DOCX."""
+    """One blank → variable mapping. The analyzer proposes these and HR
+    edits/confirms each one before they are applied to the DOCX.
+
+    `paragraph_index`/`start_offset`/`end_offset` locate the exact blank span
+    in the canonical paragraph enumeration (see `_canonical_paragraphs`); the
+    apply step substitutes by that position, not by re-finding `blank_text`.
+    `blank_text` is retained for HR-readability and as a drift safety-check at
+    apply time — if the text at that offset no longer equals `blank_text`
+    (e.g. the block was edited in between) the mapping is skipped rather than
+    corrupting the document. The UI must round-trip the offset fields
+    unchanged, exactly as it already does with `TemplateTextBlock.index`."""
 
     blank_text: str = Field(..., min_length=1, max_length=500)
     variable: str = Field(..., min_length=1, max_length=80)
     context_before: str = Field(default="", max_length=200)
     context_after: str = Field(default="", max_length=200)
     confidence: str = Field(default="medium", pattern=r"^(high|medium|low)$")
+    paragraph_index: int = Field(..., ge=0)
+    start_offset: int = Field(..., ge=0)
+    end_offset: int = Field(..., ge=0)
 
 
 class TemplateAnalyzeResponse(BaseModel):
@@ -277,6 +289,9 @@ class TemplateApplyMappingsResponse(BaseModel):
     document_id: str
     template_kind: str
     applied_count: int
+    # Mappings dropped at apply time (stale offset / drifted text). 0 in the
+    # normal analyze→apply flow; >0 only if the document changed in between.
+    skipped_count: int = 0
     preview_url: str | None = None
 
 

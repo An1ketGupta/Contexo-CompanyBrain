@@ -2233,9 +2233,11 @@ async def analyze_template(
 
     from app.services.agents.onboarding_v2.template_analyzer import (
         TemplateAnalyzerError,
+        classify_candidates,
         extract_text,
+        find_blank_candidates,
         has_jinja_placeholders,
-        propose_mappings,
+        merge_classifications,
     )
     from app.services.agents.onboarding_v2.template_vars import TEMPLATE_VARIABLES
 
@@ -2260,15 +2262,23 @@ async def analyze_template(
         for v in TEMPLATE_VARIABLES
     ]
 
-    # Always run the LLM analysis — a template can have BOTH `{{ }}` placeholders
-    # (already templated) AND blank spots (still need mapping). The prompt
-    # instructs the model to skip Jinja regions and only propose mappings for
-    # remaining blanks. `has_placeholders` becomes informational, not a
-    # short-circuit. When `mappings == []` and `has_placeholders == True`,
-    # the UI shows "your template is fully templated".
+    # Deterministically locate blanks first, then let the LLM only classify
+    # each one (variable or skip). A template can have BOTH `{{ }}` placeholders
+    # (already templated) AND blank spots — the detector drops candidates that
+    # overlap existing placeholders, so `has_placeholders` stays informational,
+    # not a short-circuit. When `mappings == []` and `has_placeholders == True`
+    # the UI shows "your template is fully templated". With no blanks at all we
+    # skip the LLM call entirely.
     warning: str | None = None
     try:
-        proposed = await propose_mappings(docx_text=text, template_kind=template_kind)
+        candidates = find_blank_candidates(docx_bytes)
+        if candidates:
+            classifications = await classify_candidates(
+                candidates=candidates, template_kind=template_kind
+            )
+            proposed = merge_classifications(candidates, classifications)
+        else:
+            proposed = []
     except TemplateAnalyzerError as exc:
         log.warning("template_analyze.llm_failed doc=%s err=%s", document_id, exc)
         proposed = []
@@ -2294,6 +2304,9 @@ async def analyze_template(
                     context_before=(m.context_before or "")[:200],
                     context_after=(m.context_after or "")[:200],
                     confidence=m.confidence if m.confidence in ("high", "medium", "low") else "medium",
+                    paragraph_index=m.paragraph_index,
+                    start_offset=m.start_offset,
+                    end_offset=m.end_offset,
                 )
             )
         except Exception as exc:  # noqa: BLE001
@@ -2360,14 +2373,26 @@ async def apply_template_mappings(
             context_before=m.context_before,
             context_after=m.context_after,
             confidence=m.confidence,
+            paragraph_index=m.paragraph_index,
+            start_offset=m.start_offset,
+            end_offset=m.end_offset,
         )
         for m in body.mappings
     ]
 
     try:
-        new_docx = apply_mappings(docx_bytes=docx_bytes, mappings=mappings)
+        new_docx, skipped = apply_mappings(docx_bytes=docx_bytes, mappings=mappings)
     except TemplateAnalyzerError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+
+    if skipped:
+        # Partial skip — the document drifted from what was analysed. Not fatal
+        # (an all-skipped apply already raised above), but log it so it's not
+        # silent the way phantom-blank drops used to be.
+        log.info(
+            "template_apply.skipped_mappings doc=%s count=%d reasons=%r",
+            document_id, len(skipped), [s.reason for s in skipped][:10],
+        )
 
     # Dry-render with sample data so a broken template doesn't reach a run.
     try:
@@ -2424,8 +2449,8 @@ async def apply_template_mappings(
         log.info("template_apply.preview_render_skipped doc=%s err=%s", document_id, exc)
 
     log.info(
-        "template_apply.success org=%s doc=%s kind=%s mappings=%d",
-        org_id, document_id, template_kind, len(body.mappings),
+        "template_apply.success org=%s doc=%s kind=%s mappings=%d skipped=%d",
+        org_id, document_id, template_kind, len(body.mappings), len(skipped),
     )
 
     # Applying mappings is part of the iterate/preview loop, not the final
@@ -2443,7 +2468,8 @@ async def apply_template_mappings(
     return TemplateApplyMappingsResponse(
         document_id=document_id,
         template_kind=template_kind,
-        applied_count=len(body.mappings),
+        applied_count=len(body.mappings) - len(skipped),
+        skipped_count=len(skipped),
         preview_url=preview_url,
     )
 

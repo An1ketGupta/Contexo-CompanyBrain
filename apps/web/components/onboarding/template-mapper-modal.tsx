@@ -35,6 +35,12 @@ interface MappingItem {
   context_before: string;
   context_after: string;
   confidence: "high" | "medium" | "low";
+  // Exact position of the blank in the canonical paragraph enumeration. The
+  // UI treats these as opaque and round-trips them unchanged to apply-mappings
+  // (same pattern as TextBlock.index) — the backend substitutes by position.
+  paragraph_index: number;
+  start_offset: number;
+  end_offset: number;
 }
 
 interface AnalyzeResponse {
@@ -51,6 +57,7 @@ interface ApplyResponse {
   document_id: string;
   template_kind: string;
   applied_count: number;
+  skipped_count?: number;
   preview_url: string | null;
 }
 

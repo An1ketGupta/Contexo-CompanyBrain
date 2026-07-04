@@ -361,14 +361,17 @@ async def create_invitation(
             detail="Invite created but couldn't be read back.",
         )
 
+    # Build the accept URL up front so we can both email it and hand it back
+    # to the admin to copy + share manually (e.g. via Slack/DM).
+    from app.config import get_settings
+
+    settings = get_settings()
+    accept_url = f"{settings.app_url.rstrip('/')}/accept-invite?token={token_str}"
+
     # Fire the email event — actual send is handled by the Inngest worker so a
     # Resend outage doesn't 500 the invite request.
     try:
-        from app.config import get_settings
         from app.services.email import send_email_event  # local to avoid circular
-
-        settings = get_settings()
-        accept_url = f"{settings.app_url.rstrip('/')}/accept-invite?token={token_str}"
 
         # Resolve inviter display name (best-effort — fall back to None).
         inviter_name: str | None = None
@@ -421,6 +424,7 @@ async def create_invitation(
             "role": invite_row["role"],
             "expires_at": invite_row["expires_at"],
             "created_at": invite_row["created_at"],
+            "accept_url": accept_url,
         }
     }
 

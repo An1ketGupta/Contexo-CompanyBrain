@@ -7,11 +7,14 @@ import {
   AlertTriangle,
   Building2,
   CalendarClock,
+  Check,
   ChevronRight,
+  Copy,
   CreditCard,
   Download,
   FolderOpen,
   KeyRound,
+  Link2,
   Loader2,
   Mail,
   MoreHorizontal,
@@ -1039,6 +1042,11 @@ function TeamCard({
   const [removing, setRemoving] = useState<Member | null>(null);
   const [removeBusy, setRemoveBusy] = useState(false);
   const [roleBusy, setRoleBusy] = useState<string | null>(null);
+  const [lastInvite, setLastInvite] = useState<{
+    email: string;
+    url: string;
+  } | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const sendInvite = async () => {
     const trimmed = email.trim().toLowerCase();
@@ -1065,18 +1073,36 @@ function TeamCard({
       const data = (await res.json().catch(() => ({}))) as {
         message?: string;
         detail?: string;
+        invitation?: { accept_url?: string };
       };
       if (!res.ok) {
         toast.error(data.message ?? data.detail ?? "Failed to send invite.");
         return;
       }
       toast.success(`Invite sent to ${trimmed}.`);
+      const acceptUrl = data.invitation?.accept_url;
+      if (acceptUrl) {
+        setLastInvite({ email: trimmed, url: acceptUrl });
+        setLinkCopied(false);
+      }
       setEmail("");
       setRole("member");
       setRoleTitle("");
       invites.mutate();
     } finally {
       setSending(false);
+    }
+  };
+
+  const copyInviteLink = async () => {
+    if (!lastInvite) return;
+    try {
+      await navigator.clipboard.writeText(lastInvite.url);
+      setLinkCopied(true);
+      toast.success("Invite link copied.");
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      toast.error("Couldn't copy. Select the link and copy it manually.");
     }
   };
 
@@ -1383,6 +1409,41 @@ function TeamCard({
               Send invite
             </Button>
           </div>
+
+          {lastInvite && (
+            <div className="space-y-1.5 rounded-md border border-border bg-background p-3">
+              <div className="flex items-center gap-1.5 text-[11px] font-medium text-foreground">
+                <Link2 className="h-3.5 w-3.5" />
+                Invite link for {lastInvite.email}
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  readOnly
+                  value={lastInvite.url}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="h-8 flex-1 font-mono text-xs"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={copyInviteLink}
+                  className="shrink-0"
+                >
+                  {linkCopied ? (
+                    <Check className="h-3.5 w-3.5" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                  {linkCopied ? "Copied" : "Copy"}
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                We emailed this link too — copy it to share directly (e.g. via
+                Slack or DM). It expires in 15 days.
+              </p>
+            </div>
+          )}
         </div>
       )}
     </Card>
@@ -1613,7 +1674,7 @@ function AIInstructionsCard({ canEdit }: { canEdit: boolean }) {
       title="AI instructions"
       description={
         canEdit
-          ? "Context prepended to every AI response. Use it to describe your company, set tone guidelines, or specify things the AI should never mention."
+          ? "Use it to describe your company, set tone guidelines, or specify things the AI should never mention."
           : "Org-wide context the AI uses on every response. Only workspace admins can change this."
       }
     >

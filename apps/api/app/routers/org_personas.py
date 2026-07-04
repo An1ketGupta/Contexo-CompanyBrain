@@ -12,7 +12,9 @@ RLS does the heavy lifting:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -20,6 +22,8 @@ from pydantic import BaseModel, Field
 
 from app.auth import verify_jwt
 from app.database import get_user_client
+from app.services.llm.client import get_llm_client
+from app.services.llm.types import Message
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +63,16 @@ class PersonaCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
     description: str | None = Field(default=None, max_length=240)
     instructions: str = Field(..., min_length=10, max_length=2000)
+
+
+class PersonaEnhanceRequest(BaseModel):
+    name: str | None = Field(default=None, max_length=80)
+    draft: str = Field(..., min_length=3, max_length=4000)
+
+
+class PersonaEnhanceResponse(BaseModel):
+    description: str
+    instructions: str
 
 
 class PersonaUpdate(BaseModel):
@@ -123,6 +137,104 @@ async def create_persona(
             detail="Could not save persona.",
         ) from exc
     return {"persona": (res.data or [None])[0]}
+
+
+@router.post("/enhance")
+async def enhance_persona(
+    body: PersonaEnhanceRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Feature 1.11 follow-up — turn a rough one-liner into a structured
+    persona overlay (bias / tone / format / guardrail) before it's saved.
+
+    Admin-gated for the same reason create/update are: this is a write-path
+    preview step, not a general chat call, so we don't want it exercised by
+    every org member.
+    """
+    _, user_id, token = _require_org(current_user)
+    client = get_user_client(token)
+    await _require_admin(client, user_id)
+
+    enhanced = await _enhance_persona_with_llm(name=body.name, draft=body.draft)
+    return {"persona": enhanced.model_dump()}
+
+
+def _parse_persona_json(text: str) -> dict[str, str]:
+    """Extract the JSON object from the LLM's response — mirrors the fence /
+    brace stripping used for sequence drafting so a stray ```json fence or
+    surrounding prose doesn't break the parse."""
+    cleaned = text.strip()
+    fence = re.search(r"```(?:json)?\s*(.*?)```", cleaned, re.DOTALL | re.IGNORECASE)
+    if fence:
+        cleaned = fence.group(1).strip()
+    else:
+        brace = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if brace:
+            cleaned = brace.group(0)
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"persona_llm_invalid_json: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("persona_llm_invalid_shape: expected a JSON object")
+    return data
+
+
+async def _enhance_persona_with_llm(
+    *, name: str | None, draft: str
+) -> PersonaEnhanceResponse:
+    label = (name or "").strip() or "this persona"
+    system = (
+        "You turn a rough one-line idea for a company AI persona into a precise "
+        "system-prompt overlay. The overlay is inserted verbatim into the AI's "
+        "system prompt as `USER ROLE: <name>. <your instructions>`, so write "
+        "instructions that stand alone without that prefix."
+    )
+    user_prompt = (
+        f"Persona name: {label}\n"
+        f"Rough draft from the admin: {draft.strip()}\n\n"
+        "Expand this into:\n"
+        "1. A one-line description (<=240 chars) summarizing who this persona is for.\n"
+        "2. Instructions (<=2000 chars, 3-5 sentences) that state: what to bias "
+        "retrieval toward, the answer format, the tone, and one guardrail "
+        "(something this persona should hand off rather than answer definitively).\n\n"
+        "Return STRICT JSON in this shape:\n"
+        '{"description": "...", "instructions": "..."}\n'
+        "Do not invent company-specific facts, document names, or tools you "
+        "weren't told about — keep it generic to the role described."
+    )
+
+    llm_client = get_llm_client()
+    response = await llm_client.complete(
+        messages=[Message(role="user", content=user_prompt)],
+        system_extra=system,
+        temperature=0.4,
+        replace_system_prompt=True,
+    )
+    text = (response.text or "").strip()
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AI didn't return a persona draft. Try again.",
+        )
+
+    try:
+        data = _parse_persona_json(text)
+    except RuntimeError as exc:
+        log.warning("persona_enhance_parse_failed", extra={"err": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Couldn't parse the AI's persona draft. Try again.",
+        ) from exc
+
+    description = str(data.get("description") or "").strip()[:240]
+    instructions = str(data.get("instructions") or "").strip()[:2000]
+    if not instructions or len(instructions) < 10:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AI's persona draft was too short. Try rephrasing your input.",
+        )
+    return PersonaEnhanceResponse(description=description, instructions=instructions)
 
 
 @router.patch("/{persona_id}")

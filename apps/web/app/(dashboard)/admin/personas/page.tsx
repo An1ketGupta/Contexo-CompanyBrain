@@ -5,8 +5,10 @@ import {
   AlertTriangle,
   Archive,
   ArchiveRestore,
+  Loader2,
   Pencil,
   Plus,
+  Sparkles,
   Trash2,
   Users,
 } from "lucide-react";
@@ -45,10 +47,7 @@ export default function AdminPersonasPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Shared personas</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Define AI personas any user in the org can adopt. Each persona is
-            a system-prompt overlay applied to that user&apos;s chat turns —
-            tone, structure, retrieval bias. Personas live alongside (not
-            instead of) the 6 built-ins.
+            Create AI personas that everyone in your team can use.
           </p>
         </div>
         <Button onClick={() => setEditing("new")}>
@@ -274,12 +273,42 @@ function PersonaDialog({
   const [description, setDescription] = useState(persona?.description ?? "");
   const [instructions, setInstructions] = useState(persona?.instructions ?? "");
   const [saving, setSaving] = useState(false);
+  const [enhancing, setEnhancing] = useState(false);
 
   const canSave =
     name.trim().length >= 1 &&
     name.trim().length <= 80 &&
     instructions.trim().length >= 10 &&
     instructions.trim().length <= 2000;
+  const canEnhance = instructions.trim().length >= 3 && !saving && !enhancing;
+
+  const enhance = async () => {
+    setEnhancing(true);
+    try {
+      const res = await fetch("/api/org-personas/enhance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: name.trim() || null,
+          draft: instructions.trim(),
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        persona?: { description?: string; instructions?: string };
+        message?: string;
+        detail?: string;
+      };
+      if (!res.ok || !data.persona) {
+        toast.error(data.message ?? data.detail ?? "Could not enhance persona.");
+        return;
+      }
+      setDescription(data.persona.description ?? "");
+      setInstructions(data.persona.instructions ?? "");
+      toast.success("Draft enhanced — review before saving.");
+    } finally {
+      setEnhancing(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -348,32 +377,57 @@ function PersonaDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="p-instr">
-              Instructions{" "}
-              <span className="text-muted-foreground">
-                ({instructions.length}/2000)
-              </span>
-            </Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="p-instr">
+                Instructions{" "}
+                <span className="text-muted-foreground">
+                  ({instructions.length}/2000)
+                </span>
+              </Label>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => void enhance()}
+                disabled={!canEnhance}
+                title="Expand your rough notes into a structured persona overlay"
+              >
+                {enhancing ? (
+                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                ) : (
+                  <Sparkles className="mr-1.5 h-3 w-3 text-violet" />
+                )}
+                Enhance with AI
+              </Button>
+            </div>
             <Textarea
               id="p-instr"
               value={instructions}
               maxLength={2000}
               rows={8}
-              placeholder="USER ROLE: Customer Success. Bias retrieval toward… Format answers as… Tone…"
+              placeholder="Rough idea is fine — e.g. 'acts as the marketing lead for our org'. Click Enhance with AI to expand it."
               onChange={(e) => setInstructions(e.target.value)}
             />
             <p className="text-[11px] text-muted-foreground">
-              Tip: the most useful overlays state what to bias retrieval
-              toward, the answer format, and the tone in 3-5 sentences.
+              Tip: write a rough one-liner and click{" "}
+              <span className="font-medium text-foreground">
+                Enhance with AI
+              </span>{" "}
+              — it expands your idea into what to bias retrieval toward, the
+              answer format, and the tone. Review the result before saving.
             </p>
           </div>
         </div>
 
         <div className="mt-6 flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose} disabled={saving}>
+          <Button variant="outline" onClick={onClose} disabled={saving || enhancing}>
             Cancel
           </Button>
-          <Button onClick={() => void save()} disabled={!canSave || saving}>
+          <Button
+            onClick={() => void save()}
+            disabled={!canSave || saving || enhancing}
+          >
             {saving ? "Saving…" : persona ? "Save changes" : "Create persona"}
           </Button>
         </div>

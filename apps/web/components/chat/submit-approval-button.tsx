@@ -255,11 +255,6 @@ function SubmitApprovalDialog({
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>Submit for approval</DialogTitle>
-          <DialogDescription>
-            Pick an approver. They&apos;ll be notified by email and Slack and
-            can approve or reject with one click. We execute the action only
-            after they approve.
-          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
