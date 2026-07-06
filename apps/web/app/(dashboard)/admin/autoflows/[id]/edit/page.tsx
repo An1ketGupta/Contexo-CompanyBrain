@@ -51,7 +51,7 @@ export default function EditAutoflowPage({ params }: { params: Promise<{ id: str
   if (error) {
     return (
       <div className="mx-auto max-w-3xl p-6">
-        <div className="flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
+        <div className="flex items-start gap-3 rounded-xl border border-destructive/20 bg-destructive-soft p-4 text-sm text-destructive-ink">
           <AlertTriangle className="size-4 shrink-0" />
           <span>{(error as Error).message}</span>
         </div>

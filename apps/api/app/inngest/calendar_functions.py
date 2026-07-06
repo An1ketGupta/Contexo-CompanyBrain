@@ -20,7 +20,7 @@ Three functions:
       Call generate_meeting_prep_brief for one meeting.
 
 Cadence picked at every 15 minutes for both crons — Calendar Intelligence is
-not minute-sensitive (the user wants the brief ~2h before the meeting, not
+not minute-sensitive (the user wants the brief ~5h before the meeting, not
 exactly), and 15-min granularity keeps the worker churn modest for a side
 feature.
 """

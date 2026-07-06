@@ -63,8 +63,8 @@ export default function CollectionsSettingsPage() {
         </Link>
         <div className="mt-2 flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">Collections</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <h1 className="text-3xl font-extrabold tracking-tight">Collections</h1>
+            <p className="mt-1 text-[15px] text-muted-foreground leading-relaxed max-w-[64ch]">
               Group documents by tag and pin chats to a collection for focused
               answers.
             </p>
@@ -79,7 +79,7 @@ export default function CollectionsSettingsPage() {
       </div>
 
       {!isAdmin && !userLoading && (
-        <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+        <div className="rounded-xl border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
           Only admins can create, edit, or delete collections.
         </div>
       )}
@@ -90,11 +90,11 @@ export default function CollectionsSettingsPage() {
           Loading collections…
         </div>
       ) : error ? (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <div className="rounded-2xl border border-destructive/20 bg-destructive-soft px-3 py-2 text-sm text-destructive-ink">
           {error}
         </div>
       ) : collections.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border bg-muted/30 px-6 py-10 text-center">
+        <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-6 py-12 text-center">
           <p className="text-sm font-medium text-foreground">No collections yet</p>
           <p className="mt-1 text-xs text-muted-foreground">
             Bundle related documents by tag, then pin a chat to that collection
@@ -112,7 +112,7 @@ export default function CollectionsSettingsPage() {
           {collections.map((col) => (
             <li
               key={col.id}
-              className="flex items-center gap-3 rounded-xl border border-border bg-background px-3 py-2.5"
+              className="flex items-center gap-3 rounded-2xl border border-border bg-card px-3 py-2.5"
             >
               <div
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold text-white"
@@ -252,9 +252,9 @@ function RfpApprovedCollectionSection({
   };
 
   return (
-    <div className="space-y-3 rounded-xl border border-border bg-muted/20 p-4">
+    <div className="space-y-3 rounded-2xl border border-border bg-card p-6">
       <div>
-        <h2 className="text-sm font-semibold">RFP-approved collection</h2>
+        <h2 className="text-[15px] font-bold">RFP-approved collection</h2>
         <p className="mt-1 text-xs text-muted-foreground">
           The RFP Agent uses this collection as the default retrieval scope, so customer-facing
           answers don&apos;t accidentally pull from internal-only documents. Leave unset to allow

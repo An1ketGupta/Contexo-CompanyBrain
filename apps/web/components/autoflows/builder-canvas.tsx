@@ -138,9 +138,9 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
     <button
       type="button"
       onClick={onAdd}
-      className="flex w-full flex-col items-center gap-2 rounded-xl border border-dashed bg-card/50 p-8 text-center transition-colors hover:bg-card"
+      className="flex w-full flex-col items-center gap-2 rounded-2xl border border-dashed border-border bg-muted/40 p-8 text-center transition-colors hover:bg-card"
     >
-      <span className="text-sm font-medium">Add your first action</span>
+      <span className="text-sm font-semibold">Add your first action</span>
       <span className="text-xs text-muted-foreground">
         Pick what should happen when this trigger fires.
       </span>

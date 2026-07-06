@@ -44,22 +44,22 @@ export default async function HelpArticlePage({
     <div className="mx-auto max-w-2xl px-4 py-8 md:py-10">
       <Link
         href="/help"
-        className="mb-6 inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        className="mb-6 inline-flex items-center gap-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
       >
-        <ChevronLeft className="h-4 w-4" />
+        <ChevronLeft className="size-4" />
         Help Center
       </Link>
 
-      <header className="mb-6">
-        <span className="text-xs font-semibold uppercase tracking-wider text-primary">
+      <header className="mb-7">
+        <span className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-brand">
           {article.frontmatter.category}
         </span>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">
+        <h1 className="mt-1.5 text-3xl font-extrabold tracking-tight">
           {article.frontmatter.title}
         </h1>
       </header>
 
-      <article className="text-foreground">
+      <article className="rounded-2xl border border-border bg-card p-6 text-foreground md:p-8">
         <Markdown>{article.body}</Markdown>
       </article>
 

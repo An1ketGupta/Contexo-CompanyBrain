@@ -49,7 +49,7 @@ export function TemplatesGallery({ open, onOpenChange, onPick }: TemplatesGaller
       <DialogContent className="max-h-[90dvh] max-w-3xl overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="size-5 text-primary" />
+            <Sparkles className="size-5 text-brand" />
             Start from a template
           </DialogTitle>
         </DialogHeader>
@@ -117,8 +117,10 @@ function CategoryPill({
       type="button"
       onClick={onClick}
       className={cn(
-        "rounded-full border px-3 py-1 text-xs transition-colors",
-        active ? "border-primary bg-primary text-primary-foreground" : "hover:border-foreground/30",
+        "rounded-full border px-3 py-1 text-xs font-semibold transition-colors",
+        active
+          ? "border-primary bg-primary text-primary-foreground"
+          : "border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground",
       )}
     >
       {label}
@@ -144,14 +146,14 @@ function TemplateCard({
     <button
       type="button"
       onClick={onPick}
-      className="group flex flex-col items-start gap-3 rounded-lg border bg-card p-4 text-left transition-all hover:border-primary hover:shadow-md"
+      className="group flex flex-col items-start gap-3 rounded-2xl border border-border bg-card p-4 text-left transition-all hover:border-brand hover:shadow-md"
     >
       <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-tint text-brand">
           <Icon className="size-4" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium leading-tight">{template.title}</p>
+          <p className="text-sm font-semibold leading-tight">{template.title}</p>
           <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{template.tagline}</p>
         </div>
       </div>

@@ -68,10 +68,10 @@ async def sync_upcoming_meetings(
     upserted: list[dict[str, Any]] = []
 
     for ev in events:
-        # Compute prep_brief_available_at = start - 2 hours.
+        # Compute prep_brief_available_at = start - 5 hours.
         start_dt = _parse_iso(ev["start"])
         brief_available_at = (
-            (start_dt - timedelta(hours=2)).isoformat() if start_dt else None
+            (start_dt - timedelta(hours=5)).isoformat() if start_dt else None
         )
         row = {
             "org_id": org_id,
@@ -124,7 +124,7 @@ def _parse_iso(value: str) -> datetime | None:
 # ── Prep brief generation ───────────────────────────────────────────────────
 
 
-_BRIEF_SYSTEM = """You are a chief of staff prepping the user for a meeting in <2 hours. Produce a tight, actionable brief grounded ONLY in the company's internal context provided.
+_BRIEF_SYSTEM = """You are a chief of staff prepping the user for a meeting in <5 hours. Produce a tight, actionable brief grounded ONLY in the company's internal context provided.
 
 Sections to produce (each ≤80 words):
 - executive_summary: the meeting in one paragraph, decisions needed, what good looks like

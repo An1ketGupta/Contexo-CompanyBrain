@@ -43,36 +43,38 @@ export function ArticleFeedback({ slug }: { slug: string }) {
 
   if (vote) {
     return (
-      <div className="mt-10 flex items-center gap-2 border-t border-border pt-6 text-sm text-muted-foreground">
-        <Check className="h-4 w-4 text-emerald-500" />
-        Thanks for the feedback.
+      <div className="mt-10 flex items-start gap-3 rounded-xl border border-success-ink/20 bg-success-tint p-4">
+        <Check className="mt-0.5 size-4 shrink-0 text-success-ink" />
+        <p className="text-sm font-semibold text-success-ink">Thanks for the feedback.</p>
       </div>
     );
   }
 
   return (
     <div className="mt-10 border-t border-border pt-6">
-      <p className="text-sm text-muted-foreground">Was this helpful?</p>
-      <div className="mt-2 flex gap-2">
+      <p className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+        Was this helpful?
+      </p>
+      <div className="mt-3 flex gap-2">
         <button
           type="button"
           onClick={() => cast("up")}
           className={cn(
-            "inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm",
-            "transition-colors hover:bg-muted hover:text-foreground text-muted-foreground",
+            "inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-1.5 text-sm font-semibold",
+            "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
           )}
         >
-          <ThumbsUp className="h-3.5 w-3.5" /> Yes
+          <ThumbsUp className="size-3.5" /> Yes
         </button>
         <button
           type="button"
           onClick={() => cast("down")}
           className={cn(
-            "inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm",
-            "transition-colors hover:bg-muted hover:text-foreground text-muted-foreground",
+            "inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-1.5 text-sm font-semibold",
+            "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
           )}
         >
-          <ThumbsDown className="h-3.5 w-3.5" /> No
+          <ThumbsDown className="size-3.5" /> No
         </button>
       </div>
     </div>

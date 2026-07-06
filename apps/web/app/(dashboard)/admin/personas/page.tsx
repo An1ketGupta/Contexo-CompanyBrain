@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -30,6 +31,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOrgPersonas, type OrgPersona } from "@/hooks/use-org-personas";
+import { cn } from "@/lib/utils";
 
 export default function AdminPersonasPage() {
   const { personas, loading, error, refresh } = useOrgPersonas({
@@ -43,10 +45,10 @@ export default function AdminPersonasPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6 md:p-8">
-      <header className="flex items-start justify-between gap-4">
+      <header className="flex flex-wrap items-start justify-between gap-5">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Shared personas</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
+          <h1 className="text-3xl font-extrabold tracking-tight">Shared personas</h1>
+          <p className="mt-1 max-w-[64ch] text-[15px] leading-relaxed text-muted-foreground">
             Create AI personas that everyone in your team can use.
           </p>
         </div>
@@ -56,16 +58,16 @@ export default function AdminPersonasPage() {
       </header>
 
       {error ? (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>Could not load personas. Refresh to retry.</span>
+        <div className="flex items-start gap-3 rounded-xl border border-destructive/20 bg-destructive-soft px-4 py-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive-ink" />
+          <span className="text-sm text-body">Could not load personas. Refresh to retry.</span>
         </div>
       ) : null}
 
       {loading ? (
         <div className="space-y-3">
           {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-24 w-full rounded-lg" />
+            <Skeleton key={i} className="h-24 w-full rounded-2xl" />
           ))}
         </div>
       ) : (
@@ -88,7 +90,7 @@ export default function AdminPersonasPage() {
 
           {archived.length > 0 && (
             <section className="space-y-3 pt-4">
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <h2 className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
                 Archived
               </h2>
               {archived.map((p) => (
@@ -156,9 +158,9 @@ export default function AdminPersonasPage() {
 
 function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
-    <div className="rounded-lg border border-dashed border-border bg-muted/30 px-6 py-10 text-center">
+    <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-6 py-12 text-center">
       <Users className="mx-auto h-8 w-8 text-muted-foreground" />
-      <h3 className="mt-3 text-sm font-medium">No shared personas yet</h3>
+      <h3 className="mt-3 text-sm font-semibold">No shared personas yet</h3>
       <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
         Create one for any function your team has that doesn&apos;t fit the
         built-in roles — Customer Success, Legal, Research, Marketing.
@@ -205,20 +207,16 @@ function PersonaRow({
   };
 
   return (
-    <div
-      className={`rounded-lg border border-border bg-card p-4 ${
-        archived ? "opacity-70" : ""
-      }`}
-    >
+    <Card className={cn("p-4", archived && "opacity-70")}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold">{persona.name}</h3>
+          <h3 className="text-[15px] font-bold">{persona.name}</h3>
           {persona.description && (
             <p className="mt-0.5 text-xs text-muted-foreground">
               {persona.description}
             </p>
           )}
-          <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-xs text-foreground/80">
+          <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-xs text-body">
             {persona.instructions}
           </p>
         </div>
@@ -252,11 +250,11 @@ function PersonaRow({
             disabled={busy}
             aria-label="Delete"
           >
-            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+            <Trash2 className="h-3.5 w-3.5 text-destructive-ink" />
           </Button>
         </div>
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -342,9 +340,9 @@ function PersonaDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-lg border border-border bg-card p-6 shadow-xl">
-        <h2 className="text-lg font-semibold">
+    <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/40 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-xl">
+        <h2 className="text-[15px] font-bold">
           {persona ? "Edit persona" : "New shared persona"}
         </h2>
         <p className="mt-1 text-xs text-muted-foreground">

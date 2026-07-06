@@ -22,10 +22,10 @@ interface ActionPickerProps {
 }
 
 const CATEGORY_STYLES = {
-  ai: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300",
-  notify: "bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300",
-  integrations: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
-  control: "bg-orange-100 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300",
+  ai: "bg-violet-tint text-violet",
+  notify: "bg-brand-tint text-brand",
+  integrations: "bg-success-tint text-success-ink",
+  control: "bg-amber-tint text-amber-ink",
 };
 
 export function ActionPicker({ open, onOpenChange, onPick }: ActionPickerProps) {
@@ -70,7 +70,7 @@ export function ActionPicker({ open, onOpenChange, onPick }: ActionPickerProps) 
             if (!items.length) return null;
             return (
               <div key={cat.id}>
-                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <div className="mb-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
                   {cat.label}
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
@@ -84,15 +84,15 @@ export function ActionPicker({ open, onOpenChange, onPick }: ActionPickerProps) 
                         disabled={disabled}
                         onClick={() => handlePick(a.type)}
                         className={cn(
-                          "group flex items-start gap-3 rounded-lg border bg-card p-3 text-left transition-all",
+                          "group flex items-start gap-3 rounded-2xl border border-border bg-card p-3 text-left transition-all",
                           disabled
                             ? "cursor-not-allowed opacity-50"
-                            : "hover:border-primary hover:shadow-md",
+                            : "hover:border-brand hover:shadow-md",
                         )}
                       >
                         <div
                           className={cn(
-                            "flex h-9 w-9 shrink-0 items-center justify-center rounded-md",
+                            "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
                             CATEGORY_STYLES[a.category],
                           )}
                         >
@@ -100,7 +100,7 @@ export function ActionPicker({ open, onOpenChange, onPick }: ActionPickerProps) 
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium">{a.label}</p>
+                            <p className="text-sm font-semibold">{a.label}</p>
                             {!a.available && (
                               <Badge variant="outline" className="text-[10px]">Soon</Badge>
                             )}

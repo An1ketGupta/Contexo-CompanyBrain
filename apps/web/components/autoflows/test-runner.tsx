@@ -79,7 +79,7 @@ export function TestRunner({ open, onOpenChange, autoflowId, draft }: TestRunner
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <Label className="text-xs font-medium">Mock trigger payload</Label>
+            <Label className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">Mock trigger payload</Label>
             <Button variant="ghost" size="sm" onClick={resetPayload} className="h-7 text-xs">
               Reset sample
             </Button>
@@ -97,11 +97,11 @@ export function TestRunner({ open, onOpenChange, autoflowId, draft }: TestRunner
             {running ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
             Run test
           </Button>
-          {error && <span className="text-xs text-destructive">{error}</span>}
+          {error && <span className="text-xs text-destructive-ink">{error}</span>}
         </div>
 
         {result && (
-          <div className="flex-1 space-y-3 overflow-y-auto rounded border bg-muted/20 p-3">
+          <div className="flex-1 space-y-3 overflow-y-auto rounded-2xl border border-border bg-muted/40 p-4">
             <div className="flex items-center gap-2">
               <StatusBadge status={result.status ?? "unknown"} />
               {result.run_id && (
@@ -111,7 +111,7 @@ export function TestRunner({ open, onOpenChange, autoflowId, draft }: TestRunner
               )}
             </div>
             {result.error_message && (
-              <div className="rounded border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+              <div className="rounded-xl border border-destructive/20 bg-destructive-soft p-3 text-xs text-destructive-ink">
                 {result.error_message}
               </div>
             )}
@@ -157,16 +157,16 @@ function StepTimeline({
         const action = actions.find((a) => a.order === step.index);
         const entry = action ? getAction(action.type) : null;
         return (
-          <li key={step.index} className="rounded border bg-background p-2 text-xs">
+          <li key={step.index} className="rounded-xl border border-border bg-background p-3 text-xs">
             <div className="flex items-center gap-2">
               <StatusBadge status={step.status} />
               <span className="font-mono text-muted-foreground">
                 {step.index + 1}. {entry?.shortLabel ?? step.type}
               </span>
             </div>
-            {step.error && <p className="mt-1 text-destructive">{step.error}</p>}
+            {step.error && <p className="mt-1 text-destructive-ink">{step.error}</p>}
             {step.output && Object.keys(step.output).length > 0 && (
-              <pre className="mt-1 overflow-x-auto rounded bg-muted/50 p-2 text-[10px]">
+              <pre className="mt-1 overflow-x-auto rounded-lg bg-muted/50 p-2 text-[10px]">
                 {JSON.stringify(step.output, null, 2)}
               </pre>
             )}

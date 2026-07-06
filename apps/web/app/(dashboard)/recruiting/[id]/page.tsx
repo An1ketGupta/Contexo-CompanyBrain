@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 
 import { Markdown } from "@/components/chat/markdown";
+import { cn } from "@/lib/utils";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -669,12 +670,14 @@ export default function RequisitionDetailPage() {
         <section className="rounded-2xl border border-border bg-card p-6">
           <h2 className="mb-4 text-base font-extrabold tracking-tight">Publish</h2>
           <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2 md:col-span-2">
-              <Label>Posting destinations</Label>
-              <p className="text-xs text-muted-foreground">
-                Pick one or more. The job posts to every checked destination in
-                parallel; if any one fails the others still go through.
-              </p>
+            <div className="space-y-3 md:col-span-2">
+              <div className="space-y-1">
+                <Label>Posting destinations</Label>
+                <p className="text-xs text-muted-foreground">
+                  Pick one or more. The job posts to every checked destination
+                  in parallel; if any one fails the others still go through.
+                </p>
+              </div>
               {/* Grouped by kind so the recruiter sees ATSes (internal
                   hiring systems) and Job boards (external candidate reach)
                   as visually distinct sets. Backed by the destination_type
@@ -683,8 +686,8 @@ export default function RequisitionDetailPage() {
                 const items = POSTING_DESTINATIONS.filter((p) => p.kind === kind);
                 if (items.length === 0) return null;
                 return (
-                  <div key={kind} className="space-y-1 pt-1">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                  <div key={kind} className="space-y-2">
+                    <div className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
                       {kind === "ats" ? "ATS platforms" : "Job boards"}
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -693,11 +696,12 @@ export default function RequisitionDetailPage() {
                         return (
                           <label
                             key={p.value}
-                            className={`relative flex cursor-pointer items-center gap-2 rounded border px-3 py-2 text-sm transition ${
+                            className={cn(
+                              "flex cursor-pointer items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium transition-colors",
                               active
-                                ? "border-foreground bg-foreground text-background"
-                                : "border-input bg-background hover:border-foreground/50"
-                            }`}
+                                ? "border-accent bg-accent text-accent-foreground"
+                                : "border-input bg-background text-foreground hover:border-foreground/40 hover:bg-muted/40",
+                            )}
                           >
                             <input
                               type="checkbox"
@@ -705,15 +709,11 @@ export default function RequisitionDetailPage() {
                               checked={active}
                               onChange={() => toggleAts(p.value)}
                             />
-                            <span
-                              aria-hidden
-                              className={`h-3 w-3 rounded-sm border ${
-                                active
-                                  ? "border-background bg-background"
-                                  : "border-foreground/40"
-                              }`}
-                            />
+                            <PlatformIcon platform={p.value} />
                             {p.label}
+                            {active && (
+                              <Check className="h-3.5 w-3.5 text-brand" aria-hidden />
+                            )}
                           </label>
                         );
                       })}

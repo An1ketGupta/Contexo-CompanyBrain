@@ -156,7 +156,7 @@ export function ScheduledReportDialog({
                   className={cn(
                     "rounded-lg border p-3 text-left transition-colors",
                     reportType === t.value
-                      ? "border-primary bg-primary/5"
+                      ? "border-brand bg-brand-tint"
                       : "border-border hover:border-foreground/30",
                   )}
                 >
@@ -179,7 +179,7 @@ export function ScheduledReportDialog({
                   className={cn(
                     "flex-1 rounded-md border px-3 py-2 text-sm capitalize transition-colors",
                     frequency === f
-                      ? "border-primary bg-primary/5"
+                      ? "border-brand bg-brand-tint"
                       : "border-border hover:border-foreground/30",
                   )}
                 >
@@ -202,7 +202,7 @@ export function ScheduledReportDialog({
                     className={cn(
                       "flex-1 rounded-md border py-1.5 text-xs font-medium transition-colors",
                       dayOfWeek === i
-                        ? "border-primary bg-primary/5"
+                        ? "border-brand bg-brand-tint"
                         : "border-border hover:border-foreground/30",
                     )}
                   >

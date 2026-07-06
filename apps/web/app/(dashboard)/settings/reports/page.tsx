@@ -126,9 +126,9 @@ export default function ScheduledReportsPage() {
         <div>
           <div className="flex items-center gap-2">
             <CalendarClock size={18} className="text-muted-foreground" />
-            <h1 className="text-xl font-semibold tracking-tight">Scheduled reports</h1>
+            <h1 className="text-3xl font-extrabold tracking-tight">Scheduled reports</h1>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1 text-[15px] text-muted-foreground leading-relaxed max-w-[64ch]">
             Automated usage + knowledge-health emails to anyone you choose.
           </p>
         </div>
@@ -147,13 +147,13 @@ export default function ScheduledReportsPage() {
       </header>
 
       {!isAdmin && (
-        <div className="rounded-xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+        <div className="rounded-2xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
           Only org admins can create or edit scheduled reports.
         </div>
       )}
 
       {error && (
-        <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+        <div className="rounded-2xl border border-destructive/20 bg-destructive-soft p-4 text-sm text-destructive-ink">
           {error.message}
         </div>
       )}
@@ -166,7 +166,7 @@ export default function ScheduledReportsPage() {
       )}
 
       {!isLoading && reports.length === 0 && (
-        <div className="rounded-xl border border-dashed border-border p-8 text-center">
+        <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-6 py-12 text-center">
           <CalendarClock className="mx-auto h-8 w-8 text-muted-foreground" />
           <p className="mt-3 text-sm font-medium">No scheduled reports yet</p>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -191,7 +191,7 @@ export default function ScheduledReportsPage() {
         {reports.map((r) => (
           <div
             key={r.id}
-            className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 shadow-sm"
+            className="flex items-center gap-3 rounded-2xl border border-border bg-card p-5"
           >
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
@@ -222,7 +222,7 @@ export default function ScheduledReportsPage() {
                   aria-label="Toggle active"
                 >
                   <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${
                       r.is_active ? "translate-x-4" : "translate-x-1"
                     }`}
                   />

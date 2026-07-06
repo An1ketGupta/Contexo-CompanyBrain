@@ -148,9 +148,6 @@ from app.routers import (
     channels as channels_router,
 )
 from app.routers import (
-    certifications as certifications_router,
-)
-from app.routers import (
     onboarding_v2 as onboarding_v2_router,
 )
 from app.routers import (
@@ -302,7 +299,6 @@ app.include_router(admin_quality_router.router)
 app.include_router(google_workspace_router.router)
 app.include_router(agent2_integrations_router.router)
 app.include_router(channels_router.router)
-app.include_router(certifications_router.router)
 app.include_router(onboarding_v2_router.router)
 app.include_router(sales_agent_router.router)
 app.include_router(interview_kits_router.router)

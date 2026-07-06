@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Multi-tenant SaaS **work execution platform** (not a chatbot). Companies upload their knowledge base; employees execute work tasks with full company context. Features: 10 integrations, compliance workflows, background agents, knowledge certifications, multiplayer channels, MCP server, Chrome extension.
+Multi-tenant SaaS **work execution platform** (not a chatbot). Companies upload their knowledge base; employees execute work tasks with full company context. Features: 10 integrations, compliance workflows, background agents, multiplayer channels, MCP server, Chrome extension.
 
 Stack: **Next.js** (App Router, React 19, TS5, Tailwind 4, shadcn/ui) + **FastAPI** (Python 3.12+) + **Supabase** (Postgres + pgvector + Auth + Storage) + **Chrome MV3** extension.
 

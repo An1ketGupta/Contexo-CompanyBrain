@@ -108,7 +108,7 @@ export function VariablePicker({
         )}
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-0">
-        <div className="border-b p-2">
+        <div className="border-b border-border p-2">
           <div className="relative">
             <Search className="absolute left-2.5 top-2 size-3.5 text-muted-foreground" />
             <Input

@@ -75,9 +75,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     label: "Meetings",
     items: [
-      { href: "/chat/meeting-prep", label: "Meeting prep", icon: CalendarDays },
       { href: "/meetings", label: "Meetings", icon: CalendarDays },
-      { href: "/calendar", label: "Upcoming", icon: CalendarDays },
       { href: "/action-items", label: "Action items", icon: ListChecks },
       { href: "/briefings", label: "Briefings", icon: Sparkles },
     ],
@@ -129,7 +127,6 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/admin/support", label: "Support inbox", icon: Inbox, adminOnly: true },
       { href: "/admin/agent-runs", label: "Agent runs", icon: Activity, adminOnly: true },
       { href: "/admin/compliance", label: "Compliance", icon: ShieldCheck, adminOnly: true },
-      { href: "/admin/certifications", label: "Certifications", icon: ClipboardCheck, adminOnly: true },
       { href: "/admin/competitor-mentions", label: "Competitors", icon: ShieldAlert, adminOnly: true },
       { href: "/admin/rate-limits", label: "Rate limits", icon: Gauge, adminOnly: true },
       { href: "/admin/embeddings", label: "Embeddings", icon: Brain, adminOnly: true },

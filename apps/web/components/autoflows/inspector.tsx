@@ -17,10 +17,10 @@ interface InspectorProps {
 export function Inspector({ draft, selected, onClose, onUpdate }: InspectorProps) {
   if (!selected) {
     return (
-      <aside className="hidden h-full w-[400px] shrink-0 border-l bg-card/50 lg:flex lg:flex-col">
+      <aside className="hidden h-full w-[400px] shrink-0 border-l border-border bg-muted/40 lg:flex lg:flex-col">
         <div className="flex items-center justify-center p-10 text-center">
           <div className="space-y-2 text-muted-foreground">
-            <p className="text-sm font-medium">Nothing selected</p>
+            <p className="text-sm font-semibold">Nothing selected</p>
             <p className="text-xs">
               Click the trigger or any step to edit it here.
             </p>
@@ -31,10 +31,10 @@ export function Inspector({ draft, selected, onClose, onUpdate }: InspectorProps
   }
 
   return (
-    <aside className="fixed inset-y-0 right-0 z-30 w-full max-w-[440px] border-l bg-background shadow-xl lg:static lg:z-auto lg:max-w-none lg:w-[440px] lg:shrink-0 lg:shadow-none">
+    <aside className="fixed inset-y-0 right-0 z-30 w-full max-w-[440px] border-l border-border bg-background shadow-xl lg:static lg:z-auto lg:max-w-none lg:w-[440px] lg:shrink-0 lg:shadow-none">
       <div className="flex h-full flex-col">
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <h2 className="text-sm font-semibold">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <h2 className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
             {selected.kind === "trigger" ? "Trigger settings" : "Step settings"}
           </h2>
           <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close inspector">

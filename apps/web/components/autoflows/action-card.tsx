@@ -20,10 +20,10 @@ interface ActionCardProps {
 }
 
 const CATEGORY_STYLES = {
-  ai: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300",
-  notify: "bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300",
-  integrations: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
-  control: "bg-orange-100 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300",
+  ai: "bg-violet-tint text-violet",
+  notify: "bg-brand-tint text-brand",
+  integrations: "bg-success-tint text-success-ink",
+  control: "bg-amber-tint text-amber-ink",
 };
 
 export function ActionCard({ step, index, selected, invalid, onClick, onDelete }: ActionCardProps) {
@@ -45,9 +45,9 @@ export function ActionCard({ step, index, selected, invalid, onClick, onDelete }
       ref={setNodeRef}
       style={style}
       className={cn(
-        "group relative rounded-xl border bg-card shadow-sm transition-all hover:shadow-md",
-        selected && "border-primary ring-2 ring-primary/30",
-        invalid && !selected && "border-destructive/60",
+        "group relative rounded-2xl border border-border bg-card shadow-sm transition-all hover:shadow-md",
+        selected && "border-brand ring-2 ring-brand/25",
+        invalid && !selected && "border-destructive/40",
         isDragging && "z-10 opacity-50 shadow-xl",
       )}
     >
@@ -67,20 +67,20 @@ export function ActionCard({ step, index, selected, invalid, onClick, onDelete }
           <GripVertical className="size-4" />
         </button>
 
-        <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg", CATEGORY_STYLES[entry.category])}>
+        <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", CATEGORY_STYLES[entry.category])}>
           <Icon className="size-5" />
         </div>
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <Badge variant="outline" className="text-[10px] font-semibold uppercase tracking-wide">
+            <span className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
               Step {index + 1}
-            </Badge>
+            </span>
             <span className="text-xs text-muted-foreground">{entry.shortLabel}</span>
             {!entry.available && <Badge variant="destructive" className="text-[10px]">Unavailable</Badge>}
             {invalid && <Badge variant="destructive" className="text-[10px]">Needs setup</Badge>}
           </div>
-          <p className="mt-2 text-sm font-medium">{summary.headline}</p>
+          <p className="mt-2 text-sm font-semibold">{summary.headline}</p>
           {summary.detail && (
             <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{summary.detail}</p>
           )}

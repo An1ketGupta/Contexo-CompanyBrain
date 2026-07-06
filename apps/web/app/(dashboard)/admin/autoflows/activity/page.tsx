@@ -118,10 +118,10 @@ export default function AutoflowsActivityPage() {
         <ChevronLeft className="size-4" /> Back to autoflows
       </Link>
 
-      <header className="flex flex-wrap items-center justify-between gap-3">
+      <header className="flex flex-wrap items-start justify-between gap-5">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <h1 className="text-3xl font-extrabold tracking-tight">Activity</h1>
+          <p className="mt-1 max-w-[64ch] text-[15px] leading-relaxed text-muted-foreground">
             Live timeline of autoflow runs across every flow in your workspace.
           </p>
         </div>
@@ -130,7 +130,7 @@ export default function AutoflowsActivityPage() {
         </Button>
       </header>
 
-      <section className="grid gap-3 sm:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-4">
         <StatCard label="Runs" value={stats?.total ?? "—"} />
         <StatCard
           label="Success rate"
@@ -152,7 +152,7 @@ export default function AutoflowsActivityPage() {
         />
       </section>
 
-      <section className="flex flex-wrap items-center gap-2 rounded-md border bg-card p-3">
+      <section className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card p-3">
         <Filter className="size-4 text-muted-foreground" />
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-44">
@@ -193,7 +193,7 @@ export default function AutoflowsActivityPage() {
       </section>
 
       {error ? (
-        <div className="flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
+        <div className="flex items-start gap-3 rounded-xl border border-destructive/20 bg-destructive-soft p-4 text-sm text-destructive-ink">
           <AlertTriangle className="size-4 shrink-0" />
           <span>{(error as Error).message}</span>
         </div>
@@ -204,13 +204,13 @@ export default function AutoflowsActivityPage() {
           ))}
         </div>
       ) : !data?.runs.length ? (
-        <div className="rounded-md border border-dashed p-10 text-center text-sm text-muted-foreground">
+        <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-6 py-12 text-center text-sm text-muted-foreground">
           No runs match these filters.
         </div>
       ) : (
         <ul className="space-y-2">
           {data.runs.map((run) => (
-            <li key={run.id} className="rounded-md border bg-card p-3">
+            <li key={run.id} className="rounded-2xl border border-border bg-card p-4 transition-colors hover:bg-muted/40">
               <div className="flex flex-wrap items-center gap-3">
                 <Badge variant={STATUS_VARIANT[run.status]}>
                   {run.status.replace(/_/g, " ")}
@@ -234,7 +234,7 @@ export default function AutoflowsActivityPage() {
                 )}
               </div>
               {run.error_message && (
-                <p className="mt-2 text-xs text-destructive">{run.error_message}</p>
+                <p className="mt-2 text-xs text-destructive-ink">{run.error_message}</p>
               )}
             </li>
           ))}
@@ -255,14 +255,14 @@ function StatCard({
 }) {
   const toneClass =
     tone === "good"
-      ? "text-emerald-600 dark:text-emerald-400"
+      ? "text-success-ink"
       : tone === "bad"
-        ? "text-destructive"
+        ? "text-destructive-ink"
         : "";
   return (
-    <div className="rounded-md border bg-card p-3">
-      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={`mt-1 text-xl font-semibold ${toneClass}`}>{value}</p>
+    <div className="rounded-2xl border border-border bg-card p-5">
+      <p className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">{label}</p>
+      <p className={`mt-2.5 text-[28px] font-extrabold leading-none tracking-tight ${toneClass}`}>{value}</p>
     </div>
   );
 }

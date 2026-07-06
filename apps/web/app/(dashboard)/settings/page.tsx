@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import useSWR from "swr";
@@ -33,6 +33,7 @@ import {
 import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -66,17 +67,17 @@ export default function SettingsPage() {
     return (
       <div className="mx-auto max-w-3xl space-y-8 p-6 md:p-8">
         <div className="space-y-2">
-          <Skeleton className="h-6 w-28" />
+          <Skeleton className="h-9 w-40" />
           <Skeleton className="h-3.5 w-80" />
         </div>
         {Array.from({ length: 3 }).map((_, i) => (
           <div
             key={i}
-            className="space-y-4 rounded-lg border border-border bg-background p-5"
+            className="space-y-4 rounded-2xl border border-border bg-card p-5"
           >
             <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-9 w-full rounded-md" />
-            <Skeleton className="h-9 w-2/3 rounded-md" />
+            <Skeleton className="h-9 w-full rounded-lg" />
+            <Skeleton className="h-9 w-2/3 rounded-lg" />
           </div>
         ))}
       </div>
@@ -86,8 +87,8 @@ export default function SettingsPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-8 p-6 md:p-8">
       <header>
-        <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
+        <h1 className="text-3xl font-extrabold tracking-tight">Settings</h1>
+        <p className="mt-1 text-[15px] text-muted-foreground leading-relaxed max-w-[64ch]">
           Workspace details, your account, and the danger zone.
         </p>
       </header>
@@ -207,9 +208,9 @@ function SettingsLink({
   return (
     <Link
       href={href}
-      className="flex items-center gap-3 rounded-md px-2 py-2.5 text-sm hover:bg-muted"
+      className="flex items-center gap-3 rounded-xl px-2 py-2.5 text-sm hover:bg-muted"
     >
-      <div className="grid h-7 w-7 shrink-0 place-items-center rounded bg-muted text-muted-foreground">
+      <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
         {icon}
       </div>
       <div className="min-w-0 flex-1">
@@ -238,8 +239,8 @@ function Card({
     <section
       className={
         tone === "destructive"
-          ? "rounded-lg border border-destructive/30 bg-background"
-          : "rounded-lg border border-border bg-background"
+          ? "rounded-2xl border border-destructive/30 bg-card"
+          : "rounded-2xl border border-border bg-card"
       }
     >
       <header
@@ -661,7 +662,7 @@ function PersonaCard({
         )}
 
         {value === "custom" && (
-          <div className="space-y-2 rounded-md border border-border bg-muted/30 p-3">
+          <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-3">
             <Label htmlFor="custom-persona-name" className="text-xs">
               Role name <span className="text-muted-foreground">(optional)</span>
             </Label>
@@ -981,7 +982,7 @@ function ActivityPrivacyCard({
         </div>
         <input
           type="checkbox"
-          className="mt-1 h-4 w-7 cursor-pointer appearance-none rounded-full bg-muted transition-colors checked:bg-primary disabled:opacity-50 relative before:absolute before:top-0.5 before:left-0.5 before:h-3 before:w-3 before:rounded-full before:bg-background before:transition-transform checked:before:translate-x-3"
+          className="mt-1 h-4 w-7 cursor-pointer appearance-none rounded-full bg-muted transition-colors checked:bg-brand disabled:opacity-50 relative before:absolute before:top-0.5 before:left-0.5 before:h-3 before:w-3 before:rounded-full before:bg-background before:transition-transform checked:before:translate-x-3"
           checked={value}
           disabled={saving}
           onChange={(e) => save(e.target.checked)}
@@ -1187,15 +1188,15 @@ function TeamCard({
       }
     >
       <div>
-        <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="mb-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
           Members
         </p>
         {members.isLoading ? (
           <MemberRowSkeleton />
         ) : members.error ? (
-          <p className="text-sm text-destructive">Couldn&apos;t load members.</p>
+          <p className="text-sm text-destructive-ink">Couldn&apos;t load members.</p>
         ) : (
-          <ul className="divide-y divide-border rounded-md border border-border">
+          <ul className="divide-y divide-border rounded-xl border border-border">
             {(members.data?.members ?? []).map((m) => {
               const isSelf = m.id === currentUserId;
               const canRemove = isAdmin && !isSelf;
@@ -1272,10 +1273,10 @@ function TeamCard({
 
       {(invites.data?.invitations ?? []).length > 0 && (
         <div>
-          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          <p className="mb-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
             Pending invites
           </p>
-          <ul className="divide-y divide-border rounded-md border border-border">
+          <ul className="divide-y divide-border rounded-xl border border-border">
             {invites.data!.invitations.map((inv) => (
               <li
                 key={inv.id}
@@ -1341,7 +1342,7 @@ function TeamCard({
       </AlertDialog>
 
       {isAdmin && (
-        <div className="space-y-4 rounded-md border border-dashed border-border bg-muted/30 p-4">
+        <div className="space-y-4 rounded-xl border border-dashed border-border bg-muted/30 p-4">
           <div className="flex items-center gap-1.5 text-xs font-medium">
             <Mail className="h-3.5 w-3.5" />
             Invite by email
@@ -1411,7 +1412,7 @@ function TeamCard({
           </div>
 
           {lastInvite && (
-            <div className="space-y-1.5 rounded-md border border-border bg-background p-3">
+            <div className="space-y-1.5 rounded-xl border border-border bg-card p-3">
               <div className="flex items-center gap-1.5 text-[11px] font-medium text-foreground">
                 <Link2 className="h-3.5 w-3.5" />
                 Invite link for {lastInvite.email}
@@ -1452,15 +1453,7 @@ function TeamCard({
 
 function RoleBadge({ role }: { role: "admin" | "member" }) {
   return (
-    <span
-      className={
-        role === "admin"
-          ? "inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
-          : "inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
-      }
-    >
-      {role}
-    </span>
+    <Badge variant={role === "admin" ? "brand" : "outline"}>{role}</Badge>
   );
 }
 
@@ -1470,7 +1463,7 @@ function MemberRowSkeleton() {
       {[0, 1].map((i) => (
         <div
           key={i}
-          className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5"
+          className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2.5"
         >
           <div className="space-y-1.5">
             <Skeleton className="h-3 w-32" />
@@ -1543,7 +1536,7 @@ function FeedbackSignalCard() {
           Loading…
         </div>
       ) : error ? (
-        <p className="text-sm text-destructive">
+        <p className="text-sm text-destructive-ink">
           Couldn&apos;t load feedback stats. Try again later.
         </p>
       ) : (
@@ -1551,12 +1544,12 @@ function FeedbackSignalCard() {
           <Stat
             label="Helpful"
             value={data?.positive ?? 0}
-            icon={<ThumbsUp className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />}
+            icon={<ThumbsUp className="h-3.5 w-3.5 text-success-ink" />}
           />
           <Stat
             label="Not helpful"
             value={data?.negative ?? 0}
-            icon={<ThumbsDown className="h-3.5 w-3.5 text-destructive" />}
+            icon={<ThumbsDown className="h-3.5 w-3.5 text-destructive-ink" />}
           />
           <Stat label="Unrated" value={data?.unrated ?? 0} muted />
           <Stat
@@ -1584,16 +1577,16 @@ function Stat({
   muted?: boolean;
 }) {
   return (
-    <div className="rounded-md border border-border bg-muted/30 p-3">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+    <div className="rounded-xl border border-border bg-muted p-3">
+      <div className="flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
         {icon}
         {label}
       </div>
       <div
         className={
           muted
-            ? "mt-1 text-xl font-semibold text-muted-foreground tabular-nums"
-            : "mt-1 text-xl font-semibold text-foreground tabular-nums"
+            ? "mt-2 text-[28px] font-extrabold tracking-tight leading-none text-muted-foreground tabular-nums"
+            : "mt-2 text-[28px] font-extrabold tracking-tight leading-none text-foreground tabular-nums"
         }
       >
         {value}
@@ -1681,7 +1674,7 @@ function AIInstructionsCard({ canEdit }: { canEdit: boolean }) {
       {isLoading ? (
         <Skeleton className="h-24" />
       ) : error ? (
-        <p className="text-sm text-destructive">
+        <p className="text-sm text-destructive-ink">
           Couldn&apos;t load AI instructions. Try again later.
         </p>
       ) : (
@@ -1702,7 +1695,7 @@ function AIInstructionsCard({ canEdit }: { canEdit: boolean }) {
               <p
                 className={
                   overLimit
-                    ? "font-medium text-destructive tabular-nums"
+                    ? "font-medium text-destructive-ink tabular-nums"
                     : "text-muted-foreground tabular-nums"
                 }
               >
@@ -1767,7 +1760,7 @@ function CompetitorWatchlistCard({
               : "Workspace-wide list managed by your admins. Visible so you know what's being watched."
           }
           canEdit={canEditOrg}
-          icon={<ShieldAlert className="h-4 w-4 text-amber-600" />}
+          icon={<ShieldAlert className="h-4 w-4 text-amber" />}
         />
         <div className="border-t border-border" />
         <CompetitorListEditor
@@ -1885,7 +1878,7 @@ function CompetitorListEditor({
   }
   if (error || !data) {
     return (
-      <p className="text-sm text-destructive">
+      <p className="text-sm text-destructive-ink">
         Couldn&apos;t load the watchlist. Try again later.
       </p>
     );
@@ -1902,7 +1895,7 @@ function CompetitorListEditor({
       </div>
 
       <div
-        className={`flex flex-wrap items-center gap-1.5 rounded-md border border-input bg-background p-2 text-sm ${
+        className={`flex flex-wrap items-center gap-1.5 rounded-xl border border-input bg-background p-2 text-sm ${
           canEdit ? "" : "opacity-70"
         }`}
       >
@@ -2012,7 +2005,7 @@ function SharingCard({ canEdit }: { canEdit: boolean }) {
       {isLoading ? (
         <Skeleton className="h-10" />
       ) : error ? (
-        <p className="text-sm text-destructive">
+        <p className="text-sm text-destructive-ink">
           Couldn&apos;t load sharing settings. Try again later.
         </p>
       ) : (
@@ -2033,7 +2026,7 @@ function SharingCard({ canEdit }: { canEdit: boolean }) {
             disabled={!canEdit || busy}
             onClick={() => toggle(!allowed)}
             className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-              allowed ? "bg-primary" : "bg-muted"
+              allowed ? "bg-brand" : "bg-muted"
             }`}
           >
             <span
@@ -2114,7 +2107,7 @@ function ArchiveCard({ canEdit }: { canEdit: boolean }) {
       {isLoading ? (
         <Skeleton className="h-24" />
       ) : error || !data ? (
-        <p className="text-sm text-destructive">
+        <p className="text-sm text-destructive-ink">
           Couldn&apos;t load archive settings. Try again later.
         </p>
       ) : (
@@ -2142,7 +2135,7 @@ function ArchiveCard({ canEdit }: { canEdit: boolean }) {
                 )
               }
               className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                data.auto_archive_enabled ? "bg-primary" : "bg-muted"
+                data.auto_archive_enabled ? "bg-brand" : "bg-muted"
               }`}
             >
               <span
@@ -2191,7 +2184,7 @@ function ArchiveCard({ canEdit }: { canEdit: boolean }) {
           </div>
 
           {/* Delete-after-archive (retention tier) */}
-          <div className="flex flex-col gap-2 rounded-md border border-dashed border-border bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-2 rounded-xl border border-dashed border-border bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <p className="text-sm font-medium text-foreground">
                 Permanently delete after archive
@@ -2308,7 +2301,7 @@ function DataExportCard({ isAdmin }: { isAdmin: boolean }) {
       title="Your data"
       description="Download an archive of the personal data we hold about you, under GDPR Article 15 and analogous rights elsewhere."
     >
-      <div className="rounded-md border border-border bg-muted/30 p-4">
+      <div className="rounded-xl border border-border bg-muted/30 p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <p className="text-sm font-medium text-foreground">
@@ -2343,7 +2336,7 @@ function DataExportCard({ isAdmin }: { isAdmin: boolean }) {
       </div>
 
       {isAdmin && (
-        <div className="rounded-md border border-border bg-muted/30 p-4">
+        <div className="rounded-xl border border-border bg-muted/30 p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
@@ -2439,9 +2432,9 @@ function DangerZoneCard({ organizationName }: { organizationName: string }) {
       description="Irreversible actions. Make sure you mean it."
       tone="destructive"
     >
-      <div className="flex flex-col gap-3 rounded-md border border-destructive/20 bg-destructive-soft/60 p-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-3 rounded-xl border border-destructive/20 bg-destructive-soft p-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex gap-2">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive-ink" />
           <div>
             <p className="text-sm font-medium text-foreground">Delete account</p>
             <p className="mt-0.5 text-xs text-muted-foreground">

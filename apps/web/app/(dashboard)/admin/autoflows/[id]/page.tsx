@@ -106,7 +106,7 @@ export default function AutoflowDetailPage({
       </Link>
 
       {error ? (
-        <div className="flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
+        <div className="flex items-start gap-3 rounded-xl border border-destructive/20 bg-destructive-soft p-4 text-sm text-destructive-ink">
           <AlertTriangle className="size-4 shrink-0" />
           <span>{(error as Error).message}</span>
         </div>
@@ -116,9 +116,9 @@ export default function AutoflowDetailPage({
         <>
           <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div className="min-w-0 flex-1 space-y-2">
-              <h1 className="text-2xl font-semibold tracking-tight">{autoflow.name}</h1>
+              <h1 className="text-3xl font-extrabold tracking-tight">{autoflow.name}</h1>
               {autoflow.description && (
-                <p className="text-sm text-muted-foreground">{autoflow.description}</p>
+                <p className="max-w-[64ch] text-[15px] leading-relaxed text-muted-foreground">{autoflow.description}</p>
               )}
               <FlowSummary autoflow={autoflow} />
             </div>
@@ -157,9 +157,9 @@ export default function AutoflowDetailPage({
             </TabsContent>
 
             <TabsContent value="settings" className="mt-4">
-              <div className="space-y-4 rounded-md border bg-card p-4">
+              <div className="space-y-4 rounded-2xl border border-border bg-card p-6">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <p className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
                     Danger zone
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -195,7 +195,7 @@ function FlowSummary({ autoflow }: { autoflow: AutoflowRow }) {
       )}
       {!autoflow.is_active && <Badge variant="outline">Paused</Badge>}
       {autoflow.confidence_threshold != null && (
-        <Badge variant="accent">Gate ≥ {(autoflow.confidence_threshold * 100).toFixed(0)}%</Badge>
+        <Badge variant="brand">Gate ≥ {(autoflow.confidence_threshold * 100).toFixed(0)}%</Badge>
       )}
       {autoflow.last_fired_at && (
         <span className="text-muted-foreground">
@@ -212,16 +212,16 @@ function FlowOverview({ autoflow }: { autoflow: AutoflowRow }) {
   const sorted = autoflow.actions.slice().sort((a, b) => a.order - b.order);
 
   return (
-    <div className="space-y-2 rounded-md border bg-card p-4">
-      <div className="flex items-start gap-3 border-b pb-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+    <div className="space-y-2 rounded-2xl border border-border bg-card p-6">
+      <div className="flex items-start gap-3 border-b border-border pb-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-tint text-amber-ink">
           <TriggerIcon className="size-5" />
         </div>
         <div>
-          <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+          <span className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-amber-ink">
             When
-          </Badge>
-          <p className="mt-1 text-sm font-medium">{trigger.label}</p>
+          </span>
+          <p className="mt-1 text-sm font-semibold">{trigger.label}</p>
           {autoflow.trigger_config?.filters &&
             Object.keys(autoflow.trigger_config.filters).length > 0 && (
               <p className="mt-1 text-xs text-muted-foreground">
@@ -240,12 +240,12 @@ function FlowOverview({ autoflow }: { autoflow: AutoflowRow }) {
           const Icon = getIcon(entry.icon);
           return (
             <li key={i} className="flex items-start gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-md border bg-card text-muted-foreground">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-muted text-muted-foreground">
                 <Icon className="size-4" />
               </div>
               <div className="min-w-0 flex-1">
-                <Badge variant="outline" className="text-[10px]">Step {i + 1}</Badge>
-                <p className="mt-1 text-sm font-medium">{entry.label}</p>
+                <span className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">Step {i + 1}</span>
+                <p className="mt-1 text-sm font-semibold">{entry.label}</p>
                 <ConfigPreview config={a.config} />
               </div>
             </li>
@@ -284,7 +284,7 @@ function RunHistory({
 }) {
   if (!runs.length) {
     return (
-      <div className="rounded-md border border-dashed p-10 text-center text-sm text-muted-foreground">
+      <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-6 py-12 text-center text-sm text-muted-foreground">
         No runs yet. Hit <strong>Test</strong> to fire one with a mock payload.
       </div>
     );
@@ -298,7 +298,7 @@ function RunHistory({
       </div>
       <ul className="space-y-2">
         {runs.map((run) => (
-          <li key={run.id} className="rounded-md border bg-card p-3">
+          <li key={run.id} className="rounded-2xl border border-border bg-card p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant={STATUS_VARIANT[run.status]} className="capitalize">
@@ -313,7 +313,7 @@ function RunHistory({
               </span>
             </div>
             {run.error_message && (
-              <p className="mt-2 text-xs text-destructive">{run.error_message}</p>
+              <p className="mt-2 text-xs text-destructive-ink">{run.error_message}</p>
             )}
             {run.steps.length > 0 && (
               <ol className="mt-2 space-y-1">
@@ -323,9 +323,9 @@ function RunHistory({
                   return (
                     <li key={step.index} className="flex items-center gap-2 text-xs">
                       {step.status === "completed" ? (
-                        <CheckCircle2 className="size-3.5 text-emerald-600" />
+                        <CheckCircle2 className="size-3.5 text-success-ink" />
                       ) : step.status === "failed" ? (
-                        <XCircle className="size-3.5 text-destructive" />
+                        <XCircle className="size-3.5 text-destructive-ink" />
                       ) : (
                         <span className="size-3.5 rounded-full border border-muted-foreground/40" />
                       )}
@@ -335,7 +335,7 @@ function RunHistory({
                       <span className="text-muted-foreground">
                         {step.status.replace(/_/g, " ")}
                       </span>
-                      {step.error && <span className="text-destructive">· {step.error}</span>}
+                      {step.error && <span className="text-destructive-ink">· {step.error}</span>}
                     </li>
                   );
                 })}

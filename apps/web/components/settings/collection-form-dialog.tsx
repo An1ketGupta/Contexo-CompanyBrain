@@ -202,12 +202,12 @@ export function CollectionFormDialog({
           <div className="space-y-1.5">
             <Label>Tags in this collection</Label>
             {allTags.length === 0 ? (
-              <p className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
+              <p className="rounded-xl border border-dashed border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
                 You don&apos;t have any document tags yet. Tag a few documents
                 first, then come back to bundle them into a collection.
               </p>
             ) : (
-              <div className="flex max-h-44 flex-wrap gap-1.5 overflow-y-auto rounded-md border border-border bg-muted/20 p-2">
+              <div className="flex max-h-44 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-border bg-muted/20 p-2">
                 {allTags.map((t) => {
                   const active = selectedTags.includes(t.tag);
                   return (
@@ -218,7 +218,7 @@ export function CollectionFormDialog({
                       className={cn(
                         "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors",
                         active
-                          ? "border-primary bg-primary text-primary-foreground"
+                          ? "border-brand bg-brand-tint text-brand"
                           : "border-border bg-background text-muted-foreground hover:border-foreground/40 hover:text-foreground",
                       )}
                     >

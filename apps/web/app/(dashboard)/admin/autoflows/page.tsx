@@ -112,10 +112,10 @@ export default function AutoflowsPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
-      <header className="flex flex-wrap items-start justify-between gap-4">
+      <header className="flex flex-wrap items-start justify-between gap-5">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Autoflows</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <h1 className="text-3xl font-extrabold tracking-tight">Autoflows</h1>
+          <p className="mt-1 max-w-[64ch] text-[15px] leading-relaxed text-muted-foreground">
             Trigger → action automations. When the event fires, the steps run in order.
           </p>
         </div>
@@ -141,7 +141,7 @@ export default function AutoflowsPage() {
       </header>
 
       {error ? (
-        <div className="flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
+        <div className="flex items-start gap-3 rounded-xl border border-destructive/20 bg-destructive-soft p-4 text-sm text-destructive-ink">
           <AlertTriangle className="size-4 shrink-0" />
           <span>{(error as Error).message}</span>
         </div>
@@ -195,17 +195,17 @@ function FlowCard({
   const overflow = flow.actions.length - actions.length;
 
   return (
-    <li className="rounded-md border bg-card p-4 transition-colors hover:bg-accent/30">
+    <li className="rounded-2xl border border-border bg-card p-5 transition-colors hover:bg-muted/40">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <Link
           href={`/admin/autoflows/${flow.id}`}
           className="min-w-0 flex-1 space-y-2"
         >
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="truncate text-base font-medium">{flow.name}</h2>
+            <h2 className="truncate text-[15px] font-bold">{flow.name}</h2>
             {!flow.is_active && <Badge variant="outline">Paused</Badge>}
             {flow.confidence_threshold != null && (
-              <Badge variant="accent">
+              <Badge variant="brand">
                 Gate ≥ {(flow.confidence_threshold * 100).toFixed(0)}%
               </Badge>
             )}
@@ -271,10 +271,10 @@ function FlowCard({
 
 function EmptyState({ onUseTemplate }: { onUseTemplate: () => void }) {
   return (
-    <div className="space-y-4 rounded-md border border-dashed p-10 text-center">
+    <div className="space-y-4 rounded-2xl border border-dashed border-border bg-muted/40 px-6 py-12 text-center">
       <Workflow className="mx-auto size-8 text-muted-foreground" />
       <div>
-        <p className="text-sm font-medium">No autoflows yet</p>
+        <p className="text-sm font-semibold">No autoflows yet</p>
         <p className="mt-1 text-xs text-muted-foreground">
           Autoflows fire on events — document uploads, knowledge gaps, schedules, and more.
         </p>

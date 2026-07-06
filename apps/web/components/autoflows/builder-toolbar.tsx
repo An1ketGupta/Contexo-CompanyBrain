@@ -84,12 +84,12 @@ export function BuilderToolbar({
         {!validation.ok && (
           <Popover>
             <PopoverTrigger asChild>
-              <Button variant="ghost" size="sm" className="text-xs text-destructive">
+              <Button variant="ghost" size="sm" className="text-xs text-destructive-ink">
                 {validation.errors.length} issue{validation.errors.length === 1 ? "" : "s"}
               </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-80">
-              <ul className="space-y-1 text-xs text-destructive">
+              <ul className="space-y-1 text-xs text-destructive-ink">
                 {validation.errors.map((e, i) => (
                   <li key={i}>• {e}</li>
                 ))}

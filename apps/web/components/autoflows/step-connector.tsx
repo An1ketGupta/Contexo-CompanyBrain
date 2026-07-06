@@ -16,7 +16,7 @@ export function StepConnector({ onAdd, compact }: StepConnectorProps) {
         type="button"
         onClick={onAdd}
         aria-label="Add step"
-        className="flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-border bg-background text-muted-foreground opacity-50 transition-all hover:scale-110 hover:border-primary hover:text-primary hover:opacity-100 group-hover:opacity-100"
+        className="flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-border bg-background text-muted-foreground opacity-50 transition-all hover:scale-110 hover:border-brand hover:text-brand hover:opacity-100 group-hover:opacity-100"
       >
         <Plus className="size-3.5" />
       </button>
