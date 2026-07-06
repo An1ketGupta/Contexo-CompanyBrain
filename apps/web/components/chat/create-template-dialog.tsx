@@ -108,11 +108,6 @@ export function CreateTemplateDialog({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Save as template</DialogTitle>
-          <DialogDescription>
-            Templates appear in the picker on the chat input. Variables like{" "}
-            <code className="rounded bg-muted px-1">[topic]</code> are
-            placeholders the user fills in before sending.
-          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
@@ -128,7 +123,7 @@ export function CreateTemplateDialog({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className={isAdmin ? "grid grid-cols-2 gap-3" : undefined}>
             <div className="space-y-1">
               <Label htmlFor="tpl-cat">Category</Label>
               <select
@@ -144,23 +139,16 @@ export function CreateTemplateDialog({
                 ))}
               </select>
             </div>
-            <div className="flex items-end gap-2 pb-1">
-              <Checkbox
-                id="tpl-share"
-                checked={isShared}
-                disabled={!isAdmin}
-                onCheckedChange={(v) => setIsShared(Boolean(v))}
-              />
-              <Label
-                htmlFor="tpl-share"
-                className={!isAdmin ? "text-muted-foreground" : undefined}
-              >
-                Shared with team
-                {!isAdmin && (
-                  <span className="ml-1 text-[11px]">(admin only)</span>
-                )}
-              </Label>
-            </div>
+            {isAdmin && (
+              <div className="flex items-end gap-2 pb-1">
+                <Checkbox
+                  id="tpl-share"
+                  checked={isShared}
+                  onCheckedChange={(v) => setIsShared(Boolean(v))}
+                />
+                <Label htmlFor="tpl-share">Shared with team</Label>
+              </div>
+            )}
           </div>
 
           <div className="space-y-1">

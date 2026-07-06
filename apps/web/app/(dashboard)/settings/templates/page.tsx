@@ -239,11 +239,11 @@ export default function TemplatesSettingsPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Delete &quot;{deleteTarget?.title}&quot;?
+              Delete {deleteTarget?.title}?
             </AlertDialogTitle>
             <AlertDialogDescription>
               Teammates who&apos;ve used this template before will keep their
-              past messages — only the picker entry goes away.
+              past messages.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
