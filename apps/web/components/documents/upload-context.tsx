@@ -63,6 +63,11 @@ export const ACCEPTED_EXT = new Set([
   "pptx",
   "html",
   "csv",
+  // Meeting transcripts: .vtt (Zoom WebVTT) and .json (Teams export). The
+  // backend sniffs the bytes and rejects non-transcript JSON with an
+  // actionable error, so accepting them here is safe.
+  "vtt",
+  "json",
 ]);
 export const MAX_MB = 50;
 export const MAX_BYTES = MAX_MB * 1024 * 1024;

@@ -225,8 +225,8 @@ function ExportNotionDialog({
         }),
       });
       if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as { detail?: string };
-        const detail = payload.detail ?? "create_failed";
+        const payload = (await res.json().catch(() => ({}))) as { message?: string };
+        const detail = payload.message ?? "create_failed";
         if (detail === "notion_not_connected") {
           setErrorMessage("Notion isn't connected for this workspace.");
         } else if (detail === "message_already_sent") {

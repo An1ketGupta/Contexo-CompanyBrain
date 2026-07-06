@@ -1,35 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
-  CheckCircle2,
   ExternalLink,
   FileQuestion,
-  Loader2,
   MessageSquareWarning,
-  Sparkles,
   ThumbsDown,
 } from "lucide-react";
-import { toast } from "sonner";
 import useSWR from "swr";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "@/lib/date";
 
@@ -48,7 +33,6 @@ interface FlaggedItem {
   query: string;
   sources: Array<{ document_name?: string; name?: string; title?: string }>;
   failure_reason: FailureReason;
-  suggested_doc: string | null;
   alerted_at: string | null;
   created_at: string;
 }
@@ -86,31 +70,20 @@ export default function AdminFeedbackPage() {
   const params = useSearchParams();
   const initialReason = params.get("reason") as FailureReason | null;
   const initialDays = Number(params.get("days") ?? "7") || 7;
-  const wantsCreate = params.get("create") === "1";
 
   const [days, setDays] = useState<number>(
     PERIODS.find((p) => p.value === initialDays) ? initialDays : 7,
   );
   const [reason, setReason] = useState<FailureReason | null>(initialReason);
-  const [activeItem, setActiveItem] = useState<FlaggedItem | null>(null);
 
   const qs = new URLSearchParams({ days: String(days) });
   if (reason) qs.set("reason", reason);
 
-  const { data, error, isLoading, mutate } = useSWR<FlaggedResponse>(
+  const { data, error, isLoading } = useSWR<FlaggedResponse>(
     `/api/admin/feedback-flagged?${qs.toString()}`,
     fetcher,
     { revalidateOnFocus: false },
   );
-
-  // Auto-open the create dialog on first load when the email's CTA dropped
-  // the user here with ?create=1. We pick the most recent flagged item
-  // that has a suggested_doc as the seed.
-  useEffect(() => {
-    if (!wantsCreate || !data || activeItem) return;
-    const seed = data.items.find((i) => i.suggested_doc);
-    if (seed) setActiveItem(seed);
-  }, [wantsCreate, data, activeItem]);
 
   const reasonCounts = data?.reasons ?? {};
   const totalCount = useMemo(
@@ -127,8 +100,7 @@ export default function AdminFeedbackPage() {
           </h1>
           <p className="mt-1 max-w-xl text-sm text-muted-foreground">
             Messages your team thumbed-down, classified by failure mode. Open
-            any to read in context — or turn the AI&apos;s suggested fix into
-            a real document.
+            any to read it in context.
           </p>
         </div>
         <div className="flex shrink-0 gap-1 rounded-xl bg-muted p-1">
@@ -213,36 +185,15 @@ export default function AdminFeedbackPage() {
       ) : (
         <ul className="space-y-2">
           {data.items.map((item) => (
-            <FlaggedRow
-              key={item.message_id}
-              item={item}
-              onCreateDoc={() => setActiveItem(item)}
-            />
+            <FlaggedRow key={item.message_id} item={item} />
           ))}
         </ul>
       )}
-
-      {activeItem ? (
-        <CreateDocDialog
-          item={activeItem}
-          onClose={() => setActiveItem(null)}
-          onCreated={() => {
-            setActiveItem(null);
-            mutate();
-          }}
-        />
-      ) : null}
     </div>
   );
 }
 
-function FlaggedRow({
-  item,
-  onCreateDoc,
-}: {
-  item: FlaggedItem;
-  onCreateDoc: () => void;
-}) {
+function FlaggedRow({ item }: { item: FlaggedItem }) {
   // Snippets arrive as raw markdown from the chat pipeline. Rendering them
   // fully here would crowd the list, but leaving `**bold**` and `* bullet`
   // markers visible looks broken. Strip to a clean plain-text preview.
@@ -284,16 +235,6 @@ function FlaggedRow({
               <ExternalLink className="ml-1 h-3 w-3" />
             </Link>
           </Button>
-          {item.suggested_doc ? (
-            <Button
-              size="sm"
-              onClick={onCreateDoc}
-              className="h-7 gap-1 px-2.5 text-xs"
-            >
-              <Sparkles className="h-3 w-3" />
-              Create doc
-            </Button>
-          ) : null}
         </div>
       </div>
 
@@ -313,30 +254,6 @@ function FlaggedRow({
             {previewText}
           </p>
         </div>
-
-        {item.suggested_doc ? (
-          <div className="rounded-xl border border-amber/30 bg-amber-tint p-3">
-            <div className="flex items-start gap-2">
-              <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-ink" />
-              <div className="min-w-0 flex-1">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-amber-ink">
-                  Suggested fix
-                </p>
-                <p className="mt-1 text-sm text-foreground/90">
-                  {item.suggested_doc}
-                </p>
-                <button
-                  type="button"
-                  onClick={onCreateDoc}
-                  className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-amber-ink hover:underline"
-                >
-                  Turn this into a document
-                  <ExternalLink className="h-3 w-3" />
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
 
         {sourceNames.length > 0 ? (
           <div className="flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-3">
@@ -416,141 +333,5 @@ function ReasonBadge({ reason }: { reason: FailureReason }) {
     <Badge variant="outline" className={cn("font-bold", palette[reason])}>
       {REASON_LABEL[reason]}
     </Badge>
-  );
-}
-
-function CreateDocDialog({
-  item,
-  onClose,
-  onCreated,
-}: {
-  item: FlaggedItem;
-  onClose: () => void;
-  onCreated: () => void;
-}) {
-  // Pre-fill: a sensible title built from the failure reason, and a
-  // content body that reproduces the suggested fix, the user's actual
-  // question, and the AI's flawed answer — so the admin has all the
-  // raw material in one editable surface and isn't typing from scratch.
-  const initialTitle = useMemo(() => {
-    const suggested = item.suggested_doc?.trim() ?? "";
-    if (suggested) {
-      const first = suggested.split(/[.\n]/)[0]?.trim() ?? suggested;
-      return first.slice(0, 120);
-    }
-    return `${REASON_LABEL[item.failure_reason]} fix: ${item.query.slice(0, 80)}`;
-  }, [item]);
-
-  const initialBody = useMemo(() => {
-    const parts: string[] = [];
-    if (item.suggested_doc) {
-      parts.push(`# ${initialTitle}`);
-      parts.push("");
-      parts.push(item.suggested_doc.trim());
-    } else {
-      parts.push(`# ${initialTitle}`);
-    }
-    parts.push("");
-    parts.push("---");
-    parts.push("");
-    parts.push(
-      "<!-- Original context (delete before saving if not needed) -->",
-    );
-    if (item.query) parts.push(`**User asked:** ${item.query}`);
-    parts.push("");
-    parts.push(`**Previous AI response (flagged ${REASON_LABEL[item.failure_reason].toLowerCase()}):**`);
-    parts.push("");
-    parts.push(`> ${item.snippet}`);
-    return parts.join("\n");
-  }, [item, initialTitle]);
-
-  const [title, setTitle] = useState(initialTitle);
-  const [content, setContent] = useState(initialBody);
-  const [submitting, setSubmitting] = useState(false);
-
-  const submit = async () => {
-    if (!title.trim() || !content.trim()) {
-      toast.error("Title and content are required.");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const res = await fetch("/api/admin/feedback-flagged/from-suggestion", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim(),
-          content,
-          source_message_ids: [item.message_id],
-          failure_reason: item.failure_reason,
-        }),
-      });
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as {
-          detail?: string;
-        };
-        toast.error(payload.detail ?? `Failed to create doc (${res.status}).`);
-        return;
-      }
-      toast.success("Document created — ingestion started.");
-      onCreated();
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Create document from suggestion</DialogTitle>
-          <DialogDescription>
-            The AI suggested a document that would have improved this answer.
-            Edit and save — once it&apos;s ingested, future chats on this topic
-            will find it via hybrid search.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="fb-doc-title">Title</Label>
-            <Input
-              id="fb-doc-title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              maxLength={200}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="fb-doc-content">Content (markdown)</Label>
-            <Textarea
-              id="fb-doc-content"
-              rows={14}
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              className="font-mono text-xs"
-            />
-            <p className="text-[11px] text-muted-foreground">
-              The flagged message id is recorded with the doc so we can show
-              which fixes resolved which complaints.
-            </p>
-          </div>
-        </div>
-
-        <DialogFooter className="gap-2 sm:gap-2">
-          <Button variant="outline" onClick={onClose} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button onClick={submit} disabled={submitting}>
-            {submitting ? (
-              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <CheckCircle2 className="mr-2 h-3.5 w-3.5" />
-            )}
-            Create &amp; ingest
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

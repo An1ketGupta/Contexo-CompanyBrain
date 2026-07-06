@@ -29,7 +29,8 @@ import {
   type UploadItem,
 } from "./upload-context";
 
-const ACCEPTED_TYPES = ".pdf,.docx,.txt,.md,.xlsx,.pptx,.html,.htm,.csv";
+const ACCEPTED_TYPES =
+  ".pdf,.docx,.txt,.md,.xlsx,.pptx,.html,.htm,.csv,.vtt,.json";
 
 const FILE_ICON_TYPES: Record<string, DocumentFileType> = {
   pdf: "pdf",

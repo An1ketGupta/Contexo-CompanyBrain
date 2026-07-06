@@ -16,7 +16,6 @@ export interface FeedbackThresholdAlertEmailProps {
   failure_reason_label: string;
   count: number;
   rollup_days: number;
-  suggested_doc?: string | null;
   examples?: FeedbackThresholdAlertExample[];
   app_url: string;
 }
@@ -27,7 +26,6 @@ export function FeedbackThresholdAlertEmail({
   failure_reason_label,
   count,
   rollup_days,
-  suggested_doc,
   examples = [],
   app_url,
 }: FeedbackThresholdAlertEmailProps) {
@@ -37,9 +35,6 @@ export function FeedbackThresholdAlertEmail({
   const feedbackUrl = `${base}/admin/feedback?reason=${encodeURIComponent(
     failure_reason,
   )}&days=${rollup_days}`;
-  // Primary CTA when there's a suggested fix: drop the admin straight into
-  // the "Create doc" dialog seeded with that fix.
-  const createDocUrl = `${feedbackUrl}&create=1`;
   const explainer = REASON_EXPLAINERS[failure_reason] ?? "";
 
   return (
@@ -55,18 +50,6 @@ export function FeedbackThresholdAlertEmail({
       </Text>
 
       {explainer ? <Text style={p}>{explainer}</Text> : null}
-
-      {suggested_doc ? (
-        <Section style={previewBox}>
-          <Text style={previewLabel}>Suggested fix</Text>
-          <Text style={previewText}>{suggested_doc}</Text>
-          <Section style={{ marginTop: 12 }}>
-            <Button href={createDocUrl} style={button}>
-              Create this document
-            </Button>
-          </Section>
-        </Section>
-      ) : null}
 
       {examples.length > 0 ? (
         <>
@@ -98,7 +81,7 @@ export function FeedbackThresholdAlertEmail({
       ) : null}
 
       <Section style={{ margin: "24px 0" }}>
-        <Button href={feedbackUrl} style={secondaryButton}>
+        <Button href={feedbackUrl} style={button}>
           Review all {count} flagged responses
         </Button>
       </Section>
@@ -131,31 +114,6 @@ const REASON_EXPLAINERS: Record<string, string> = {
     "Output format doesn't match the use case. A template in Settings → Templates often resolves this.",
 };
 
-const previewBox: React.CSSProperties = {
-  backgroundColor: "#fafafa",
-  border: "1px solid #e4e4e7",
-  borderRadius: "6px",
-  padding: "16px",
-  margin: "8px 0 16px 0",
-};
-
-const previewLabel: React.CSSProperties = {
-  color: "#71717a",
-  fontSize: "11px",
-  fontWeight: 600,
-  letterSpacing: "0.05em",
-  textTransform: "uppercase",
-  margin: "0 0 8px 0",
-};
-
-const previewText: React.CSSProperties = {
-  color: "#27272a",
-  fontSize: "13px",
-  lineHeight: "20px",
-  margin: 0,
-  whiteSpace: "pre-wrap",
-};
-
 const exampleBox: React.CSSProperties = {
   borderLeft: "3px solid #e4e4e7",
   padding: "4px 12px",
@@ -178,18 +136,4 @@ const exampleMeta: React.CSSProperties = {
 const exampleLink: React.CSSProperties = {
   color: "#3f3f46",
   textDecoration: "underline",
-};
-
-// Outlined variant used for the secondary CTA when there's already a
-// primary "Create this document" button above it.
-const secondaryButton: React.CSSProperties = {
-  backgroundColor: "#ffffff",
-  border: "1px solid #d4d4d8",
-  borderRadius: "6px",
-  color: "#27272a",
-  display: "inline-block",
-  fontSize: "13px",
-  fontWeight: 500,
-  padding: "10px 16px",
-  textDecoration: "none",
 };

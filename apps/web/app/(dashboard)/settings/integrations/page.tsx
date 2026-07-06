@@ -7,6 +7,7 @@ import useSWR from "swr";
 import { toast } from "sonner";
 import {
   ArrowLeft,
+  CalendarDays,
   Check,
   Copy,
   Folder,
@@ -90,6 +91,14 @@ interface GmailStatus {
   connected_at: string | null;
   last_used_at: string | null;
 }
+interface GoogleWorkspaceStatus {
+  connected: boolean;
+  email_address?: string | null;
+  has_calendar_read?: boolean;
+  has_docs?: boolean;
+  has_drive_read?: boolean;
+  connected_at?: string | null;
+}
 interface StatusResponse {
   drive: DriveStatus;
   notion: NotionStatus;
@@ -116,6 +125,10 @@ export default function IntegrationsPage() {
   );
   const { data: atsData, mutate: mutateAts } = useSWR<AtsStatusResponse>(
     "/api/integrations/ats/status",
+    fetcher,
+  );
+  const { data: gwData, mutate: mutateGw } = useSWR<GoogleWorkspaceStatus>(
+    "/api/integrations/google-workspace/status",
     fetcher,
   );
 
@@ -149,6 +162,11 @@ export default function IntegrationsPage() {
         <div className="space-y-4">
           <DriveCard status={data.drive} onChanged={mutate} />
           <GmailCard status={data.gmail} onChanged={mutate} />
+          <GoogleWorkspaceCard
+            status={gwData}
+            available={data.gmail?.available ?? false}
+            onChanged={mutateGw}
+          />
           <NotionCard status={data.notion} onChanged={mutate} />
           <OneDriveCard status={data.onedrive} onChanged={mutate} />
           <ConfluenceCard status={data.confluence} onChanged={mutate} />
@@ -995,6 +1013,93 @@ function GmailCard({
       <p className="mt-2 text-xs text-muted-foreground">
         On any email-style assistant reply, click the Gmail icon in the action row to send.
       </p>
+    </Card>
+  );
+}
+
+function GoogleWorkspaceCard({
+  status,
+  available,
+  onChanged,
+}: {
+  status?: GoogleWorkspaceStatus;
+  available: boolean;
+  onChanged: () => void;
+}) {
+  const startConnect = async () => {
+    const res = await fetch("/api/integrations/google-workspace/connect");
+    if (!res.ok) return toast.error("Could not start Google Workspace OAuth");
+    const { auth_url } = await res.json();
+    window.location.href = auth_url;
+  };
+
+  if (!available) {
+    return (
+      <Card
+        icon={<CalendarDays className="h-4 w-4" />}
+        title="Google Workspace (Calendar + Docs)"
+        description="Not configured. Ask your operator to set GOOGLE_CLIENT_ID."
+      >
+        <p className="text-xs text-muted-foreground">Unavailable on this deploy.</p>
+      </Card>
+    );
+  }
+
+  if (!status?.connected) {
+    return (
+      <Card
+        icon={<CalendarDays className="h-4 w-4" />}
+        title="Google Workspace (Calendar + Docs)"
+        description="Syncs your calendar for meeting prep briefs and lets the assistant create Google Docs. Connect is per-user — each teammate connects their own account."
+      >
+        <Button size="sm" onClick={startConnect}>Connect Google Workspace</Button>
+      </Card>
+    );
+  }
+
+  return (
+    <Card
+      icon={<CalendarDays className="h-4 w-4" />}
+      title={`Google Workspace · ${status.email_address ?? ""}`}
+      description={
+        status.connected_at
+          ? `Connected ${new Date(status.connected_at).toLocaleString()}`
+          : "Connected"
+      }
+    >
+      <div className="space-y-3">
+        {!status.has_drive_read && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs dark:border-amber-700/40 dark:bg-amber-950/30">
+            <p className="font-medium text-amber-900 dark:text-amber-200">
+              Reconnect to pull in Meet transcripts
+            </p>
+            <p className="mt-0.5 text-amber-800 dark:text-amber-300">
+              Your current install can&apos;t read Drive, so Google Meet call
+              transcripts aren&apos;t auto-added to the knowledge base. Reconnect
+              to grant read access and get richer meeting-prep briefs.
+            </p>
+            <Button size="sm" className="mt-2" onClick={startConnect}>
+              Reconnect Google Workspace
+            </Button>
+          </div>
+        )}
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={async () => {
+            if (!confirm("Disconnect Google Workspace?")) return;
+            const res = await fetch("/api/integrations/google-workspace", {
+              method: "DELETE",
+            });
+            if (!res.ok) return toast.error("Disconnect failed");
+            toast.success("Disconnected");
+            onChanged();
+          }}
+        >
+          <Unplug className="h-3.5 w-3.5" /> Disconnect
+        </Button>
+      </div>
     </Card>
   );
 }

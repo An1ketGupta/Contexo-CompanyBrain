@@ -1553,7 +1553,6 @@ async def list_feedback_flagged(
             "query": _trim(query_text, 240),
             "sources": (r.get("sources") or [])[:5],
             "failure_reason": analysis.get("failure_reason") or "unknown",
-            "suggested_doc": analysis.get("suggested_doc"),
             "alerted_at": analysis.get("alerted_at"),
             "created_at": r["created_at"],
         })
@@ -1576,85 +1575,3 @@ async def list_feedback_flagged(
 def _trim(s: str, n: int) -> str:
     s = (s or "").strip().replace("\r", " ").replace("\n", " ")
     return s[: n - 1] + "…" if len(s) > n else s
-
-
-class FeedbackDocFromSuggestion(BaseModel):
-    title: str = Field(..., min_length=1, max_length=200)
-    content: str = Field(..., min_length=1, max_length=200_000)
-    # Lineage: the messages whose feedback motivated this doc. Stored on
-    # documents.metadata so we can later show "this doc resolved N flagged
-    # messages" or unwind a wrong fix.
-    source_message_ids: list[str] = Field(default_factory=list, max_length=20)
-    failure_reason: str | None = Field(default=None, max_length=40)
-
-    @field_validator("failure_reason")
-    @classmethod
-    def _validate_reason(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        if v not in _FEEDBACK_REASONS:
-            raise ValueError("unknown failure_reason")
-        return v
-
-
-@router.post("/feedback-flagged/from-suggestion", status_code=status.HTTP_201_CREATED)
-async def create_doc_from_suggestion(
-    body: FeedbackDocFromSuggestion,
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Create a real document from an admin-edited suggested-fix text.
-
-    Mirrors the document-draft approve flow: insert a `documents` row in
-    `processing`, queue `doc/process-text` against the same chunk+embed
-    pipeline that Notion/Drive ingest uses. The doc becomes searchable
-    once Inngest flips status to `ready`.
-    """
-    org_id = await _require_admin(current_user)
-    user_id = current_user["user_id"]
-    svc = get_service_client()
-
-    title = body.title.strip() or "Feedback-driven guidance"
-    content = body.content.strip()
-    if not content:
-        raise HTTPException(status_code=400, detail="empty_content")
-
-    # `source='upload'` keeps us inside the documents_source_check CHECK
-    # constraint (migration 036). Provenance lives in metadata.
-    doc_row = await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .insert({
-            "org_id": org_id,
-            "name": title[:255],
-            "file_type": "md",
-            "status": "processing",
-            "uploaded_by": user_id,
-            "source": "upload",
-            "metadata": {
-                "origin": "feedback_alert",
-                "failure_reason": body.failure_reason,
-                "source_message_ids": body.source_message_ids[:20],
-            },
-        })
-        .execute()
-    )
-    if not doc_row.data:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="document_insert_failed",
-        )
-    new_doc_id = doc_row.data[0]["id"]
-
-    import inngest as _inngest_pkg
-
-    from app.inngest.client import get_inngest_client
-
-    client = get_inngest_client()
-    await client.send(
-        _inngest_pkg.Event(
-            name="doc/process-text",
-            data={"doc_id": new_doc_id, "org_id": org_id, "text": content},
-            id=f"feedback-doc-{new_doc_id}",
-        )
-    )
-
-    return {"document_id": new_doc_id, "status": "processing"}

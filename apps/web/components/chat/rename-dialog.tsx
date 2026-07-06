@@ -52,9 +52,6 @@ export function RenameDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Rename conversation</DialogTitle>
-          <DialogDescription>
-            Pick a short, descriptive title so you can find it later.
-          </DialogDescription>
         </DialogHeader>
         <Input
           value={value}

@@ -112,8 +112,8 @@ export function PostSlackDialog({
         }),
       });
       if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as { detail?: string };
-        const detail = payload.detail ?? "post_failed";
+        const payload = (await res.json().catch(() => ({}))) as { message?: string };
+        const detail = payload.message ?? "post_failed";
         if (detail === "slack_not_connected") {
           setErrorMessage("Slack is not connected for this workspace.");
         } else if (detail === "message_already_sent") {

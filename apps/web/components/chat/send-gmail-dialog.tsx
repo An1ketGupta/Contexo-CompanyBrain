@@ -84,8 +84,8 @@ export function SendGmailDialog({
         }),
       });
       if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as { detail?: string };
-        const detail = payload.detail ?? "send_failed";
+        const payload = (await res.json().catch(() => ({}))) as { message?: string };
+        const detail = payload.message ?? "send_failed";
         if (detail === "gmail_send_scope_missing") {
           setErrorMessage("Your Gmail connection is missing send permission. Reconnect from Settings → Integrations.");
         } else if (detail === "gmail_not_connected") {

@@ -45,6 +45,24 @@ async def drive_poll_sync(ctx: inngest.Context) -> dict[str, Any]:
     return result
 
 
+# ── Google Meet transcripts: poll every 15 minutes ──────────────────────────
+
+@_inngest_client.create_function(
+    fn_id="meet-transcript-poll-sync",
+    trigger=inngest.TriggerCron(cron="*/15 * * * *"),
+    concurrency=[inngest.Concurrency(limit=1)],
+)
+async def meet_transcript_poll_sync(ctx: inngest.Context) -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.google_client_id or not settings.google_client_secret:
+        return {"status": "skipped", "reason": "google_oauth_not_configured"}
+
+    from app.services.integrations.google_meet_transcripts import poll_all_users
+
+    result = await ctx.step.run("meet-transcript-sync-all", poll_all_users)
+    return result
+
+
 # ── Notion: poll every 10 minutes ────────────────────────────────────────────
 
 @_inngest_client.create_function(
@@ -190,6 +208,7 @@ async def process_binary_external(ctx: inngest.Context) -> dict[str, Any]:
 
 FUNCTIONS = [
     drive_poll_sync,
+    meet_transcript_poll_sync,
     notion_poll_sync,
     process_text_document,
     onedrive_poll_sync,

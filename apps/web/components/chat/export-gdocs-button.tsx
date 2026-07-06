@@ -212,8 +212,8 @@ function ExportGDocsDialog({
         }),
       });
       if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as { detail?: string };
-        const detail = payload.detail ?? "create_failed";
+        const payload = (await res.json().catch(() => ({}))) as { message?: string };
+        const detail = payload.message ?? "create_failed";
         if (detail === "docs_write_scope_missing") {
           setErrorMessage("Reconnect Drive from Settings → Integrations to enable Docs export.");
         } else if (detail === "drive_not_connected") {

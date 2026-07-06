@@ -149,6 +149,7 @@ async def gw_status(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
         "has_calendar_write": "https://www.googleapis.com/auth/calendar.events" in scopes,
         "has_docs": "https://www.googleapis.com/auth/documents" in scopes,
         "has_gmail_send": "https://www.googleapis.com/auth/gmail.send" in scopes,
+        "has_drive_read": google_workspace.has_drive_read(scopes),
         "connected_at": row.data.get("created_at"),
     }
 

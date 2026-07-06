@@ -137,6 +137,13 @@ class Settings(BaseSettings):
     # can issue both Drive (org-level) and Gmail (per-user) tokens without the
     # callback handler having to disambiguate provider from state alone.
     gmail_oauth_redirect_uri: str = "http://localhost:8000/integrations/gmail/callback"
+    # Google Workspace (Calendar + Docs + Drive.file + Gmail.send bundle) needs
+    # its own redirect URI too — reusing gmail's would route Google's
+    # callback to gmail_callback, which mints/expects a "gmail" state and
+    # rejects the "google_workspace" state with a provider mismatch.
+    google_workspace_oauth_redirect_uri: str = (
+        "http://localhost:8000/integrations/google-workspace/callback"
+    )
 
     # Notion — create an integration at https://notion.so/my-integrations
     # and a public OAuth app under "Settings → OAuth Domain & URIs".

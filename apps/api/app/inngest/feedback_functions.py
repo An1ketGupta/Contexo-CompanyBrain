@@ -9,7 +9,6 @@ Pipeline:
   2. Ask the LLM to classify the failure mode into one of:
        wrong_tone | missing_context | outdated_policy | hallucination
        | wrong_format | unknown
-     and suggest what document, if it existed, would have helped.
   3. Persist the verdict to messages.feedback_analysis.
   4. Roll up the org's negative feedback for the trailing 7 days, grouped
      by failure_reason. If any reason has >= ALERT_THRESHOLD occurrences
@@ -128,7 +127,6 @@ async def analyze_negative_feedback(ctx: inngest.Context) -> dict[str, Any]:
                     org_id=org_id,
                     failure_reason=failure_reason,
                     count=count,
-                    suggested_doc=analysis.get("suggested_doc"),
                 ),
             )
             return {
@@ -213,12 +211,9 @@ async def _classify(
         f"USER QUERY:\n{query[:1000]}\n\n"
         f"AI RESPONSE:\n{response[:1500]}\n\n"
         f"SOURCES USED: {', '.join(src_names) if src_names else 'none'}\n\n"
-        "Return ONLY a JSON object (no prose, no markdown fence) with two keys:\n"
+        "Return ONLY a JSON object (no prose, no markdown fence) with one key:\n"
         "  failure_reason: exactly one of "
-        "    wrong_tone | missing_context | outdated_policy | hallucination | wrong_format\n"
-        "  suggested_doc: one short sentence describing a document that, if it "
-        "    existed in the knowledge base, would most likely have improved the answer. "
-        "    Use empty string if none.\n\n"
+        "    wrong_tone | missing_context | outdated_policy | hallucination | wrong_format\n\n"
         "JSON:"
     )
     result = await execute_task_blocking(
@@ -238,7 +233,6 @@ async def _classify(
 
     return {
         "failure_reason": (parsed.get("failure_reason") or "unknown")[:40],
-        "suggested_doc": (parsed.get("suggested_doc") or "")[:400] or None,
         "analysis_at": datetime.now(UTC).isoformat(),
         "model": "execute_task_blocking",
     }
@@ -272,7 +266,6 @@ async def _alert_admins(
     org_id: str,
     failure_reason: str,
     count: int,
-    suggested_doc: str | None,
 ) -> int:
     """Send the threshold-alert email to every admin in the org.
 
@@ -360,7 +353,6 @@ async def _alert_admins(
                     "failure_reason_label": _humanise_reason(failure_reason),
                     "count": count,
                     "rollup_days": _ROLLUP_DAYS,
-                    "suggested_doc": suggested_doc,
                     "examples": examples,
                     "app_url": settings.app_url,
                 },

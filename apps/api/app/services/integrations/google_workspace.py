@@ -17,8 +17,13 @@ Scope set:
     - calendar.readonly          read upcoming meetings
     - documents                  create + edit Google Docs
     - drive.file                 limited Drive access for the docs we create
+    - drive.readonly              read Meet transcripts saved to the user's Drive
     - gmail.send                 send the briefing email
     - openid + email + profile   resolve the user's email
+
+drive.readonly is optional/incremental — declining it on the consent screen
+just means the user doesn't get Meet-transcript auto-ingest (services/
+integrations/google_meet_transcripts.py), everything else keeps working.
 
 This module mirrors the shape of services/integrations/gmail.py: raw httpx,
 no google-api-python-client, refresh handled inline. The Docs/Calendar API
@@ -46,11 +51,18 @@ _SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/gmail.send",
     "openid",
     "email",
     "profile",
 ]
+
+DRIVE_READ_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+
+
+def has_drive_read(scopes: list[str] | None) -> bool:
+    return bool(scopes) and DRIVE_READ_SCOPE in scopes
 
 
 # ── OAuth flow ──────────────────────────────────────────────────────────────
@@ -60,7 +72,7 @@ def build_auth_url(*, state: str) -> str:
     settings = get_settings()
     params = {
         "client_id": settings.google_client_id,
-        "redirect_uri": settings.gmail_oauth_redirect_uri,
+        "redirect_uri": settings.google_workspace_oauth_redirect_uri,
         "response_type": "code",
         "scope": " ".join(_SCOPES),
         "access_type": "offline",
@@ -83,7 +95,7 @@ async def exchange_code(*, code: str) -> dict[str, Any]:
                 "code": code,
                 "client_id": settings.google_client_id,
                 "client_secret": settings.google_client_secret,
-                "redirect_uri": settings.gmail_oauth_redirect_uri,
+                "redirect_uri": settings.google_workspace_oauth_redirect_uri,
                 "grant_type": "authorization_code",
             },
         )
