@@ -138,6 +138,7 @@ async def integrations_status(
         confluence_row,
         github_row,
         dropbox_row,
+        zoom_row,
     ) = await asyncio.gather(
         asyncio.to_thread(
             lambda: client.table("drive_integrations")
@@ -174,6 +175,7 @@ async def integrations_status(
         _v2.get_row(org_id=org_id, provider="confluence"),
         _v2.get_row(org_id=org_id, provider="github"),
         _v2.get_row(org_id=org_id, provider="dropbox"),
+        _v2.get_row(org_id=org_id, provider="zoom"),
     )
 
     gmail_data = (gmail_row.data or {}) if gmail_row else {}
@@ -240,6 +242,9 @@ async def integrations_status(
         ),
         "dropbox": _v2_summary(
             dropbox_row, available=bool(settings.dropbox_client_id)
+        ),
+        "zoom": _v2_summary(
+            zoom_row, available=bool(settings.zoom_client_id)
         ),
     }
 

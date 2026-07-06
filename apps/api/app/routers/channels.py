@@ -48,7 +48,11 @@ class CreateChannelBody(BaseModel):
 
 class InviteBody(BaseModel):
     user_ids: list[str] = Field(..., min_length=1, max_length=50)
-    role: str = Field(default="editor", pattern="^(editor|viewer)$")
+    role: str = Field(default="editor", pattern="^(owner|editor|viewer)$")
+
+
+class RoleUpdateBody(BaseModel):
+    role: str = Field(..., pattern="^(owner|editor|viewer)$")
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
@@ -172,6 +176,35 @@ async def invite(
             status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
         ) from exc
     return {"added": added, "count": len(added)}
+
+
+@router.patch("/{channel_id}/participants/{user_id}")
+async def update_role(
+    channel_id: str,
+    user_id: str,
+    body: RoleUpdateBody,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    _, caller_user_id, _ = _require_org(current_user)
+    try:
+        updated = await channels_svc.update_participant_role(
+            conversation_id=channel_id,
+            actor_user_id=caller_user_id,
+            target_user_id=user_id,
+            role=body.role,  # type: ignore[arg-type]
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except PermissionError as exc:
+        code = (
+            status.HTTP_409_CONFLICT
+            if str(exc) == "last_owner_cannot_demote"
+            else status.HTTP_403_FORBIDDEN
+        )
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    return updated
 
 
 @router.delete("/{channel_id}/participants/{user_id}")

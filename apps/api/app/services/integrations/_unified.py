@@ -193,6 +193,32 @@ async def delete_row(*, org_id: str, provider: str, scope_user_id: str | None = 
     await asyncio.to_thread(_run)
 
 
+async def find_row_by_metadata(
+    *, provider: str, key: str, value: str
+) -> dict[str, Any] | None:
+    """Look up an integrations row by a metadata field.
+
+    For inbound webhooks that arrive independent of any org-scoped request
+    (Zoom, and eventually Confluence/OneDrive once their stub webhooks get
+    wired up) and must self-resolve which org they belong to from an
+    account/tenant id carried in the payload.
+    """
+    svc = get_service_client()
+
+    def _run() -> dict[str, Any] | None:
+        res = (
+            svc.table("integrations")
+            .select("*")
+            .eq("provider", provider)
+            .eq(f"metadata->>{key}", value)
+            .maybe_single()
+            .execute()
+        )
+        return res.data if res else None
+
+    return await asyncio.to_thread(_run)
+
+
 async def list_org_rows(*, provider: str) -> list[dict[str, Any]]:
     """Used by polling crons to iterate every connected org for a provider."""
     svc = get_service_client()

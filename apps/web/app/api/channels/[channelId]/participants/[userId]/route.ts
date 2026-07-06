@@ -12,3 +12,15 @@ export async function DELETE(
     method: "DELETE",
   });
 }
+
+export async function PATCH(
+  req: NextRequest,
+  ctx: { params: Promise<{ channelId: string; userId: string }> },
+): Promise<Response> {
+  const { channelId, userId } = await ctx.params;
+  const body = await req.json().catch(() => ({}));
+  return proxyJson(req, `/channels/${channelId}/participants/${userId}`, {
+    method: "PATCH",
+    body,
+  });
+}

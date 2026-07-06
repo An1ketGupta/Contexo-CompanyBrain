@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Users, Lock, Globe, Loader2 } from "lucide-react";
+import { Plus, Users, Lock, Globe, Loader2, UserPlus, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { MemberPicker } from "@/components/channels/member-picker";
+import { ManageMembersDialog } from "@/components/channels/manage-members-dialog";
 import {
   Dialog,
   DialogContent,
@@ -52,6 +54,11 @@ export default function ChannelsPage() {
   const [title, setTitle] = useState("");
   const [topic, setTopic] = useState("");
   const [visibility, setVisibility] = useState<"private" | "org">("private");
+  const [inviteeIds, setInviteeIds] = useState<string[]>([]);
+  const [inviteTarget, setInviteTarget] = useState<Channel | null>(null);
+  const [meId, setMeId] = useState<string | null>(null);
+  const [leaveTarget, setLeaveTarget] = useState<Channel | null>(null);
+  const [leaving, setLeaving] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -66,7 +73,42 @@ export default function ChannelsPage() {
 
   useEffect(() => {
     void load();
+    void (async () => {
+      try {
+        const res = await fetch("/api/me");
+        const data = await res.json();
+        setMeId(data?.user?.id ?? null);
+      } catch {
+        // Non-fatal: Leave falls back to a disabled state without an id.
+      }
+    })();
   }, []);
+
+  async function leave() {
+    if (!leaveTarget || !meId) return;
+    setLeaving(true);
+    try {
+      const res = await fetch(
+        `/api/channels/${leaveTarget.id}/participants/${meId}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(
+          err.detail === "last_owner_cannot_leave"
+            ? "You're the only owner — make someone else an owner first."
+            : err.detail || `Couldn't leave (${res.status})`,
+        );
+      }
+      toast.success(`You left "${leaveTarget.title}".`);
+      setLeaveTarget(null);
+      await load();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Couldn't leave channel.");
+    } finally {
+      setLeaving(false);
+    }
+  }
 
   async function create() {
     if (!title.trim()) return;
@@ -79,7 +121,7 @@ export default function ChannelsPage() {
           title: title.trim(),
           topic: topic.trim() || null,
           visibility,
-          invitee_user_ids: [],
+          invitee_user_ids: inviteeIds,
         }),
       });
       if (!res.ok) {
@@ -91,6 +133,7 @@ export default function ChannelsPage() {
       setTitle("");
       setTopic("");
       setVisibility("private");
+      setInviteeIds([]);
       setOpen(false);
       await load();
     } catch (err: unknown) {
@@ -181,6 +224,18 @@ export default function ChannelsPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <label className="mb-1.5 block font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Invite people{" "}
+                  <span className="text-muted-foreground/60">(optional)</span>
+                </label>
+                <MemberPicker selected={inviteeIds} onChange={setInviteeIds} />
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  {visibility === "private"
+                    ? "Only you and the people you add can see this channel."
+                    : "Anyone in your workspace can join, but these people are added right away."}
+                </p>
+              </div>
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setOpen(false)} disabled={creating}>
@@ -251,6 +306,35 @@ export default function ChannelsPage() {
                     ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
+                    {c.my_role === "owner" ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setInviteTarget(c);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold text-body opacity-0 transition-all hover:border-input hover:bg-muted group-hover:opacity-100"
+                        title="Manage members"
+                      >
+                        <UserPlus className="size-3.5" />
+                        Members
+                      </button>
+                    ) : c.my_role ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setLeaveTarget(c);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold text-body opacity-0 transition-all hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
+                        title="Leave channel"
+                      >
+                        <LogOut className="size-3.5" />
+                        Leave
+                      </button>
+                    ) : null}
                     <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-body tabular-nums">
                       <Users className="size-3.5 text-muted-foreground" />
                       {c.member_count}
@@ -272,6 +356,56 @@ export default function ChannelsPage() {
           })}
         </ul>
       )}
+
+      {inviteTarget ? (
+        <ManageMembersDialog
+          channelId={inviteTarget.id}
+          channelTitle={inviteTarget.title}
+          myRole={inviteTarget.my_role}
+          open={!!inviteTarget}
+          onOpenChange={(o) => {
+            if (!o) setInviteTarget(null);
+          }}
+          onChanged={() => void load()}
+        />
+      ) : null}
+
+      <Dialog
+        open={!!leaveTarget}
+        onOpenChange={(o) => {
+          if (!o && !leaving) setLeaveTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Leave channel?</DialogTitle>
+            <DialogDescription>
+              You&apos;ll be removed from{" "}
+              <span className="font-semibold text-body">
+                {leaveTarget?.title}
+              </span>
+              . An owner can add you back later.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setLeaveTarget(null)}
+              disabled={leaving}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={leave}
+              disabled={leaving || !meId}
+            >
+              {leaving ? <Loader2 className="size-4 mr-2 animate-spin" /> : null}
+              Leave
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

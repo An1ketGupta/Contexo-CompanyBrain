@@ -42,6 +42,8 @@ import {
   type GitHubStatus,
   OneDriveCard,
   type OneDriveStatus,
+  ZoomCard,
+  type ZoomStatus,
 } from "@/components/integrations/v2-cards";
 import {
   AtsCard,
@@ -109,6 +111,7 @@ interface StatusResponse {
   confluence?: ConfluenceStatus;
   github?: GitHubStatus;
   dropbox?: DropboxStatus;
+  zoom?: ZoomStatus;
 }
 
 const fetcher = async (url: string) => {
@@ -172,6 +175,7 @@ export default function IntegrationsPage() {
           <ConfluenceCard status={data.confluence} onChanged={mutate} />
           <GitHubCard status={data.github} onChanged={mutate} />
           <DropboxCard status={data.dropbox} onChanged={mutate} />
+          <ZoomCard status={data.zoom} onChanged={mutate} />
           <EmailCard status={data.email} onChanged={mutate} />
           <SlackCard status={data.slack} onChanged={mutate} />
 

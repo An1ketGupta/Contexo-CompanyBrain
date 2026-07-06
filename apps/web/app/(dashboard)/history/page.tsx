@@ -78,7 +78,7 @@ export default function QueryHistoryPage() {
             Query history
           </h1>
           <p className="mt-1.5 text-[15px] leading-relaxed text-muted-foreground">
-            Your recent questions and the conversations they belong to.
+            Your recent questions.
           </p>
         </div>
         <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-brand-tint text-brand">

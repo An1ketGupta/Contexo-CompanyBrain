@@ -23,6 +23,7 @@ import {
   RefreshCw,
   Settings2,
   Unplug,
+  Video,
   X,
 } from "lucide-react";
 
@@ -65,6 +66,7 @@ export interface OneDriveStatus extends V2BaseStatus {}
 export interface ConfluenceStatus extends V2BaseStatus {}
 export interface GitHubStatus extends V2BaseStatus {}
 export interface DropboxStatus extends V2BaseStatus {}
+export interface ZoomStatus extends V2BaseStatus {}
 
 function Card({
   icon,
@@ -1346,5 +1348,81 @@ function DropboxPicker({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Zoom
+//
+// No picker, no manual sync — a webhook (recording.transcript_completed)
+// covers every cloud recording account-wide the moment its transcript is
+// ready, so there's nothing for the admin to select.
+// ──────────────────────────────────────────────────────────────────────────
+
+export function ZoomCard({
+  status,
+  onChanged,
+}: {
+  status?: ZoomStatus;
+  onChanged: () => void;
+}) {
+  if (!status || !status.available) {
+    return (
+      <Card
+        icon={<Video className="h-4 w-4" />}
+        title="Zoom"
+        description="Not configured. Ask your operator to set ZOOM_CLIENT_ID."
+      >
+        <p className="text-xs text-muted-foreground">Unavailable on this deploy.</p>
+      </Card>
+    );
+  }
+
+  if (!status.connected) {
+    return (
+      <Card
+        icon={<Video className="h-4 w-4" />}
+        title="Zoom"
+        description="Auto-ingest cloud-recording transcripts the moment Zoom finishes processing them — routed through decision/action-item extraction, not just raw text."
+      >
+        <Button size="sm" onClick={() => startConnect("/api/integrations/zoom/connect")}>
+          Connect Zoom
+        </Button>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Admin consent required. Requires cloud recording + audio transcript
+          enabled on the Zoom account.
+        </p>
+      </Card>
+    );
+  }
+
+  const account = status.metadata as { email?: string } | undefined;
+
+  return (
+    <Card
+      icon={<Video className="h-4 w-4" />}
+      title={`Zoom · ${account?.email || "Connected"}`}
+      description="Listening for new transcripts — no manual sync needed."
+    >
+      <div className="space-y-3">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={async () => {
+            if (await genericDisconnect("/api/integrations/zoom", "Zoom")) onChanged();
+          }}
+        >
+          <Unplug className="h-3.5 w-3.5" /> Disconnect
+        </Button>
+        {status.last_error ? (
+          <p
+            className="truncate text-[11px] text-amber-700 dark:text-amber-300"
+            title={status.last_error}
+          >
+            ⚠ {status.last_error}
+          </p>
+        ) : null}
+      </div>
+    </Card>
   );
 }

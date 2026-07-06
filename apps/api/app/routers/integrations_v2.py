@@ -44,6 +44,9 @@ from app.services.integrations import (
 from app.services.integrations import (
     onedrive as onedrive_svc,
 )
+from app.services.integrations import (
+    zoom as zoom_svc,
+)
 
 log = logging.getLogger(__name__)
 
@@ -134,11 +137,12 @@ async def v2_status(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
     org_id, _, _ = _require_org(current_user)
     settings = get_settings()
 
-    onedrive_row, confluence_row, github_row, dropbox_row = await asyncio.gather(
+    onedrive_row, confluence_row, github_row, dropbox_row, zoom_row = await asyncio.gather(
         _unified.get_row(org_id=org_id, provider="onedrive"),
         _unified.get_row(org_id=org_id, provider="confluence"),
         _unified.get_row(org_id=org_id, provider="github"),
         _unified.get_row(org_id=org_id, provider="dropbox"),
+        _unified.get_row(org_id=org_id, provider="zoom"),
     )
 
     return {
@@ -149,6 +153,7 @@ async def v2_status(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
             available=bool(settings.github_app_id and settings.github_app_slug),
         ),
         "dropbox": _shape(dropbox_row, available=bool(settings.dropbox_client_id)),
+        "zoom": _shape(zoom_row, available=bool(settings.zoom_client_id)),
     }
 
 
@@ -495,6 +500,53 @@ async def dropbox_disconnect(current_user: dict = Depends(verify_jwt)) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+#                                   Zoom
+#
+# No resources/sync endpoints — the webhook covers every cloud recording
+# account-wide, there's nothing to pick.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/integrations/zoom/connect")
+async def zoom_connect(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
+    org_id, user_id, token = _require_org(current_user)
+    await _require_admin(user_id, token)
+    settings = get_settings()
+    if not settings.zoom_client_id:
+        raise HTTPException(status_code=503, detail="Zoom integration is not configured.")
+    state = _mint_state(user_id=user_id, org_id=org_id, provider="zoom")
+    return {"auth_url": zoom_svc.build_auth_url(state=state)}
+
+
+@router.get("/integrations/zoom/callback")
+async def zoom_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+) -> RedirectResponse:
+    user_id, org_id = _parse_state(state, provider="zoom")
+    try:
+        payload = await zoom_svc.exchange_code(code=code)
+    except Exception as exc:
+        log.error("zoom_oauth_exchange_failed: %s", exc)
+        return _settings_redirect(error="zoom_oauth_failed")
+    try:
+        await zoom_svc.store_credentials(
+            org_id=org_id, user_id=user_id, token_payload=payload
+        )
+    except Exception as exc:
+        log.error("zoom_store_credentials_failed: %s", exc)
+        return _settings_redirect(error="zoom_store_failed")
+    return _settings_redirect(connected="zoom")
+
+
+@router.delete("/integrations/zoom", status_code=status.HTTP_204_NO_CONTENT)
+async def zoom_disconnect(current_user: dict = Depends(verify_jwt)) -> None:
+    org_id, user_id, token = _require_org(current_user)
+    await _require_admin(user_id, token)
+    await zoom_svc.disconnect(org_id=org_id)
+
+
+# ──────────────────────────────────────────────────────────────────────────
 #                            Webhook stubs
 #
 # These exist now so platforms can be configured with stable URLs before
@@ -586,4 +638,75 @@ async def dropbox_webhook(
             log.warning("dropbox_webhook_signature_invalid")
             return {"ok": False, "reason": "signature"}
     log.info("dropbox_webhook received: %d bytes", len(body))
+    return {"ok": True}
+
+
+@router.post("/webhooks/zoom", include_in_schema=False)
+async def zoom_webhook(
+    request: Request,
+    x_zm_signature: str | None = Header(default=None, alias="x-zm-signature"),
+    x_zm_request_timestamp: str | None = Header(default=None, alias="x-zm-request-timestamp"),
+) -> Any:
+    """Zoom Event Subscription webhook.
+
+    Unlike the other providers' stubs above, this one is fully wired: on
+    `recording.transcript_completed` it fires `zoom/transcript-ready` for
+    the Inngest worker to download + ingest (see inngest/meeting_functions.py)
+    — the actual download happens off this request so we ack Zoom fast.
+    """
+    body = await request.body()
+    payload = await request.json()
+    event = payload.get("event")
+
+    # Zoom's subscription-verification handshake: HMAC-based, not a plain
+    # echo like Dropbox/OneDrive.
+    if event == "endpoint.url_validation":
+        plain_token = (payload.get("payload") or {}).get("plainToken", "")
+        return zoom_svc.build_url_validation_response(plain_token)
+
+    if not zoom_svc.verify_webhook_signature(
+        body=body, timestamp=x_zm_request_timestamp or "", signature=x_zm_signature or ""
+    ):
+        # Log, don't 401 — same reasoning as GitHub above: a hard failure
+        # response can get the endpoint auto-disabled by the platform.
+        log.warning("zoom_webhook_signature_invalid event=%s", event)
+        return {"ok": False, "reason": "signature"}
+
+    if event != "recording.transcript_completed":
+        return {"ok": True}
+
+    obj = (payload.get("payload") or {}).get("object") or {}
+    account_id = (payload.get("payload") or {}).get("account_id")
+    row = await zoom_svc.find_org_by_account_id(account_id) if account_id else None
+    if not row:
+        log.info("zoom_webhook_unknown_account account_id=%s", account_id)
+        return {"ok": True}
+
+    transcript_file = next(
+        (f for f in obj.get("recording_files") or [] if f.get("file_type") == "TRANSCRIPT"),
+        None,
+    )
+    if not transcript_file:
+        log.warning("zoom_webhook_no_transcript_file meeting_uuid=%s", obj.get("uuid"))
+        return {"ok": True}
+
+    import inngest
+
+    from app.inngest.client import get_inngest_client
+
+    client = get_inngest_client()
+    await client.send(
+        inngest.Event(
+            name="zoom/transcript-ready",
+            data={
+                "org_id": row["org_id"],
+                "user_id": row.get("connected_by"),
+                "download_url": transcript_file.get("download_url"),
+                "download_token": (payload.get("payload") or {}).get("download_token") or "",
+                "meeting_topic": obj.get("topic"),
+                "meeting_uuid": obj.get("uuid"),
+            },
+            id=f"zoom-transcript-{obj.get('uuid')}",
+        )
+    )
     return {"ok": True}

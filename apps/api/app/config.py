@@ -217,6 +217,18 @@ class Settings(BaseSettings):
         "http://localhost:8000/integrations/dropbox/callback"
     )
 
+    # Zoom. Scopes: cloud_recording:read, user:read:user. OAuth app for the
+    # per-org connect flow; webhook_secret_token is a separate, app-level
+    # "Secret Token" from the Zoom Marketplace app's Event Subscription page
+    # (static across all installs — not the per-row webhook_secret the
+    # unified integrations table mints).
+    zoom_client_id: str = ""
+    zoom_client_secret: str = ""
+    zoom_oauth_redirect_uri: str = (
+        "http://localhost:8000/integrations/zoom/callback"
+    )
+    zoom_webhook_secret_token: str = ""
+
     # ── Stripe billing (Production Roadmap Day 6+) ──────────────────────────
     # `stripe_mode` decides which set of pricing_tiers rows we read at
     # runtime: 'test' for staging + local, 'live' for production. Keeping

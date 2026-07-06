@@ -21,6 +21,9 @@
   --card: #ffffff; /* Card surface — pure white on the cool-gray canvas */
   --card-foreground: #16181c;
 
+  --popover: #ffffff; /* Floating surfaces — Select/Dropdown/Popover panels */
+  --popover-foreground: #16181c;
+
   --muted: #f4f5f6; /* Canvas — page backdrops + hover fills */
   --muted-foreground: #8a9099; /* Muted text */
 
@@ -78,6 +81,9 @@
   --card: #1a1c20; /* Card surface — lighter than the canvas for depth */
   --card-foreground: #f3f4f6;
 
+  --popover: #23262b; /* Floating surfaces — lifted a step above cards */
+  --popover-foreground: #f3f4f6;
+
   --muted: #121417; /* Canvas — darker than cards for depth */
   --muted-foreground: #8b9099;
 
@@ -126,6 +132,8 @@
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);
@@ -167,6 +175,14 @@
 
 * {
   border-color: var(--border);
+}
+
+/* Reserve the scrollbar gutter permanently. Radix Dialog/Select lock body
+   scroll via react-remove-scroll when they open; without a stable gutter,
+   hiding the scrollbar changes the viewport width and shoves centered
+   `position: fixed` dialogs sideways when a nested Select opens inside them. */
+html {
+  scrollbar-gutter: stable;
 }
 
 body {

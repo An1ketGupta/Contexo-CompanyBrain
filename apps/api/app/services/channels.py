@@ -221,6 +221,54 @@ async def invite_participants(
     return await asyncio.to_thread(_insert)
 
 
+async def update_participant_role(
+    *,
+    conversation_id: str,
+    actor_user_id: str,
+    target_user_id: str,
+    role: ParticipantRole,
+) -> dict[str, Any]:
+    """Owner changes a participant's role. Last-owner protection: the only
+    owner can't be demoted (that would orphan the channel)."""
+    await require_owner(
+        conversation_id=conversation_id, user_id=actor_user_id
+    )
+
+    current = await _participant_role(
+        conversation_id=conversation_id, user_id=target_user_id
+    )
+    if current is None:
+        raise ValueError("not_a_participant")
+    if current == role:
+        return {"user_id": target_user_id, "role": role}
+
+    svc = get_service_client()
+
+    if current == "owner" and role != "owner":
+        def _owner_count() -> int:
+            res = (
+                svc.table("conversation_participants")
+                .select("user_id")
+                .eq("conversation_id", conversation_id)
+                .eq("role", "owner")
+                .execute()
+            )
+            return len(res.data or [])
+
+        if await asyncio.to_thread(_owner_count) <= 1:
+            raise PermissionError("last_owner_cannot_demote")
+
+    def _update() -> None:
+        svc.table("conversation_participants").update(
+            {"role": role}
+        ).eq("conversation_id", conversation_id).eq(
+            "user_id", target_user_id
+        ).execute()
+
+    await asyncio.to_thread(_update)
+    return {"user_id": target_user_id, "role": role}
+
+
 async def remove_participant(
     *,
     conversation_id: str,
