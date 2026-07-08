@@ -170,7 +170,7 @@ export function CreateTemplateDialog({
               onChange={(e) => setBody(e.target.value)}
               rows={6}
               maxLength={8000}
-              placeholder="Write a professional email to [person] about [topic]…"
+              placeholder="Write a email to [person] about [topic]…"
             />
             <p className="text-[11px] text-muted-foreground">
               {body.length.toLocaleString()} / 8,000

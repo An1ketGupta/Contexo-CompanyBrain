@@ -161,7 +161,7 @@ export function TemplateFormDialog({ open, onOpenChange, template }: Props) {
               onChange={(e) => setBody(e.target.value)}
               rows={8}
               maxLength={8000}
-              placeholder={`Write a professional email to {{person}} about {{topic}}…`}
+              placeholder={`Write a email to {{person}} about {{topic}}…`}
             />
             <p className="text-[11px] text-muted-foreground">
               {body.length.toLocaleString()} / 8,000
