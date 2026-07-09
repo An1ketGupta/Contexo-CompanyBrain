@@ -45,11 +45,7 @@ export default function BriefingsIndexPage() {
             Weekly briefings
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            A Monday-morning snapshot of what needs your attention. Tune the
-            schedule and delivery from{" "}
-            <Link href="/settings" className="font-semibold text-brand hover:underline">
-              settings
-            </Link>
+            A Monday-morning snapshot of what needs your attention.
             .
           </p>
         </div>
@@ -116,10 +112,6 @@ function EmptyState() {
         <Sparkles className="h-5 w-5" />
       </div>
       <h3 className="mt-3 text-sm font-medium">No briefings yet</h3>
-      <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
-        Your first briefing arrives on Monday morning. Turn it on or change
-        the schedule in settings.
-      </p>
       <Link
         href="/settings"
         className="mt-4 inline-block text-xs font-semibold text-brand hover:underline"

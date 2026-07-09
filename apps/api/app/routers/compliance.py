@@ -208,14 +208,12 @@ async def acknowledge_document(
     # once all policies are acknowledged.
     try:
         svc = get_service_client()
-        user_row = await asyncio.to_thread(
-            lambda: svc.table("users")
-            .select("email")
-            .eq("id", user_id)
-            .maybe_single()
-            .execute()
+        # Email is owned by Supabase Auth (auth.users), not the `users` table.
+        auth_res = await asyncio.to_thread(
+            lambda: svc.auth.admin.get_user_by_id(user_id)
         )
-        user_email = (user_row.data or {}).get("email") if user_row else None
+        auth_user = getattr(auth_res, "user", None)
+        user_email = getattr(auth_user, "email", None) if auth_user else None
         if user_email:
             ob_run = await asyncio.to_thread(
                 lambda: svc.table("onboarding_runs")

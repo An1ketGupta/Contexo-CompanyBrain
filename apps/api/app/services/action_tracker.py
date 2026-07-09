@@ -122,14 +122,49 @@ async def extract_action_items(
 
 
 async def _fetch_org_members(org_id: str) -> list[dict[str, Any]]:
+    """Org members decorated with their auth email.
+
+    `users` only carries the profile (id, display_name); the email is owned by
+    Supabase Auth (`auth.users`). We fetch profiles from the table and merge in
+    emails from `auth.admin.list_users()` so `_match_owner` can fall back to the
+    email local-part. If the auth lookup fails we still return profiles so
+    display-name matching keeps working.
+    """
     svc = get_service_client()
     res = await asyncio.to_thread(
         lambda: svc.table("users")
-        .select("id, display_name, email")
+        .select("id, display_name")
         .eq("org_id", org_id)
         .execute()
     )
-    return res.data or []
+    members = res.data or []
+    if not members:
+        return []
+
+    emails_by_id = await _fetch_auth_emails()
+    for m in members:
+        m["email"] = emails_by_id.get(m["id"], "")
+    return members
+
+
+async def _fetch_auth_emails() -> dict[str, str]:
+    """Map user_id → email from Supabase Auth. Best-effort; {} on failure."""
+    svc = get_service_client()
+    try:
+        result = await asyncio.to_thread(lambda: svc.auth.admin.list_users())
+    except Exception as exc:
+        log.warning("action_tracker_auth_list_users_failed: %s", exc)
+        return {}
+    iterable: Any = getattr(result, "users", None) or result or []
+    out: dict[str, str] = {}
+    for u in iterable:
+        u_id = getattr(u, "id", None) or (u.get("id") if isinstance(u, dict) else None)
+        u_email = getattr(u, "email", None) or (
+            u.get("email") if isinstance(u, dict) else None
+        )
+        if u_id and u_email:
+            out[u_id] = u_email
+    return out
 
 
 def _match_owner(

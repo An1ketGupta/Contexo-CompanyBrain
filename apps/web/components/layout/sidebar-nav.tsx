@@ -75,7 +75,9 @@ const NAV_SECTIONS: NavSection[] = [
   {
     label: "Meetings",
     items: [
-      { href: "/meetings", label: "Meetings", icon: CalendarDays },
+      { href: "/meetings", label: "Upcoming", icon: CalendarDays },
+      { href: "/meetings/transcripts", label: "Transcript", icon: FileText },
+      { href: "/meetings/prep", label: "Preparation", icon: Sparkles },
       { href: "/action-items", label: "Action items", icon: ListChecks },
       { href: "/briefings", label: "Briefings", icon: Sparkles },
     ],

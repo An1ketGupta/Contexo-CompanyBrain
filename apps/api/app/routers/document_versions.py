@@ -120,13 +120,23 @@ async def list_versions(
         svc = get_service_client()
         u_res = await asyncio.to_thread(
             lambda: svc.table("users")
-            .select("id, display_name, email")
+            .select("id, display_name")
             .in_("id", user_ids)
             .execute()
         )
+        # display_name is the profile name. Email (owned by Supabase Auth, not
+        # the `users` table) is only a fallback for users who never set one, so
+        # we hit the admin API only for those — usually nobody.
+        missing_name: list[str] = []
         for u in (u_res.data or []):
-            name = u.get("display_name") or (u.get("email") or "").split("@")[0]
-            names_by_id[u["id"]] = name or "Someone"
+            if u.get("display_name"):
+                names_by_id[u["id"]] = u["display_name"]
+            else:
+                missing_name.append(u["id"])
+        if missing_name:
+            emails = await _fetch_auth_emails(svc, missing_name)
+            for uid in missing_name:
+                names_by_id[uid] = (emails.get(uid) or "").split("@")[0] or "Someone"
 
     return {
         "versions": [
@@ -137,6 +147,24 @@ async def list_versions(
             for v in versions
         ]
     }
+
+
+async def _fetch_auth_emails(svc, user_ids: list[str]) -> dict[str, str]:
+    """Map user_id → email from Supabase Auth. Best-effort per user; a failed
+    lookup drops that user rather than failing the whole request."""
+    async def _one(uid: str) -> tuple[str, str | None]:
+        try:
+            res = await asyncio.to_thread(
+                lambda: svc.auth.admin.get_user_by_id(uid)
+            )
+        except Exception as exc:
+            log.warning("docver_auth_email_lookup_failed user_id=%s error=%s", uid, exc)
+            return uid, None
+        auth_user = getattr(res, "user", None)
+        return uid, (getattr(auth_user, "email", None) if auth_user else None)
+
+    results = await asyncio.gather(*(_one(uid) for uid in user_ids))
+    return {uid: email for uid, email in results if email}
 
 
 @router.post(

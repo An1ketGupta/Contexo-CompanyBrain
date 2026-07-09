@@ -202,10 +202,14 @@ async def _mark_failed(svc, briefing_id: str, message: str) -> None:
 
 
 async def _load_user_profile(svc, user_id: str) -> dict[str, Any] | None:
-    """Combine users + briefing_preferences in two cheap selects."""
+    """Combine users + briefing_preferences in two cheap selects.
+
+    Email is owned by Supabase Auth (auth.users), not the `users` profile
+    table, so we fetch it separately via the admin API.
+    """
     user_res = await asyncio.to_thread(
         lambda: svc.table("users")
-        .select("id, display_name, email, persona")
+        .select("id, display_name, persona")
         .eq("id", user_id)
         .maybe_single()
         .execute()
@@ -213,6 +217,8 @@ async def _load_user_profile(svc, user_id: str) -> dict[str, Any] | None:
     user = (user_res.data if user_res else None) or {}
     if not user:
         return None
+
+    email = await _fetch_auth_email(svc, user_id)
 
     prefs_res = await asyncio.to_thread(
         lambda: svc.table("briefing_preferences")
@@ -224,11 +230,24 @@ async def _load_user_profile(svc, user_id: str) -> dict[str, Any] | None:
     prefs = (prefs_res.data if prefs_res else None) or {}
     return {
         "id": user["id"],
-        "name": user.get("display_name") or (user.get("email") or "").split("@")[0],
-        "email": user.get("email"),
+        "name": user.get("display_name") or (email or "").split("@")[0],
+        "email": email,
         "persona": user.get("persona"),
         "prefs": prefs,
     }
+
+
+async def _fetch_auth_email(svc, user_id: str) -> str | None:
+    """The user's email from Supabase Auth. Best-effort; None on failure."""
+    try:
+        res = await asyncio.to_thread(
+            lambda: svc.auth.admin.get_user_by_id(user_id)
+        )
+    except Exception as exc:
+        log.warning("briefings_auth_email_lookup_failed user_id=%s error=%s", user_id, exc)
+        return None
+    auth_user = getattr(res, "user", None)
+    return getattr(auth_user, "email", None) if auth_user else None
 
 
 async def _gather_signals(*, org_id: str, user_id: str) -> dict[str, Any]:

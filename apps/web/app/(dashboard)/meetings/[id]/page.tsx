@@ -137,10 +137,10 @@ export default function MeetingDetailPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6 md:p-8">
       <Link
-        href="/meetings"
+        href="/meetings/transcripts"
         className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
       >
-        <ArrowLeft className="h-4 w-4" /> Back to meetings
+        <ArrowLeft className="h-4 w-4" /> Back to transcripts
       </Link>
 
       <header className="flex items-start justify-between gap-4">

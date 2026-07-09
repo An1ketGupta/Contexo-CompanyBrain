@@ -110,7 +110,7 @@ export default function ActionItemsPage() {
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight">Action items</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Paste meeting notes — we extract owners + due dates and push tasks to
+            Extract owners + due dates and push tasks to
             Notion, Asana, or Linear.
           </p>
         </div>

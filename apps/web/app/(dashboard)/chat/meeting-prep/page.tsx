@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function MeetingPrepRedirectPage() {
-  redirect("/meetings?tab=prep");
+  redirect("/meetings/prep");
 }

@@ -27,6 +27,10 @@ import { ExportGDocsButton } from "./export-gdocs-button";
 import { ExportNotionButton } from "./export-notion-button";
 import { SubmitApprovalButton } from "./submit-approval-button";
 import { Markdown } from "./markdown";
+import {
+  MeetingPrepRequestCard,
+  parseMeetingPrepPrompt,
+} from "./meeting-prep-request";
 import { PostSlackButton } from "./post-slack-button";
 import { SearchingIndicator } from "./searching-indicator";
 import { SendGmailButton } from "./send-gmail-button";
@@ -124,10 +128,15 @@ export function MessageItem({
   // page and the threshold-alert email straight to a specific message.
   const anchorId = message.server_id ? `m-${message.server_id}` : undefined;
   if (message.role === "user") {
+    const meetingPrep = parseMeetingPrepPrompt(message.content);
     return (
       <div id={anchorId} className="flex justify-end px-1 scroll-mt-24">
         <div className="max-w-[80%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-6 text-primary-foreground shadow-sm">
-          <div className="whitespace-pre-wrap break-words">{message.content}</div>
+          {meetingPrep ? (
+            <MeetingPrepRequestCard parsed={meetingPrep} raw={message.content} />
+          ) : (
+            <div className="whitespace-pre-wrap break-words">{message.content}</div>
+          )}
         </div>
       </div>
     );

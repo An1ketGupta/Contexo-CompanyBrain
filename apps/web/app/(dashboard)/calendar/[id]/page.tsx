@@ -126,7 +126,7 @@ export default function MeetingDetailPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6 md:p-8">
       <Link
-        href="/meetings?tab=upcoming"
+        href="/meetings"
         className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
       >
         <ArrowLeft className="h-4 w-4" /> Back to meetings
