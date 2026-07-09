@@ -36,7 +36,7 @@ function MeetingsTabs() {
       <Tabs value={active} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
-          <TabsTrigger value="past">Past meetings</TabsTrigger>
+          <TabsTrigger value="past">Meeting Notes</TabsTrigger>
           <TabsTrigger value="prep">Prep</TabsTrigger>
         </TabsList>
 

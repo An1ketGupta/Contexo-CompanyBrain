@@ -7,6 +7,7 @@ import useSWR from "swr";
 import { toast } from "sonner";
 import {
   ArrowLeft,
+  Blocks,
   CalendarDays,
   Check,
   Copy,
@@ -98,7 +99,7 @@ interface GoogleWorkspaceStatus {
   email_address?: string | null;
   has_calendar_read?: boolean;
   has_docs?: boolean;
-  has_drive_read?: boolean;
+  meet_transcript_folder_ids?: string[];
   connected_at?: string | null;
 }
 interface StatusResponse {
@@ -146,21 +147,28 @@ export default function IntegrationsPage() {
     <div className="mx-auto max-w-3xl space-y-6 p-6 md:p-8">
       <Link
         href="/settings"
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
       >
-        <ArrowLeft className="h-3.5 w-3.5" /> Back to settings
+        <ArrowLeft className="h-4 w-4" /> Back to settings
       </Link>
 
-      <header>
-        <h1 className="text-xl font-semibold tracking-tight">Integrations</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Pipe in documents from elsewhere and let your team use the brain
-          inside the tools they already live in.
-        </p>
+      <header className="flex items-start gap-3">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-tint text-brand">
+          <Blocks className="h-5 w-5" />
+        </span>
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight">Integrations</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Pipe in documents from elsewhere and let your team use the brain
+            inside the tools they already live in.
+          </p>
+        </div>
       </header>
 
       {isLoading || !data ? (
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading integrations…
+        </div>
       ) : (
         <div className="space-y-4">
           <DriveCard status={data.drive} onChanged={mutate} />
@@ -180,7 +188,7 @@ export default function IntegrationsPage() {
           <SlackCard status={data.slack} onChanged={mutate} />
 
           <div className="pt-2">
-            <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+            <div className="px-1 pb-1 font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
               Applicant tracking
             </div>
           </div>
@@ -201,7 +209,7 @@ export default function IntegrationsPage() {
           />
 
           <div className="pt-2">
-            <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+            <div className="px-1 pb-1 font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
               Job boards
             </div>
           </div>
@@ -228,13 +236,13 @@ function Card({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-border bg-background p-4">
+    <section className="rounded-xl border border-border bg-card p-5">
       <div className="flex items-start gap-3">
-        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-muted">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
           {icon}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">{title}</p>
+          <p className="text-sm font-semibold">{title}</p>
           <p className="text-xs text-muted-foreground">{description}</p>
         </div>
       </div>
@@ -597,7 +605,7 @@ function NotionPageManager({
                 className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 py-0.5 pl-2 pr-1 text-xs"
                 title={p.id}
               >
-                <span className="text-muted-foreground">N</span>
+                <span className="font-mono text-[11px] font-bold text-brand">N</span>
                 <span className="max-w-[200px] truncate">{p.title}</span>
                 <button
                   type="button"
@@ -775,7 +783,7 @@ function NotionPagePickerDialog({
             />
           </div>
 
-          <div className="max-h-[55vh] overflow-auto rounded-md border border-border">
+          <div className="max-h-[55vh] overflow-auto rounded-xl border border-border">
             {loading && results.length === 0 ? (
               <div className="flex items-center gap-2 px-3 py-6 text-xs text-muted-foreground">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading pages…
@@ -798,7 +806,7 @@ function NotionPagePickerDialog({
                       onCheckedChange={() => toggle({ id, title })}
                       aria-label={`Deselect ${title}`}
                     />
-                    <span className="text-muted-foreground">N</span>
+                    <span className="font-mono text-[11px] font-bold text-brand">N</span>
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium">{title}</p>
                       <p className="text-[10px] text-muted-foreground">
@@ -822,7 +830,7 @@ function NotionPagePickerDialog({
                         }
                         aria-label={p.title}
                       />
-                      <span className="text-muted-foreground">N</span>
+                      <span className="font-mono text-[11px] font-bold text-brand">N</span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-medium">{p.title}</p>
                       </div>
@@ -1072,21 +1080,10 @@ function GoogleWorkspaceCard({
       }
     >
       <div className="space-y-3">
-        {!status.has_drive_read && (
-          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs dark:border-amber-700/40 dark:bg-amber-950/30">
-            <p className="font-medium text-amber-900 dark:text-amber-200">
-              Reconnect to pull in Meet transcripts
-            </p>
-            <p className="mt-0.5 text-amber-800 dark:text-amber-300">
-              Your current install can&apos;t read Drive, so Google Meet call
-              transcripts aren&apos;t auto-added to the knowledge base. Reconnect
-              to grant read access and get richer meeting-prep briefs.
-            </p>
-            <Button size="sm" className="mt-2" onClick={startConnect}>
-              Reconnect Google Workspace
-            </Button>
-          </div>
-        )}
+        <MeetFolderManager
+          folderIds={status.meet_transcript_folder_ids ?? []}
+          onChanged={onChanged}
+        />
 
         <Button
           variant="ghost"
@@ -1105,6 +1102,179 @@ function GoogleWorkspaceCard({
         </Button>
       </div>
     </Card>
+  );
+}
+
+function MeetFolderManager({
+  folderIds,
+  onChanged,
+}: {
+  folderIds: string[];
+  onChanged: () => void;
+}) {
+  const [opening, setOpening] = useState(false);
+  const [names, setNames] = useState<Record<string, string>>({});
+
+  const folderIdsKey = folderIds.join(",");
+
+  useEffect(() => {
+    if (!folderIdsKey) {
+      setNames({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/integrations/google-workspace/meet-folders/names?ids=${encodeURIComponent(folderIdsKey)}`,
+        );
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!cancelled) setNames(json.names || {});
+      } catch {
+        // Silent — falls back to the raw ID, which is acceptable.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [folderIdsKey]);
+
+  const removeChip = async (id: string) => {
+    const res = await fetch(
+      `/api/integrations/google-workspace/meet-folders/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    );
+    if (!res.ok) return toast.error("Remove failed");
+    onChanged();
+  };
+
+  const launchPicker = async () => {
+    const developerKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+    const appId = process.env.NEXT_PUBLIC_GOOGLE_APP_ID;
+    if (!developerKey) {
+      toast.error(
+        "Picker unavailable — NEXT_PUBLIC_GOOGLE_API_KEY is not configured",
+      );
+      return;
+    }
+    setOpening(true);
+    try {
+      const tokenRes = await fetch(
+        "/api/integrations/google-workspace/meet-folders/picker-token",
+      );
+      if (!tokenRes.ok) {
+        toast.error(
+          "Could not authorize the picker — try reconnecting Google Workspace",
+        );
+        return;
+      }
+      const { access_token } = (await tokenRes.json()) as {
+        access_token: string;
+      };
+
+      const picked = await openDriveFolderPicker({
+        accessToken: access_token,
+        developerKey,
+        appId,
+        alreadySelectedIds: folderIds,
+      });
+      if (picked.length === 0) return; // user cancelled
+
+      const existing = new Set(folderIds);
+      const toAdd = picked.filter((f) => !existing.has(f.id));
+      if (toAdd.length === 0) {
+        toast.info("Those folders are already connected.");
+        return;
+      }
+
+      let added = 0;
+      for (const folder of toAdd) {
+        const res = await fetch("/api/integrations/google-workspace/meet-folders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            folder_id: folder.id,
+            folder_name: folder.name,
+          }),
+        });
+        if (!res.ok) {
+          toast.error(`Add failed for "${folder.name}"`);
+          continue;
+        }
+        added += 1;
+      }
+      if (added > 0) {
+        toast.success(`Added ${added} folder${added === 1 ? "" : "s"}`);
+        onChanged();
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Picker failed to open";
+      toast.error(msg);
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-muted/30 p-3">
+      <p className="text-xs font-semibold">Meet transcript folders</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">
+        Only Docs inside folders you connect here (e.g. your &quot;Meet
+        Recordings&quot; folder) are auto-added to the knowledge base. Nothing
+        else in your Drive is accessed.
+      </p>
+
+      <div className="mt-2">
+        {folderIds.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No folders connected yet.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {folderIds.map((id) => {
+              const label = names[id] ?? id;
+              return (
+                <span
+                  key={id}
+                  className="inline-flex items-center gap-1 rounded-full border border-border bg-background py-0.5 pl-2 pr-1 text-xs"
+                  title={id}
+                >
+                  <Folder className="h-3 w-3 text-muted-foreground" />
+                  <span className="max-w-[200px] truncate">{label}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeChip(id)}
+                    className="rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    aria-label={`Remove ${label}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <Button
+        size="sm"
+        variant="outline"
+        className="mt-2"
+        onClick={launchPicker}
+        disabled={opening}
+      >
+        {opening ? (
+          <>
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Opening…
+          </>
+        ) : (
+          <>
+            <FolderPlus className="h-3.5 w-3.5" /> Add folder
+          </>
+        )}
+      </Button>
+    </div>
   );
 }
 
@@ -1468,7 +1638,7 @@ function SlackChannelPickerDialog({
             />
           </div>
 
-          <div className="max-h-[55vh] overflow-auto rounded-md border border-border">
+          <div className="max-h-[55vh] overflow-auto rounded-xl border border-border">
             {loading ? (
               <div className="flex items-center gap-2 px-3 py-6 text-xs text-muted-foreground">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading channels…

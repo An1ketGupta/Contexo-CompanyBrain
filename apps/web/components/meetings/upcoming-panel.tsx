@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 
-import { Badge } from "@/components/ui/badge";
+import { ChevronRight, Clock, Users } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { dateKey, MeetingsCalendarView } from "./calendar-view";
@@ -31,12 +32,30 @@ const fetcher = async (url: string) => {
 };
 
 const STATUS_BADGE: Record<string, string> = {
-  ready: "bg-success-tint text-success",
-  generating: "bg-amber-tint text-amber",
+  ready: "bg-success-tint text-success-ink",
+  generating: "bg-amber-tint text-amber-ink",
   pending: "bg-secondary text-muted-foreground",
-  failed: "bg-destructive-soft text-destructive",
+  failed: "bg-destructive-soft text-destructive-ink",
   skipped: "bg-secondary text-muted-foreground",
 };
+
+const STATUS_LABEL: Record<string, string> = {
+  ready: "Brief ready",
+  generating: "Generating…",
+  pending: "Brief pending",
+  failed: "Failed",
+  skipped: "Skipped",
+};
+
+function formatMeetingTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
 export function UpcomingMeetingsPanel() {
   const { data, error, isLoading, mutate } = useSWR<{ meetings: Meeting[] }>(
@@ -105,7 +124,7 @@ export function UpcomingMeetingsPanel() {
             onSelectDay={setSelectedDay}
           />
           {!data?.meetings?.length ? (
-            <div className="rounded-xl border border-dashed border-border bg-background p-10 text-center text-sm text-muted-foreground">
+            <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
               No upcoming meetings. Connect Google Workspace to sync your calendar.
             </div>
           ) : (
@@ -152,41 +171,60 @@ function renderMeetingsList(
       )}
 
       {filtered.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border bg-background p-10 text-center text-sm text-muted-foreground">
+        <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
           No meetings on this day.
         </div>
       ) : (
-        <ul className="space-y-3">
-          {filtered.map((m) => (
-            <li
-              key={m.id}
-              className="rounded-xl border border-border bg-card p-4 transition-colors hover:border-input hover:bg-muted"
-            >
-              <Link href={`/calendar/${m.id}`} className="block">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <h2 className="truncate font-medium">{m.title ?? "(no title)"}</h2>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {new Date(m.start_time).toLocaleString()}
-                      {m.attendee_emails?.length > 0 && (
-                        <> · {m.attendee_emails.length} attendee
-                          {m.attendee_emails.length === 1 ? "" : "s"}</>
-                      )}
-                    </p>
+        <ul className="space-y-2.5">
+          {filtered.map((m) => {
+            const start = new Date(m.start_time);
+            const attendeeCount = m.attendee_emails?.length ?? 0;
+            return (
+              <li key={m.id}>
+                <Link
+                  href={`/calendar/${m.id}`}
+                  className="group flex items-center gap-3.5 rounded-xl border border-border bg-card p-4 transition-colors hover:border-input hover:bg-muted"
+                >
+                  <div className="flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-xl bg-brand-tint leading-none text-brand">
+                    <span className="font-mono text-[9px] font-bold uppercase tracking-wide">
+                      {start.toLocaleString(undefined, { month: "short" })}
+                    </span>
+                    <span className="text-base font-extrabold">
+                      {start.getDate()}
+                    </span>
                   </div>
-                  <Badge className={STATUS_BADGE[m.prep_brief_status] ?? ""}>
-                    {m.prep_brief_status === "ready"
-                      ? "Brief ready"
-                      : m.prep_brief_status === "generating"
-                        ? "Generating…"
-                        : m.prep_brief_status === "pending"
-                          ? "Brief pending"
-                          : m.prep_brief_status}
-                  </Badge>
-                </div>
-              </Link>
-            </li>
-          ))}
+
+                  <div className="min-w-0 flex-1">
+                    <h2 className="truncate text-sm font-semibold">
+                      {m.title ?? "(no title)"}
+                    </h2>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground">
+                      <span className="inline-flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {formatMeetingTime(m.start_time)}
+                      </span>
+                      {attendeeCount > 0 && (
+                        <span className="inline-flex items-center gap-1">
+                          <Users className="h-3 w-3" />
+                          {attendeeCount} attendee{attendeeCount === 1 ? "" : "s"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <span
+                    className={`shrink-0 rounded-full px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide ${
+                      STATUS_BADGE[m.prep_brief_status] ??
+                      "bg-secondary text-muted-foreground"
+                    }`}
+                  >
+                    {STATUS_LABEL[m.prep_brief_status] ?? m.prep_brief_status}
+                  </span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

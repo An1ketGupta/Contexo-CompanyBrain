@@ -11,6 +11,11 @@ Endpoints:
     GET  /integrations/google-workspace/callback   → exchange + persist
     GET  /integrations/google-workspace/status     → connected? scopes?
     DEL  /integrations/google-workspace            → disconnect
+
+    GET  /integrations/google-workspace/meet-folders/picker-token
+    POST /integrations/google-workspace/meet-folders
+    DEL  /integrations/google-workspace/meet-folders/{folder_id}
+    GET  /integrations/google-workspace/meet-folders/names
 """
 from __future__ import annotations
 
@@ -23,13 +28,14 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 
 from app.auth import verify_jwt
 from app.config import get_settings
 from app.core.rate_limiter import oauth_callback_limiter
 from app.database import get_service_client
 from app.errors import NoOrganization
-from app.services.integrations import google_workspace
+from app.services.integrations import google_meet_transcripts, google_workspace
 
 log = logging.getLogger(__name__)
 
@@ -142,14 +148,15 @@ async def gw_status(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
     if not row or not row.data:
         return {"connected": False}
     scopes = row.data.get("scopes") or []
+    metadata = row.data.get("metadata") or {}
     return {
         "connected": True,
-        "email_address": (row.data.get("metadata") or {}).get("email_address"),
+        "email_address": metadata.get("email_address"),
         "has_calendar_read": "https://www.googleapis.com/auth/calendar.readonly" in scopes,
         "has_calendar_write": "https://www.googleapis.com/auth/calendar.events" in scopes,
         "has_docs": "https://www.googleapis.com/auth/documents" in scopes,
         "has_gmail_send": "https://www.googleapis.com/auth/gmail.send" in scopes,
-        "has_drive_read": google_workspace.has_drive_read(scopes),
+        "meet_transcript_folder_ids": metadata.get("meet_transcript_folder_ids") or [],
         "connected_at": row.data.get("created_at"),
     }
 
@@ -158,3 +165,64 @@ async def gw_status(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
 async def disconnect(current_user: dict = Depends(verify_jwt)) -> None:
     org_id, user_id = _require_user(current_user)
     await google_workspace.disconnect(org_id=org_id, user_id=user_id)
+
+
+# ── Meet-transcript folder picker ────────────────────────────────────────────
+
+
+@router.get("/integrations/google-workspace/meet-folders/picker-token")
+async def meet_folders_picker_token(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
+    """Hand the (refreshed) Workspace access token to the browser so it can
+    launch Google's native Picker, scoped to drive.file — the Picker is
+    allowed to show folder-browse UI even though the token itself can't list
+    arbitrary Drive contents; picking a folder is what grants that access."""
+    org_id, user_id = _require_user(current_user)
+    access_token = await google_workspace.get_user_token(org_id=org_id, user_id=user_id)
+    if not access_token:
+        raise HTTPException(status_code=400, detail="google_workspace_not_connected")
+    return {"access_token": access_token}
+
+
+class AddMeetFolderBody(BaseModel):
+    folder_id: str = Field(..., min_length=1, max_length=120)
+    folder_name: str | None = Field(default=None, max_length=200)
+
+
+@router.post("/integrations/google-workspace/meet-folders")
+async def add_meet_folder(
+    body: AddMeetFolderBody,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    org_id, user_id = _require_user(current_user)
+    try:
+        folders = await google_meet_transcripts.add_folder(
+            org_id=org_id, user_id=user_id, folder_id=body.folder_id, folder_name=body.folder_name
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"folder_ids": folders}
+
+
+@router.delete("/integrations/google-workspace/meet-folders/{folder_id}")
+async def remove_meet_folder(
+    folder_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    org_id, user_id = _require_user(current_user)
+    folders = await google_meet_transcripts.remove_folder(
+        org_id=org_id, user_id=user_id, folder_id=folder_id
+    )
+    return {"folder_ids": folders}
+
+
+@router.get("/integrations/google-workspace/meet-folders/names")
+async def meet_folder_names(
+    ids: str = Query(..., min_length=1, max_length=2000),
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    org_id, user_id = _require_user(current_user)
+    folder_ids = [fid for fid in ids.split(",") if fid.strip()]
+    names = await google_meet_transcripts.get_folder_names(
+        org_id=org_id, user_id=user_id, folder_ids=folder_ids[:50]
+    )
+    return {"names": names}

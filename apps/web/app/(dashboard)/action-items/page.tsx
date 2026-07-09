@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
+import { ListChecks } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,8 +29,8 @@ const fetcher = async (url: string): Promise<{ action_items: ActionItem[] }> => 
 const STATUS_BADGE: Record<string, string> = {
   pending: "bg-secondary text-muted-foreground",
   tracked: "bg-brand-tint text-brand",
-  completed: "bg-success-tint text-success",
-  overdue: "bg-destructive-soft text-destructive",
+  completed: "bg-success-tint text-success-ink",
+  overdue: "bg-destructive-soft text-destructive-ink",
   cancelled: "bg-secondary text-muted-foreground",
 };
 
@@ -102,12 +103,17 @@ export default function ActionItemsPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
-      <header>
-        <h1 className="text-2xl font-extrabold tracking-tight">Action items</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Paste meeting notes — we extract owners + due dates and push tasks to
-          Notion, Asana, or Linear.
-        </p>
+      <header className="flex items-start gap-3">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-tint text-brand">
+          <ListChecks className="h-5 w-5" />
+        </span>
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight">Action items</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Paste meeting notes — we extract owners + due dates and push tasks to
+            Notion, Asana, or Linear.
+          </p>
+        </div>
       </header>
 
       <section className="space-y-4 rounded-xl border border-border bg-card p-6">
@@ -123,7 +129,7 @@ export default function ActionItemsPage() {
         </div>
 
         {error && (
-          <div className="rounded-lg border border-destructive/30 bg-destructive-soft p-3 text-sm text-destructive">
+          <div className="rounded-xl border border-destructive/40 bg-destructive-soft p-3 text-sm text-destructive-ink">
             {error}
           </div>
         )}

@@ -80,13 +80,13 @@ function Card({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-border bg-background p-4">
+    <section className="rounded-xl border border-border bg-card p-5">
       <div className="flex items-start gap-3">
-        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-muted">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
           {icon}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">{title}</p>
+          <p className="text-sm font-semibold">{title}</p>
           <p className="text-xs text-muted-foreground">{description}</p>
         </div>
       </div>
@@ -131,7 +131,7 @@ function StatusFooter({
       </Button>
       {status.last_error ? (
         <span
-          className="ml-1 truncate text-[11px] text-amber-700 dark:text-amber-300"
+          className="ml-1 truncate text-[11px] text-amber-ink"
           title={status.last_error}
         >
           ⚠ {status.last_error}
@@ -411,13 +411,13 @@ function OneDrivePicker({
         <div className="space-y-3">
           <div className="flex gap-2 border-b border-border pb-2 text-xs">
             <button
-              className={`rounded px-2 py-1 ${tab === "drives" ? "bg-muted font-medium" : "text-muted-foreground"}`}
+              className={`rounded px-2 py-1 ${tab === "drives" ? "bg-brand-tint font-semibold text-brand" : "text-muted-foreground"}`}
               onClick={() => setTab("drives")}
             >
               OneDrive
             </button>
             <button
-              className={`rounded px-2 py-1 ${tab === "sites" ? "bg-muted font-medium" : "text-muted-foreground"}`}
+              className={`rounded px-2 py-1 ${tab === "sites" ? "bg-brand-tint font-semibold text-brand" : "text-muted-foreground"}`}
               onClick={() => setTab("sites")}
             >
               SharePoint sites
@@ -453,7 +453,7 @@ function OneDrivePicker({
                 onChange={(e) => setSiteQuery(e.target.value)}
               />
               <div className="grid grid-cols-2 gap-2">
-                <ul className="max-h-[40vh] divide-y divide-border overflow-auto rounded-md border border-border text-xs">
+                <ul className="max-h-[40vh] divide-y divide-border overflow-auto rounded-xl border border-border text-xs">
                   {sites.map((s) => (
                     <li
                       key={s.site_id}
@@ -467,7 +467,7 @@ function OneDrivePicker({
                     </li>
                   ))}
                 </ul>
-                <ul className="max-h-[40vh] divide-y divide-border overflow-auto rounded-md border border-border text-xs">
+                <ul className="max-h-[40vh] divide-y divide-border overflow-auto rounded-xl border border-border text-xs">
                   {!activeSiteId ? (
                     <li className="px-2 py-3 text-muted-foreground">
                       Select a site to see its libraries
@@ -736,14 +736,14 @@ function ConfluencePicker({
                 <button
                   key={c.cloud_id}
                   onClick={() => setActiveCloud(c.cloud_id)}
-                  className={`rounded px-2 py-1 text-xs ${activeCloud === c.cloud_id ? "bg-muted font-medium" : "text-muted-foreground"}`}
+                  className={`rounded px-2 py-1 text-xs ${activeCloud === c.cloud_id ? "bg-brand-tint font-semibold text-brand" : "text-muted-foreground"}`}
                 >
                   {c.name || c.cloud_id}
                 </button>
               ))}
             </div>
           ) : null}
-          <ul className="max-h-[55vh] divide-y divide-border overflow-auto rounded-md border border-border">
+          <ul className="max-h-[55vh] divide-y divide-border overflow-auto rounded-xl border border-border">
             {spaces.length === 0 ? (
               <li className="px-3 py-6 text-xs text-muted-foreground">
                 No spaces visible — the integration may not have access yet.
@@ -1023,7 +1023,7 @@ function GitHubPicker({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <ul className="max-h-[55vh] divide-y divide-border overflow-auto rounded-md border border-border">
+          <ul className="max-h-[55vh] divide-y divide-border overflow-auto rounded-xl border border-border">
             {filtered.length === 0 ? (
               <li className="px-3 py-6 text-xs text-muted-foreground">
                 No repositories visible.
@@ -1309,7 +1309,7 @@ function DropboxPicker({
               </span>
             ))}
           </div>
-          <ul className="max-h-[55vh] divide-y divide-border overflow-auto rounded-md border border-border">
+          <ul className="max-h-[55vh] divide-y divide-border overflow-auto rounded-xl border border-border">
             {folders.length === 0 ? (
               <li className="px-3 py-6 text-xs text-muted-foreground">
                 No subfolders here.
@@ -1416,7 +1416,7 @@ export function ZoomCard({
         </Button>
         {status.last_error ? (
           <p
-            className="truncate text-[11px] text-amber-700 dark:text-amber-300"
+            className="truncate text-[11px] text-amber-ink"
             title={status.last_error}
           >
             ⚠ {status.last_error}

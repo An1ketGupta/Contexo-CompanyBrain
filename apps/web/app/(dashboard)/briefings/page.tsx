@@ -36,22 +36,27 @@ export default function BriefingsIndexPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6 md:p-8">
-      <header>
-        <h1 className="text-2xl font-extrabold tracking-tight">
-          Weekly briefings
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          A Monday-morning snapshot of what needs your attention. Tune the
-          schedule and delivery from{" "}
-          <Link href="/settings" className="font-semibold text-brand hover:underline">
-            settings
-          </Link>
-          .
-        </p>
+      <header className="flex items-start gap-3">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-tint text-brand">
+          <Sparkles className="h-5 w-5" />
+        </span>
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight">
+            Weekly briefings
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            A Monday-morning snapshot of what needs your attention. Tune the
+            schedule and delivery from{" "}
+            <Link href="/settings" className="font-semibold text-brand hover:underline">
+              settings
+            </Link>
+            .
+          </p>
+        </div>
       </header>
 
       {error ? (
-        <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive-soft px-4 py-3 text-sm text-destructive-ink">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>Could not load briefings. Refresh to retry.</span>
         </div>
@@ -90,7 +95,7 @@ export default function BriefingsIndexPage() {
                   )}
                 </div>
                 {b.status === "generating" && (
-                  <span className="rounded-full bg-amber-tint px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-amber">
+                  <span className="rounded-full bg-amber-tint px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-amber-ink">
                     generating
                   </span>
                 )}
@@ -106,7 +111,7 @@ export default function BriefingsIndexPage() {
 
 function EmptyState() {
   return (
-    <div className="rounded-xl border border-dashed border-border bg-background px-6 py-12 text-center">
+    <div className="rounded-xl border border-dashed border-border bg-card px-6 py-12 text-center">
       <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
         <Sparkles className="h-5 w-5" />
       </div>

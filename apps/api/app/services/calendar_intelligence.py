@@ -270,7 +270,7 @@ async def generate_meeting_prep_brief(
 async def meetings_needing_brief(*, lookahead_hours: int = 3) -> list[dict[str, Any]]:
     """Find calendar_meetings where prep_brief_status='pending' and
     prep_brief_available_at <= now() AND start_time > now() (so we don't
-    waste compute on past meetings)."""
+    waste compute on meeting notes)."""
     svc = get_service_client()
     now_iso = datetime.now(UTC).isoformat()
     horizon = (datetime.now(UTC) + timedelta(hours=lookahead_hours)).isoformat()

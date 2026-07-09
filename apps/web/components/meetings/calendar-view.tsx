@@ -60,7 +60,7 @@ export function MeetingsCalendarView({
   return (
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="mb-3 flex items-center justify-between">
-        <p className="text-sm font-medium">
+        <p className="text-base font-extrabold tracking-tight">
           {monthAnchor.toLocaleString(undefined, { month: "long", year: "numeric" })}
         </p>
         <div className="flex items-center gap-1">
@@ -104,7 +104,7 @@ export function MeetingsCalendarView({
         {WEEKDAY_LABELS.map((label) => (
           <div
             key={label}
-            className="pb-1 text-center text-[10px] font-medium uppercase text-muted-foreground"
+            className="pb-2 text-center font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground"
           >
             {label}
           </div>
@@ -122,18 +122,18 @@ export function MeetingsCalendarView({
               type="button"
               onClick={() => onSelectDay(isSelected ? null : key)}
               className={cn(
-                "flex min-h-[64px] flex-col items-start gap-0.5 rounded-md border p-1.5 text-left transition-colors",
+                "flex min-h-[68px] flex-col items-start gap-0.5 rounded-lg border p-1.5 text-left transition-colors",
                 inCurrentMonth ? "border-border" : "border-transparent opacity-40",
                 isSelected
-                  ? "border-brand bg-brand-tint"
+                  ? "border-brand bg-brand-tint ring-1 ring-brand/30"
                   : "hover:border-input hover:bg-muted",
               )}
             >
               <span
                 className={cn(
-                  "text-xs",
+                  "text-xs font-medium",
                   isToday
-                    ? "flex h-5 w-5 items-center justify-center rounded-full bg-brand font-semibold text-brand-foreground"
+                    ? "flex h-5 w-5 items-center justify-center rounded-full bg-brand font-bold text-brand-foreground"
                     : "text-muted-foreground",
                 )}
               >
@@ -142,14 +142,14 @@ export function MeetingsCalendarView({
               {dayMeetings.slice(0, 2).map((m) => (
                 <span
                   key={m.id}
-                  className="w-full truncate rounded bg-secondary px-1 py-0.5 text-[10px] text-foreground"
+                  className="w-full truncate rounded-md bg-brand-tint px-1.5 py-0.5 text-[10px] font-medium text-brand"
                   title={m.title ?? "(no title)"}
                 >
                   {m.title ?? "(no title)"}
                 </span>
               ))}
               {dayMeetings.length > 2 && (
-                <span className="text-[10px] text-muted-foreground">
+                <span className="px-1 text-[10px] font-medium text-muted-foreground">
                   +{dayMeetings.length - 2} more
                 </span>
               )}

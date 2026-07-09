@@ -110,11 +110,6 @@ export function PastMeetingsPanel() {
                       </span>
                     ) : null}
                   </div>
-                  {m.summary ? (
-                    <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-                      {m.summary}
-                    </p>
-                  ) : null}
                   <div className="mt-1 flex items-center gap-3 text-[11px] text-muted-foreground">
                     <span className="inline-flex items-center gap-1">
                       <Users className="h-3 w-3" />
@@ -127,11 +122,6 @@ export function PastMeetingsPanel() {
                     <span className="inline-flex items-center gap-1">
                       <FileText className="h-3 w-3" />
                       {m.action_item_count} action items
-                    </span>
-                    <span>
-                      {formatDistanceToNow(
-                        m.meeting_started_at || m.created_at,
-                      )}
                     </span>
                   </div>
                 </div>

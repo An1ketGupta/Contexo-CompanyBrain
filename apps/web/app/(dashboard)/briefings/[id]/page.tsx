@@ -60,7 +60,7 @@ export default function BriefingDetailPage({
       </Link>
 
       {error ? (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive-soft px-4 py-3 text-sm text-destructive-ink">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error.message}</span>
         </div>
@@ -83,8 +83,8 @@ export default function BriefingDetailPage({
 function BriefingBody({ briefing }: { briefing: Briefing }) {
   if (briefing.status === "generating") {
     return (
-      <div className="rounded-lg border border-border bg-card p-6 text-center">
-        <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
+      <div className="rounded-xl border border-border bg-card p-6 text-center">
+        <Loader2 className="mx-auto h-6 w-6 animate-spin text-brand" />
         <h2 className="mt-3 text-sm font-medium">Generating your briefing…</h2>
         <p className="mt-1 text-xs text-muted-foreground">
           This usually finishes in under a minute.
@@ -95,7 +95,7 @@ function BriefingBody({ briefing }: { briefing: Briefing }) {
 
   if (briefing.status === "failed") {
     return (
-      <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+      <div className="rounded-xl border border-destructive/40 bg-destructive-soft p-4 text-sm text-destructive-ink">
         <p className="font-medium">We couldn&apos;t generate this briefing.</p>
         {briefing.error_message && (
           <p className="mt-1 text-xs">{briefing.error_message}</p>
@@ -106,23 +106,22 @@ function BriefingBody({ briefing }: { briefing: Briefing }) {
 
   return (
     <article className="space-y-4">
-      <header>
-        <h1 className="text-lg font-semibold tracking-tight">
-          {briefing.period_key}
-        </h1>
-        <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-1">
-            <Calendar className="h-3 w-3" />
+      <header className="flex items-start gap-3">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-tint text-brand">
+          <Calendar className="h-5 w-5" />
+        </span>
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight">
             {briefing.period_key}
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <Clock className="h-3 w-3" />
+          </h1>
+          <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Clock className="h-3.5 w-3.5" />
             {formatDistanceToNow(briefing.created_at)} ago
-          </span>
+          </p>
         </div>
       </header>
 
-      <div className="rounded-lg border border-border bg-card p-6">
+      <div className="rounded-xl border border-border bg-card p-6">
         {briefing.body_md ? (
           <Markdown>{briefing.body_md}</Markdown>
         ) : (

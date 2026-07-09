@@ -100,13 +100,13 @@ function Card({
   // grouping recruiter sees in the publish form.
   const Icon = kind === "job_board" ? Globe2 : Briefcase;
   return (
-    <section className="rounded-lg border border-border bg-background p-4">
+    <section className="rounded-xl border border-border bg-card p-5">
       <div className="flex items-start gap-3">
-        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-muted">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-tint text-brand">
           <Icon className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">{title}</p>
+          <p className="text-sm font-semibold">{title}</p>
           <p className="text-xs text-muted-foreground">{description}</p>
         </div>
       </div>

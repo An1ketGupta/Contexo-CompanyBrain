@@ -89,7 +89,7 @@ export function UploadDialogHost() {
     hasQueue && summary.pending === 0 && summary.inFlight === 0;
   const allSucceeded = allDone && summary.failed === 0;
   const startLabel =
-    summary.failed > 0 && !isRunning ? "Retry failed" : "Start upload";
+    summary.failed > 0 && !isRunning ? "Retry" : "Start upload";
 
   // Auto-close on a clean run, then drop the success rows so re-opening the
   // dialog shows a fresh empty state. Failed runs stay open so the user can

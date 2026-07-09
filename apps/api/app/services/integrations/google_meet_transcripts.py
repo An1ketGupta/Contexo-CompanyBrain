@@ -10,9 +10,13 @@ parser, no MeetingNotesAgent routing — the transcript just becomes another
 document that hybrid search can surface (e.g. when a meeting-prep brief
 searches the KB for an attendee's company).
 
-Requires the user's Google Workspace connection to have drive.readonly
-(optional/incremental scope — see google_workspace.py). Users who haven't
-granted it are skipped silently by poll_all_users().
+Folder-scoped, not Drive-wide: the Google Workspace OAuth grant is drive.file
+only (see google_workspace.py) — no blanket "see all your Drive files" scope.
+The user explicitly picks one or more folders via the Google Picker UI
+(settings/integrations page), which grants drive.file access limited to
+those folders. We store the chosen IDs in this row's
+`metadata.meet_transcript_folder_ids` and only ever list files inside them.
+Users who haven't picked a folder are skipped silently by poll_all_users().
 """
 from __future__ import annotations
 
@@ -32,15 +36,16 @@ log = logging.getLogger(__name__)
 SOURCE_TAG = "google_meet_transcript"
 _PROVIDER = "google_workspace"
 _TRANSCRIPT_MIME = "application/vnd.google-apps.document"
+_FOLDER_IDS_KEY = "meet_transcript_folder_ids"
 
 
 async def poll_all_users() -> dict[str, Any]:
     """Inngest cron entry point: iterate over Google Workspace connections
-    with drive.readonly granted and sync each user's Meet transcripts."""
+    that have at least one Meet-transcript folder configured and sync each."""
     svc = get_service_client()
     rows = await asyncio.to_thread(
         lambda: svc.table("integrations")
-        .select("org_id, scope_user_id, scopes")
+        .select("org_id, scope_user_id, metadata")
         .eq("provider", _PROVIDER)
         .execute()
     )
@@ -48,7 +53,7 @@ async def poll_all_users() -> dict[str, Any]:
     skipped = 0
     errors = 0
     for row in rows.data or []:
-        if not google_workspace.has_drive_read(row.get("scopes")):
+        if not (row.get("metadata") or {}).get(_FOLDER_IDS_KEY):
             skipped += 1
             continue
         user_id = row.get("scope_user_id")
@@ -66,8 +71,8 @@ async def poll_all_users() -> dict[str, Any]:
 
 
 async def sync_user(*, org_id: str, user_id: str) -> dict[str, Any]:
-    """Pull new Meet transcript docs from one user's Drive since their last
-    synced cursor, ingest each as a KB document."""
+    """Pull new Meet transcript docs from the user's connected folders since
+    their last synced cursor, ingest each as a KB document."""
     svc = get_service_client()
     row = await asyncio.to_thread(
         lambda: svc.table("integrations")
@@ -81,14 +86,26 @@ async def sync_user(*, org_id: str, user_id: str) -> dict[str, Any]:
     if not row or not row.data:
         return {"status": "no-integration"}
 
+    metadata = row.data.get("metadata") or {}
+    folder_ids = metadata.get(_FOLDER_IDS_KEY) or []
+    if not folder_ids:
+        return {"status": "no-folders-configured"}
+
     access_token = await google_workspace.get_user_token(org_id=org_id, user_id=user_id)
     if not access_token:
         return {"status": "no-token"}
 
-    metadata = row.data.get("metadata") or {}
     last_synced = metadata.get("meet_transcripts_last_synced_at") or "1970-01-01T00:00:00Z"
 
-    files = await _list_transcript_files(access_token=access_token, modified_since=last_synced)
+    seen_ids: set[str] = set()
+    files: list[dict[str, Any]] = []
+    for folder_id in folder_ids:
+        for f in await _list_transcript_files(
+            access_token=access_token, folder_id=folder_id, modified_since=last_synced
+        ):
+            if f["id"] not in seen_ids:
+                seen_ids.add(f["id"])
+                files.append(f)
 
     ingested = 0
     for f in files:
@@ -113,19 +130,23 @@ async def sync_user(*, org_id: str, user_id: str) -> dict[str, Any]:
 
 
 async def _list_transcript_files(
-    *, access_token: str, modified_since: str
+    *, access_token: str, folder_id: str, modified_since: str
 ) -> list[dict[str, Any]]:
-    """Single page of Drive v3 files.list, filtered to Google Docs whose name
-    matches Meet's transcript naming convention ("... - Transcript"). Capped
-    at 50/cycle so a busy account doesn't blow the polling window."""
+    """Single page of Drive v3 files.list, scoped to one connected folder and
+    filtered to Google Docs whose name matches Meet's transcript naming
+    convention ("... - Transcript"). Capped at 50/cycle so a busy folder
+    doesn't blow the polling window."""
     q = (
-        f"mimeType = '{_TRANSCRIPT_MIME}' and name contains 'Transcript' "
-        f"and trashed = false and modifiedTime > '{modified_since}'"
+        f"'{folder_id}' in parents and mimeType = '{_TRANSCRIPT_MIME}' "
+        f"and name contains 'Transcript' and trashed = false "
+        f"and modifiedTime > '{modified_since}'"
     )
     params = {
         "q": q,
         "fields": "files(id,name,mimeType,modifiedTime)",
         "pageSize": "50",
+        "supportsAllDrives": "true",
+        "includeItemsFromAllDrives": "true",
     }
     async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
         resp = await client.get(
@@ -136,6 +157,96 @@ async def _list_transcript_files(
     if resp.status_code != 200:
         raise RuntimeError(f"drive list failed: {resp.status_code} {resp.text[:200]}")
     return resp.json().get("files", [])
+
+
+# ── Folder management (called by the integrations router) ──────────────────
+
+
+async def add_folder(
+    *, org_id: str, user_id: str, folder_id: str, folder_name: str | None
+) -> list[str]:
+    svc = get_service_client()
+    row = await asyncio.to_thread(
+        lambda: svc.table("integrations")
+        .select("id, metadata")
+        .eq("org_id", org_id)
+        .eq("provider", _PROVIDER)
+        .eq("scope_user_id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not row or not row.data:
+        raise RuntimeError("Google Workspace is not connected for this user.")
+    metadata = row.data.get("metadata") or {}
+    folders = list(metadata.get(_FOLDER_IDS_KEY) or [])
+    if folder_id not in folders:
+        folders.append(folder_id)
+    metadata[_FOLDER_IDS_KEY] = folders
+    await asyncio.to_thread(
+        lambda: svc.table("integrations")
+        .update({"metadata": metadata})
+        .eq("id", row.data["id"])
+        .execute()
+    )
+    return folders
+
+
+async def remove_folder(*, org_id: str, user_id: str, folder_id: str) -> list[str]:
+    svc = get_service_client()
+    row = await asyncio.to_thread(
+        lambda: svc.table("integrations")
+        .select("id, metadata")
+        .eq("org_id", org_id)
+        .eq("provider", _PROVIDER)
+        .eq("scope_user_id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not row or not row.data:
+        return []
+    metadata = row.data.get("metadata") or {}
+    folders = [f for f in (metadata.get(_FOLDER_IDS_KEY) or []) if f != folder_id]
+    metadata[_FOLDER_IDS_KEY] = folders
+    await asyncio.to_thread(
+        lambda: svc.table("integrations")
+        .update({"metadata": metadata})
+        .eq("id", row.data["id"])
+        .execute()
+    )
+    return folders
+
+
+async def get_folder_names(
+    *, org_id: str, user_id: str, folder_ids: list[str]
+) -> dict[str, str]:
+    """Resolve {folder_id: friendly_name} for already-configured folders.
+
+    Drive doesn't support batch `files.list` by ID, so we issue one `files.get`
+    per ID in parallel. Folders the token can no longer see (deleted, perms
+    revoked) silently fall out — the UI shows the raw ID for those.
+    """
+    if not folder_ids:
+        return {}
+    access_token = await google_workspace.get_user_token(org_id=org_id, user_id=user_id)
+    if not access_token:
+        return {}
+
+    async def _one(client: httpx.AsyncClient, fid: str) -> tuple[str, str | None]:
+        try:
+            resp = await client.get(
+                f"https://www.googleapis.com/drive/v3/files/{fid}",
+                params={"fields": "id,name", "supportsAllDrives": "true"},
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        except Exception:
+            return fid, None
+        if resp.status_code != 200:
+            return fid, None
+        return fid, resp.json().get("name")
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+        results = await asyncio.gather(*[_one(client, fid) for fid in folder_ids])
+    return {fid: name for fid, name in results if name}
 
 
 async def _ingest_transcript(

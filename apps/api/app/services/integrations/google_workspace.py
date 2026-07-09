@@ -16,14 +16,18 @@ Why a fourth Google integration (we already have drive + gmail per-provider):
 Scope set:
     - calendar.readonly          read upcoming meetings
     - documents                  create + edit Google Docs
-    - drive.file                 limited Drive access for the docs we create
-    - drive.readonly              read Meet transcripts saved to the user's Drive
+    - drive.file                 limited Drive access — only files/folders the
+                                  user creates through us, or explicitly grants
+                                  via the Picker (see google_meet_transcripts.py)
     - gmail.send                 send the briefing email
     - openid + email + profile   resolve the user's email
 
-drive.readonly is optional/incremental — declining it on the consent screen
-just means the user doesn't get Meet-transcript auto-ingest (services/
-integrations/google_meet_transcripts.py), everything else keeps working.
+We deliberately do NOT request drive.readonly (blanket "see and download all
+your Google Drive files"). Meet-transcript auto-ingest instead asks the user
+to pick their "Meet Recordings" folder via the Google Picker UI, which grants
+drive.file access scoped to just that folder — see add_folder() in
+google_meet_transcripts.py. Users who never pick a folder simply don't get
+Meet-transcript auto-ingest; everything else keeps working.
 
 This module mirrors the shape of services/integrations/gmail.py: raw httpx,
 no google-api-python-client, refresh handled inline. The Docs/Calendar API
@@ -51,18 +55,11 @@ _SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/drive.file",
-    "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/gmail.send",
     "openid",
     "email",
     "profile",
 ]
-
-DRIVE_READ_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
-
-
-def has_drive_read(scopes: list[str] | None) -> bool:
-    return bool(scopes) and DRIVE_READ_SCOPE in scopes
 
 
 # ── OAuth flow ──────────────────────────────────────────────────────────────

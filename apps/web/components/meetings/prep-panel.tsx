@@ -80,11 +80,6 @@ export function MeetingPrepPanel() {
 
   return (
     <div className="max-w-2xl space-y-6">
-      <p className="text-sm text-muted-foreground">
-        Generate a structured brief grounded in your knowledge base in seconds —
-        for any meeting, whether or not it&apos;s on your calendar.
-      </p>
-
       <div className="space-y-1.5">
         <Label>Meeting type</Label>
         <div className="flex flex-wrap gap-2">
@@ -177,7 +172,7 @@ export function MeetingPrepPanel() {
         ) : (
           <>
             <Sparkles className="h-4 w-4" />
-            Generate meeting brief
+            Generate Prep brief
           </>
         )}
       </Button>
