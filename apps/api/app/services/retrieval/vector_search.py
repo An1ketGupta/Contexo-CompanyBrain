@@ -94,6 +94,7 @@ class VectorRetriever:
         k: int = 10,
         document_id: str | None = None,
         document_ids: list[str] | None = None,
+        min_similarity: float | None = None,
     ) -> list[SearchHit]:
         query = query.strip()
         if not query:
@@ -129,7 +130,14 @@ class VectorRetriever:
             raise
 
         rows = response.data or []
-        return [_row_to_hit(r) for r in rows]
+        hits = [_row_to_hit(r) for r in rows]
+        # Optional relevance floor. RRF (the hybrid caller) fuses *ranks* and
+        # never thresholds, so a semantically-empty query still returns the
+        # corpus's most-central chunks. Callers that would rather get nothing
+        # than junk (e.g. meeting-prep briefs) pass a cosine floor here.
+        if min_similarity is not None:
+            hits = [h for h in hits if h.similarity >= min_similarity]
+        return hits
 
 
 def _row_to_hit(row: dict) -> SearchHit:
@@ -167,6 +175,7 @@ async def vector_search(
     k: int = 10,
     document_id: str | None = None,
     document_ids: list[str] | None = None,
+    min_similarity: float | None = None,
 ) -> list[SearchHit]:
     """Convenience wrapper around the default retriever."""
     return await get_vector_retriever().search(
@@ -176,4 +185,5 @@ async def vector_search(
         k=k,
         document_id=document_id,
         document_ids=document_ids,
+        min_similarity=min_similarity,
     )

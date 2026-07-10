@@ -12,6 +12,7 @@ import {
   ExternalLink,
   FileText,
   HelpCircle,
+  History,
   Loader2,
   RefreshCw,
   Sparkles,
@@ -27,6 +28,7 @@ interface PrepBrief {
   topic_research?: string;
   suggested_questions?: string[];
   source_documents?: { document_id: string; document_name: string }[];
+  prior_meeting?: { title: string | null; date: string | null } | null;
 }
 interface Meeting {
   id: string;
@@ -46,6 +48,42 @@ const fetcher = async (url: string): Promise<Meeting> => {
   if (!res.ok) throw new Error(`Failed (${res.status})`);
   return res.json();
 };
+
+// Deterministic avatar tint per attendee so the same person keeps one colour.
+const ATTENDEE_TINTS = [
+  "bg-brand-tint text-brand",
+  "bg-violet-tint text-violet",
+  "bg-amber-tint text-amber-ink",
+  "bg-success-tint text-success-ink",
+];
+
+function attendeeTint(email: string): string {
+  let h = 0;
+  for (let i = 0; i < email.length; i++) h = (h * 31 + email.charCodeAt(i)) >>> 0;
+  return ATTENDEE_TINTS[h % ATTENDEE_TINTS.length];
+}
+
+// Turn "mnk.gupta2@gmail.com" → "Mnk Gupta" for a readable label.
+function attendeeName(email: string): string {
+  const local = email.split("@")[0] ?? email;
+  const words = local.split(/[._\-+]+/).filter(Boolean);
+  if (!words.length) return email;
+  return words
+    .map((w) => w.replace(/\d+/g, ""))
+    .filter(Boolean)
+    .map((w) => w[0]!.toUpperCase() + w.slice(1))
+    .join(" ") || email;
+}
+
+function attendeeInitials(email: string): string {
+  const name = attendeeName(email);
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const src = parts.length ? parts : [email];
+  return src
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() ?? "")
+    .join("");
+}
 
 const STATUS_BADGE: Record<string, string> = {
   ready: "bg-success-tint text-success-ink",
@@ -122,6 +160,7 @@ export default function MeetingDetailPage() {
   const briefReady = data.prep_brief_status === "ready" && !!pb;
   const isGenerating =
     generating || data.prep_brief_status === "generating";
+  const isSkipped = data.prep_brief_status === "skipped" && !isGenerating;
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6 md:p-8">
@@ -146,10 +185,28 @@ export default function MeetingDetailPage() {
               {new Date(data.end_time).toLocaleTimeString()}
             </p>
             {data.attendee_emails?.length > 0 && (
-              <p className="mt-1 flex items-start gap-1.5 text-xs text-muted-foreground">
-                <Users className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                <span className="min-w-0">{data.attendee_emails.join(", ")}</span>
-              </p>
+              <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground">
+                  <Users className="h-3.5 w-3.5 shrink-0" />
+                  {data.attendee_emails.length}
+                </span>
+                {data.attendee_emails.map((email) => (
+                  <span
+                    key={email}
+                    title={email}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary/60 py-0.5 pl-0.5 pr-2.5 text-xs font-medium text-body"
+                  >
+                    <span
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full font-mono text-[9px] font-bold ${attendeeTint(
+                        email,
+                      )}`}
+                    >
+                      {attendeeInitials(email)}
+                    </span>
+                    {attendeeName(email)}
+                  </span>
+                ))}
+              </div>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-2.5">
               <span
@@ -160,6 +217,15 @@ export default function MeetingDetailPage() {
               >
                 {STATUS_LABEL[data.prep_brief_status] ?? data.prep_brief_status}
               </span>
+              {briefReady && pb?.prior_meeting && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-violet-tint px-2.5 py-0.5 text-[11px] font-medium text-violet">
+                  <History className="h-3 w-3 shrink-0" />
+                  Continued from last meeting
+                  {pb.prior_meeting.date
+                    ? ` · ${new Date(pb.prior_meeting.date).toLocaleDateString()}`
+                    : ""}
+                </span>
+              )}
               {data.meeting_url && (
                 <a
                   href={data.meeting_url}
@@ -216,7 +282,20 @@ export default function MeetingDetailPage() {
         </div>
       ) : null}
 
-      {!briefReady && !isGenerating && !data.prep_brief_error ? (
+      {isSkipped ? (
+        <div className="rounded-xl border border-dashed border-border bg-card px-6 py-12 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-secondary text-muted-foreground">
+            <FileText className="h-5 w-5" />
+          </div>
+          <p className="mt-3 text-sm font-semibold">No relevant context found</p>
+          <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
+            Nothing in your knowledge base matched this meeting&apos;s topic or
+            attendees closely enough to ground a brief.
+          </p>
+        </div>
+      ) : null}
+
+      {!briefReady && !isGenerating && !isSkipped && !data.prep_brief_error ? (
         <div className="rounded-xl border border-dashed border-border bg-card px-6 py-12 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
             <Sparkles className="h-5 w-5" />

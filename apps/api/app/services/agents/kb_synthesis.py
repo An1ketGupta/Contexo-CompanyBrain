@@ -53,16 +53,23 @@ async def search_facet(
     org_id: str,
     k: int = 6,
     char_budget: int = 4000,
+    min_similarity: float | None = None,
 ) -> FacetResult:
     """Run one hybrid search and pack the top hits into a budget-bounded blob.
 
     We pack chunks newest-to-best until char_budget is exhausted. Each hit is
     prefixed with [docname] so the synthesis prompt can cite by name without
     a second SQL round-trip — the model decides which to surface.
+
+    `min_similarity` sets a cosine relevance floor on the vector branch so a
+    vague/empty facet query yields no context instead of the corpus's most
+    central (but irrelevant) chunks. Left None, retrieval is unchanged.
     """
     svc = get_service_client()
     try:
-        hits = await hybrid_search(query=query, org_id=org_id, client=svc, k=k)
+        hits = await hybrid_search(
+            query=query, org_id=org_id, client=svc, k=k, min_similarity=min_similarity
+        )
     except Exception as exc:
         log.warning("kb_synthesis.search_failed facet=%s err=%s", facet, exc)
         return FacetResult(facet=facet, query=query, hits=[], packed_context="")
@@ -105,12 +112,16 @@ async def search_facets_concurrent(
     facets: dict[str, str],
     k: int = 6,
     char_budget_per_facet: int = 4000,
+    min_similarity: float | None = None,
 ) -> dict[str, FacetResult]:
     """Run N facet searches in parallel. Returns a {facet_name: FacetResult} map.
 
     facets shape: {"competitor": "competitive analysis of acme corp", …}
     The dict key is the facet label the caller uses to wire results into the
     synthesis prompt; the value is the actual search query.
+
+    `min_similarity`, when set, is applied uniformly to every facet's vector
+    branch (see `search_facet`).
     """
     if not facets:
         return {}
@@ -126,6 +137,7 @@ async def search_facets_concurrent(
                 org_id=org_id,
                 k=k,
                 char_budget=char_budget_per_facet,
+                min_similarity=min_similarity,
             )
             for name, q in zip(facet_names, queries, strict=False)
         ],
@@ -162,6 +174,49 @@ def collect_sources(facets: dict[str, FacetResult]) -> list[dict[str, Any]]:
                     "section_heading": h.get("section_heading"),
                 }
     return sorted(by_doc.values(), key=lambda r: r.get("similarity") or 0, reverse=True)
+
+
+async def fetch_document_text(
+    *,
+    document_id: str,
+    org_id: str,
+    char_budget: int = 12000,
+) -> str:
+    """Return one document's chunks concatenated in order, packed to a budget.
+
+    Deliberately bypasses `hybrid_search`/the search RPCs: those enforce the
+    migration-084 visibility gate (`d.visibility='org' OR d.created_by =
+    auth.uid()`), and under the service-role client `auth.uid()` is NULL — so a
+    private doc (every Google Meet transcript is `visibility='private'`) would
+    return nothing. Reading the `chunks` table directly with the service client
+    sidesteps that gate. Callers must therefore establish authorization
+    themselves (the prep-brief path scopes to the meeting owner's own docs).
+    """
+    svc = get_service_client()
+
+    def _fetch() -> list[dict[str, Any]]:
+        res = (
+            svc.table("chunks")
+            .select("content, chunk_index")
+            .eq("org_id", org_id)
+            .eq("document_id", document_id)
+            .order("chunk_index")
+            .execute()
+        )
+        return res.data or []
+
+    rows = await asyncio.to_thread(_fetch)
+    parts: list[str] = []
+    total = 0
+    for r in rows:
+        content = (r.get("content") or "").strip()
+        if not content:
+            continue
+        if total + len(content) > char_budget and parts:
+            break
+        parts.append(content)
+        total += len(content)
+    return "\n\n".join(parts)
 
 
 # ── Synthesis ──────────────────────────────────────────────────────────────

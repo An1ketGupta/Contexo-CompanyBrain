@@ -123,12 +123,57 @@ async def list_meeting_summaries(
                 "source_document_name": name_map.get(r.get("source_document_id") or ""),
             }
         )
+
+    # Transcript uploads ride the shared document pipeline, so a transcript
+    # that's still processing or that failed to parse only exists as a
+    # `documents` row — no summary has been produced yet. Surface those here
+    # (first page only) so the uploader sees the status and any error on the
+    # page they uploaded from, instead of having to hunt it down in the
+    # Documents list. Ready transcripts already appear above via their summary,
+    # so filtering to the non-ready states avoids double-listing.
+    pending = await _list_pending_transcripts(svc, org_id) if offset == 0 else []
+
     return {
         "summaries": out,
+        "pending": pending,
         "total": res.count or len(out),
         "limit": limit,
         "offset": offset,
     }
+
+
+_TRANSCRIPT_FILE_TYPES = ("vtt", "teams_transcript")
+
+
+async def _list_pending_transcripts(svc: Any, org_id: str) -> list[dict[str, Any]]:
+    """Transcript documents that haven't produced a summary yet: still
+    processing, or failed during parse/ingest. Ready ones are excluded — they
+    already show up as summaries."""
+    res = await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .select("id, name, file_type, status, metadata, created_at")
+        .eq("org_id", org_id)
+        .in_("file_type", list(_TRANSCRIPT_FILE_TYPES))
+        .in_("status", ["pending", "processing", "failed"])
+        .order("created_at", desc=True)
+        .limit(20)
+        .execute()
+    )
+    items: list[dict[str, Any]] = []
+    for d in res.data or []:
+        meta = d.get("metadata") or {}
+        error = meta.get("error_reason") if d.get("status") == "failed" else None
+        items.append(
+            {
+                "document_id": d["id"],
+                "name": d.get("name") or "Untitled transcript",
+                "file_type": d.get("file_type") or "vtt",
+                "status": d.get("status"),
+                "error": error,
+                "created_at": d.get("created_at"),
+            }
+        )
+    return items
 
 
 @router.get("/{summary_id}")

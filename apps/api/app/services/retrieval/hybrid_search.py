@@ -149,6 +149,7 @@ class HybridRetriever(Retriever):
         k: int = DEFAULT_FINAL_K,
         document_id: str | None = None,
         document_ids: list[str] | None = None,
+        min_similarity: float | None = None,
     ) -> list[SearchHit]:
         query = query.strip()
         if not query:
@@ -167,6 +168,7 @@ class HybridRetriever(Retriever):
             k=self._branch_k,
             document_id=document_id,
             document_ids=document_ids,
+            min_similarity=min_similarity,
         )
         fts_task = self.fts.search(
             query=query,
@@ -184,6 +186,12 @@ class HybridRetriever(Retriever):
         fts_hits = _unwrap(results[1], "fts")
 
         if not vector_hits and not fts_hits:
+            return []
+        # When the caller asked for a cosine relevance floor and the vector
+        # branch cleared none, don't let the FTS-only fallback smuggle results
+        # back in: ts_rank is on an incomparable scale, so an FTS keyword match
+        # carries no guarantee of the semantic relevance the floor demanded.
+        if min_similarity is not None and not vector_hits:
             return []
         if not fts_hits:
             fused = list(vector_hits[:k])
@@ -267,6 +275,7 @@ async def hybrid_search(
     k: int = DEFAULT_FINAL_K,
     document_id: str | None = None,
     document_ids: list[str] | None = None,
+    min_similarity: float | None = None,
 ) -> list[SearchHit]:
     """Convenience wrapper around the default hybrid retriever."""
     return await get_hybrid_retriever().search(
@@ -276,4 +285,5 @@ async def hybrid_search(
         k=k,
         document_id=document_id,
         document_ids=document_ids,
+        min_similarity=min_similarity,
     )

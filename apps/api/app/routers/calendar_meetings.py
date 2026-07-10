@@ -131,7 +131,9 @@ async def generate_brief(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found.")
 
     try:
-        row = await calendar_intelligence.generate_meeting_prep_brief(meeting_id=meeting_id)
+        row = await calendar_intelligence.generate_meeting_prep_brief(
+            meeting_id=meeting_id, force=True
+        )
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     return row

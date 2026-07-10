@@ -95,6 +95,9 @@ async def list_upcoming_events(
                 "attendees": attendees,
                 "meeting_url": _extract_meeting_url(ev),
                 "html_link": ev.get("htmlLink"),
+                # Shared across every instance of a recurring series (Google
+                # still supplies it under singleEvents=true). NULL for one-offs.
+                "recurring_event_id": ev.get("recurringEventId"),
             }
         )
     return out

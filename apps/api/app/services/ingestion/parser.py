@@ -67,8 +67,7 @@ def parse_document(file_bytes: bytes, file_type: str) -> list[RawSegment]:
 
     if not segments or not any(s.content.strip() for s in segments):
         raise EmptyDocumentError(
-            "No extractable text found. The document may be a scanned/image-only PDF "
-            "or contain no recognizable content."
+            "No extractable text found."
         )
     return segments
 

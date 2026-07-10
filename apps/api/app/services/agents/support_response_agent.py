@@ -40,6 +40,12 @@ from app.observability import get_logger
 from app.services.agents.base_agent import BaseAgent
 from app.services.integrations import slack as slack_service
 from app.services.llm.task_chain import execute_task_blocking
+from app.services.support_delivery import (
+    DEFAULT_AUTOSEND_THRESHOLD,
+    ESCALATION_MARKER as _ESCALATION_MARKER,
+    deliver_ticket_reply,
+    resolve_autosend_sender,
+)
 
 log = get_logger(__name__)
 
@@ -52,6 +58,22 @@ _DRAFT_BODY_CAP = 2000
 # How many source chunks to keep on the ticket for the reviewer panel.
 # More than this is noise; the chat retrieval already capped at 8 by default.
 _DRAFT_SOURCE_CAP = 6
+
+# The escalation sentinel (`_ESCALATION_MARKER`) is imported from
+# support_delivery so the confidence floor here and the metrics endpoint's
+# escalation counting both key off one phrase that stays in sync with the prompt.
+
+# Confidence floor stamped on escalation drafts so the queue + Slack badge always
+# render red (< 4), regardless of how many irrelevant chunks retrieval returned.
+_ESCALATION_CONFIDENCE = 1.0
+
+# Canned replies reuse the existing prompt_templates library (migration 018) —
+# admins author them in Settings → Templates under these categories, and the
+# agent offers them to the model as approved phrasing to adapt. No support-
+# specific table: 'Customer Response' / 'Email' already exist as categories.
+_REPLY_TEMPLATE_CATEGORIES = ("Customer Response", "Email")
+_MAX_REPLY_TEMPLATES = 5        # keep the prompt bounded — top N by use_count
+_REPLY_TEMPLATE_TEXT_CAP = 800  # per-template char cap in the prompt
 
 
 class SupportResponseAgent(BaseAgent):
@@ -85,8 +107,11 @@ class SupportResponseAgent(BaseAgent):
         await self.log_step("create_ticket", "completed", {"ticket_id": ticket_id})
 
         # ── Step 2: draft via execute_task_blocking ────────────────────
-        await self.log_step("draft_response", "started")
-        draft_prompt = self._build_draft_prompt()
+        templates = await self._fetch_reply_templates()
+        await self.log_step(
+            "draft_response", "started", {"reply_templates": len(templates)},
+        )
+        draft_prompt = self._build_draft_prompt(templates)
         try:
             draft = await execute_task_blocking(
                 user_message=draft_prompt,
@@ -106,13 +131,24 @@ class SupportResponseAgent(BaseAgent):
             await self._mark_ticket(ticket_id, status="drafting_failed")
             return {"ticket_id": ticket_id, "status": "drafting_failed"}
 
+        body = draft.text.strip()[:_DRAFT_BODY_CAP]
+        sources = (draft.sources or [])[:_DRAFT_SOURCE_CAP]
+
         # Confidence proxy — execute_task doesn't surface a score directly
         # (the chat UI computes it from chunk similarities). We piggy-back on
         # source count + first source similarity so the queue triage UI
         # always has a number to sort by. 0..10 to match messages.metadata.
-        confidence = self._estimate_confidence(draft.sources)
-        body = draft.text.strip()[:_DRAFT_BODY_CAP]
-        sources = (draft.sources or [])[:_DRAFT_SOURCE_CAP]
+        #
+        # But when the model emits the escalation fallback (KB doesn't cover
+        # the question) retrieval count is meaningless — the nearest chunks got
+        # pulled but answered nothing. Scoring those as 7/10 paints a 🟢 badge
+        # on a draft that literally says "I don't know", inverting the triage
+        # signal the queue exists for. Floor escalations so they always badge red.
+        is_escalation = self._is_escalation_draft(body)
+        confidence = (
+            _ESCALATION_CONFIDENCE if is_escalation
+            else self._estimate_confidence(sources)
+        )
         self.add_confidence(confidence)
         await self.log_step(
             "draft_response", "completed",
@@ -120,6 +156,7 @@ class SupportResponseAgent(BaseAgent):
                 "body_chars": len(body),
                 "source_count": len(sources),
                 "confidence": confidence,
+                "escalation": is_escalation,
             },
         )
 
@@ -140,13 +177,26 @@ class SupportResponseAgent(BaseAgent):
             await self.log_step("persist_draft", "failed", error=str(exc))
             raise
 
-        # ── Step 4: best-effort Slack ping ─────────────────────────────
-        await self._maybe_notify_support_channel(ticket_id=ticket_id, confidence=confidence)
+        # ── Step 4: maybe auto-send (opt-in, high-confidence only) ─────
+        final_status = await self._maybe_auto_send(
+            ticket_id=ticket_id,
+            body=body,
+            confidence=confidence,
+            is_escalation=is_escalation,
+        )
+
+        # ── Step 5: best-effort Slack ping ─────────────────────────────
+        await self._maybe_notify_support_channel(
+            ticket_id=ticket_id,
+            confidence=confidence,
+            auto_sent=(final_status == "auto_sent"),
+        )
 
         return {
             "ticket_id": ticket_id,
-            "status": "drafted",
+            "status": final_status,
             "confidence": confidence,
+            "escalation": is_escalation,
             "source_count": len(sources),
         }
 
@@ -209,7 +259,33 @@ class SupportResponseAgent(BaseAgent):
             )
             return existing_id
 
-    def _build_draft_prompt(self) -> str:
+    async def _fetch_reply_templates(self) -> list[dict[str, Any]]:
+        """Pull the org's approved reply templates from prompt_templates.
+
+        Only org-shared and built-in templates in the reply categories — a
+        member's *private* template (is_shared=false, non-builtin) belongs to
+        one person and the agent has no user context, so it's excluded. Ordered
+        by use_count so the most-relied-on phrasing wins the prompt budget.
+        """
+        svc = get_service_client()
+        try:
+            res = await asyncio.to_thread(
+                lambda: svc.table("prompt_templates")
+                .select("title, description, template_text, category, is_builtin")
+                .in_("category", list(_REPLY_TEMPLATE_CATEGORIES))
+                .or_(f"and(org_id.eq.{self.org_id},is_shared.eq.true),is_builtin.eq.true")
+                .order("use_count", desc=True)
+                .limit(_MAX_REPLY_TEMPLATES)
+                .execute()
+            )
+            return res.data or []
+        except Exception as exc:
+            # Templates are an enhancement, never a hard dependency — a query
+            # error must not block drafting.
+            log.warning("support_reply_templates_fetch_failed", org_id=self.org_id, error=str(exc))
+            return []
+
+    def _build_draft_prompt(self, templates: list[dict[str, Any]] | None = None) -> str:
         """Prompt is intentionally specific. Generic 'write a helpful reply'
         prompts produce generic-sounding text. We force the model to:
             - keep replies short (under 200 words)
@@ -217,6 +293,7 @@ class SupportResponseAgent(BaseAgent):
               the search tool)
             - say "I'm not sure" rather than fabricate
             - skip the salutation prefix (we add 'Hi <name>' on send)
+            - prefer an approved reply template when one fits the question
         """
         subject = self.ticket.get("subject") or "(no subject)"
         body = (self.ticket.get("body") or "")[:4000]
@@ -227,6 +304,7 @@ class SupportResponseAgent(BaseAgent):
             f"Inbound email from {from_name}:\n"
             f"  Subject: {subject}\n"
             f"  Body: {body}\n\n"
+            f"{self._render_templates_block(templates)}"
             "Draft a response under 200 words. Match a professional, warm "
             "tone — like a senior support engineer who knows the product. "
             "Search the company knowledge base for relevant policies, prices, "
@@ -243,6 +321,39 @@ class SupportResponseAgent(BaseAgent):
             "    and stop. A human will rewrite the rest.\n"
             "  - Plain text only, no markdown or HTML."
         )
+
+    @staticmethod
+    def _render_templates_block(templates: list[dict[str, Any]] | None) -> str:
+        """Format approved reply templates as a prompt section. Empty string
+        when there are none so the base prompt is byte-for-byte unchanged."""
+        if not templates:
+            return ""
+        lines = [
+            "Approved reply templates (author-vetted phrasing for common "
+            "questions). If one clearly fits this customer's question, use it as "
+            "the basis for your reply and adapt the specifics from the knowledge "
+            "base. If none fit, ignore them and draft normally:\n",
+        ]
+        for i, t in enumerate(templates, 1):
+            title = (t.get("title") or "Untitled").strip()
+            desc = (t.get("description") or "").strip()
+            text = (t.get("template_text") or "").strip()[:_REPLY_TEMPLATE_TEXT_CAP]
+            when = f" — use when: {desc}" if desc else ""
+            lines.append(f"  {i}. {title}{when}\n     {text}\n")
+        lines.append("\n")
+        return "".join(lines)
+
+    @staticmethod
+    def _is_escalation_draft(body: str) -> bool:
+        """True when the draft is the KB-miss escalation fallback.
+
+        The draft prompt instructs the model to emit '…escalating to a
+        teammate.' verbatim when the knowledge base doesn't cover the
+        question. We match on the distinctive tail phrase (not the whole
+        sentence) so a punctuation/quote swap or a leading word doesn't slip
+        an escalation through scored as if it were a real answer.
+        """
+        return _ESCALATION_MARKER in body.lower()
 
     @staticmethod
     def _estimate_confidence(sources: list[dict] | None) -> float:
@@ -283,8 +394,82 @@ class SupportResponseAgent(BaseAgent):
         except Exception as exc:
             log.warning("support_ticket_status_update_failed", ticket_id=ticket_id, error=str(exc))
 
+    async def _maybe_auto_send(
+        self, *, ticket_id: str, body: str, confidence: float, is_escalation: bool,
+    ) -> str:
+        """Auto-send the draft when the org opted in and it clears the bar.
+
+        Returns the resulting ticket status ('auto_sent' or 'drafted'). All of
+        these must hold or the ticket stays 'drafted' in the review queue:
+
+          * org enabled auto-send (metadata.support_autosend_enabled)
+          * confidence >= org threshold (default DEFAULT_AUTOSEND_THRESHOLD)
+          * NOT an escalation draft (belt-and-suspenders — escalations are
+            already floored to 1.0 upstream so they can't clear the bar)
+          * an eligible connected Gmail sender exists
+
+        Auto-send never *blocks* a draft from reaching a human — every miss
+        (and every send error) simply leaves it for manual review.
+        """
+        if is_escalation:
+            return "drafted"
+
+        svc = get_service_client()
+        org_row = await asyncio.to_thread(
+            lambda: svc.table("organizations")
+            .select("metadata").eq("id", self.org_id).maybe_single().execute()
+        )
+        meta = (org_row.data or {}).get("metadata") or {} if org_row and org_row.data else {}
+        if not meta.get("support_autosend_enabled"):
+            await self.log_step("auto_send", "skipped", {"reason": "disabled"})
+            return "drafted"
+
+        threshold = float(meta.get("support_autosend_threshold", DEFAULT_AUTOSEND_THRESHOLD))
+        if confidence < threshold:
+            await self.log_step(
+                "auto_send", "skipped",
+                {"reason": "below_threshold", "confidence": confidence, "threshold": threshold},
+            )
+            return "drafted"
+
+        sender_user_id = await resolve_autosend_sender(self.org_id)
+        if not sender_user_id:
+            await self.log_step("auto_send", "skipped", {"reason": "no_connected_sender"})
+            return "drafted"
+
+        # Re-read the ticket so delivery mints the outgoing message from the
+        # persisted draft body + sources + confidence.
+        ticket_row = await asyncio.to_thread(
+            lambda: svc.table("support_tickets").select("*")
+            .eq("id", ticket_id).maybe_single().execute()
+        )
+        ticket = (ticket_row.data or {}) if ticket_row else {}
+        if not ticket.get("from_email"):
+            await self.log_step("auto_send", "skipped", {"reason": "missing_recipient"})
+            return "drafted"
+
+        await self.log_step("auto_send", "started", {"threshold": threshold})
+        try:
+            result = await deliver_ticket_reply(
+                org_id=self.org_id,
+                sender_user_id=sender_user_id,
+                ticket=ticket,
+                body=body,
+                status="auto_sent",
+            )
+            await self.log_step(
+                "auto_send", "completed",
+                {"to": result.get("to"), "message_id": result.get("message_id")},
+            )
+            return "auto_sent"
+        except Exception as exc:
+            # Send failure must not fail the run — the draft is safely persisted;
+            # leave it in the queue for a human to send manually.
+            await self.log_step("auto_send", "failed", error=str(exc))
+            return "drafted"
+
     async def _maybe_notify_support_channel(
-        self, *, ticket_id: str, confidence: float
+        self, *, ticket_id: str, confidence: float, auto_sent: bool = False,
     ) -> None:
         """Post a notification to the configured Slack support channel.
 
@@ -317,12 +502,20 @@ class SupportResponseAgent(BaseAgent):
             subject = (self.ticket.get("subject") or "(no subject)").strip()
             from_email = (self.ticket.get("from_email") or "unknown").strip()
             badge = "🟢" if confidence >= 7 else "🟡" if confidence >= 4 else "🔴"
-            text = (
-                f"📧 *New {self.ticket.get('category') or 'support'} email from {from_email}*\n"
-                f"*Subject:* {subject}\n"
-                f"{badge} Draft confidence: {confidence:.1f}/10\n"
-                f"<{ticket_url}|Review & send draft>"
-            )
+            if auto_sent:
+                text = (
+                    f"📤 *Auto-sent {self.ticket.get('category') or 'support'} reply to {from_email}*\n"
+                    f"*Subject:* {subject}\n"
+                    f"{badge} Confidence: {confidence:.1f}/10 — cleared the auto-send bar\n"
+                    f"<{ticket_url}|View sent reply>"
+                )
+            else:
+                text = (
+                    f"📧 *New {self.ticket.get('category') or 'support'} email from {from_email}*\n"
+                    f"*Subject:* {subject}\n"
+                    f"{badge} Draft confidence: {confidence:.1f}/10\n"
+                    f"<{ticket_url}|Review & send draft>"
+                )
             await self.log_step("notify_support_team", "started", {"channel_id": channel_id})
             await slack_service.post_message(
                 org_id=self.org_id,

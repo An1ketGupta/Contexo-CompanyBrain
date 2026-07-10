@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import inngest as inngest_pkg
@@ -41,6 +41,11 @@ from app.errors import NoOrganization
 from app.inngest.client import get_inngest_client
 from app.observability import get_logger
 from app.services.integrations import slack as slack_service
+from app.services.support_delivery import (
+    DEFAULT_AUTOSEND_THRESHOLD,
+    deliver_ticket_reply,
+    is_escalation_body,
+)
 
 log = get_logger(__name__)
 
@@ -138,6 +143,31 @@ class SupportChannelResponse(BaseModel):
     channel_name: str | None
 
 
+class AutoSendSettings(BaseModel):
+    """Per-org auto-send config. Off by default — human-in-the-loop stays the
+    default posture; an admin opts in explicitly."""
+    enabled: bool = False
+    threshold: float = Field(default=DEFAULT_AUTOSEND_THRESHOLD, ge=0, le=10)
+    sender_user_id: str | None = Field(default=None, max_length=64)
+
+
+class SupportMetrics(BaseModel):
+    window_days: int
+    total_tickets: int
+    by_status: dict[str, int]
+    drafts_total: int
+    escalations: int
+    escalation_rate: float          # escalations / drafts_total
+    sent: int
+    auto_sent: int
+    rejected: int
+    resolved: int                   # sent + auto_sent + rejected
+    resolved_rate: float            # resolved / total_tickets
+    auto_send_rate: float           # auto_sent / (sent + auto_sent)
+    avg_confidence: float | None    # mean confidence of non-escalation drafts
+    avg_time_to_resolve_seconds: float | None
+
+
 # ── List + detail ───────────────────────────────────────────────────────────
 
 
@@ -233,6 +263,149 @@ async def set_support_channel(
     return SupportChannelResponse(
         channel_id=new_meta.get("support_channel_id"),
         channel_name=new_meta.get("support_channel_name"),
+    )
+
+
+def _autosend_from_meta(meta: dict[str, Any]) -> AutoSendSettings:
+    return AutoSendSettings(
+        enabled=bool(meta.get("support_autosend_enabled", False)),
+        threshold=float(meta.get("support_autosend_threshold", DEFAULT_AUTOSEND_THRESHOLD)),
+        sender_user_id=meta.get("support_sender_user_id"),
+    )
+
+
+@router.get("/settings/auto-send", response_model=AutoSendSettings)
+async def get_autosend_settings(
+    current_user: dict = Depends(verify_jwt),
+) -> AutoSendSettings:
+    user_id, org_id, token = _require_user(current_user)
+    await _require_admin(user_id=user_id, token=token)
+
+    svc = get_service_client()
+    row = await asyncio.to_thread(
+        lambda: svc.table("organizations")
+        .select("metadata").eq("id", org_id).maybe_single().execute()
+    )
+    meta = (row.data or {}).get("metadata") or {} if row and row.data else {}
+    return _autosend_from_meta(meta)
+
+
+@router.put("/settings/auto-send", response_model=AutoSendSettings)
+async def set_autosend_settings(
+    body: AutoSendSettings,
+    current_user: dict = Depends(verify_jwt),
+) -> AutoSendSettings:
+    user_id, org_id, token = _require_user(current_user)
+    await _require_admin(user_id=user_id, token=token)
+
+    svc = get_service_client()
+
+    def _run() -> dict[str, Any]:
+        existing = (
+            svc.table("organizations")
+            .select("metadata").eq("id", org_id).maybe_single().execute()
+        )
+        meta = (existing.data or {}).get("metadata") if existing and existing.data else {}
+        meta = meta or {}
+        meta["support_autosend_enabled"] = body.enabled
+        meta["support_autosend_threshold"] = body.threshold
+        if body.sender_user_id:
+            meta["support_sender_user_id"] = body.sender_user_id
+        else:
+            meta.pop("support_sender_user_id", None)
+        svc.table("organizations").update({"metadata": meta}).eq("id", org_id).execute()
+        return meta
+
+    new_meta = await asyncio.to_thread(_run)
+    return _autosend_from_meta(new_meta)
+
+
+def _parse_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+@router.get("/metrics", response_model=SupportMetrics)
+async def support_metrics(
+    window_days: int = Query(default=30, ge=1, le=365),
+    current_user: dict = Depends(verify_jwt),
+) -> SupportMetrics:
+    """Queue health over a rolling window. Everything is derived from
+    support_tickets so the dashboard needs no extra bookkeeping table.
+
+    Escalations are counted from the draft body sentinel (not the confidence
+    floor) so the rate reflects genuine "AI couldn't answer" outcomes rather
+    than any low score."""
+    user_id, org_id, token = _require_user(current_user)
+    await _require_admin(user_id=user_id, token=token)
+
+    svc = get_service_client()
+    since = (datetime.now(UTC) - timedelta(days=window_days)).isoformat()
+
+    result = await asyncio.to_thread(
+        lambda: svc.table("support_tickets")
+        .select("status, ai_draft_body, ai_draft_confidence, created_at, resolved_at")
+        .eq("org_id", org_id)
+        .gte("created_at", since)
+        .execute()
+    )
+    rows = result.data or []
+    total = len(rows)
+
+    by_status: dict[str, int] = {}
+    drafts_total = 0
+    escalations = 0
+    conf_sum = 0.0
+    conf_n = 0
+    resolve_secs: list[float] = []
+
+    for r in rows:
+        status = r.get("status") or "unknown"
+        by_status[status] = by_status.get(status, 0) + 1
+
+        body = r.get("ai_draft_body")
+        if body:
+            drafts_total += 1
+            if is_escalation_body(body):
+                escalations += 1
+            else:
+                conf = r.get("ai_draft_confidence")
+                if conf is not None:
+                    conf_sum += float(conf)
+                    conf_n += 1
+
+        created = _parse_ts(r.get("created_at"))
+        resolved = _parse_ts(r.get("resolved_at"))
+        if created and resolved and resolved >= created:
+            resolve_secs.append((resolved - created).total_seconds())
+
+    sent = by_status.get("sent", 0)
+    auto_sent = by_status.get("auto_sent", 0)
+    rejected = by_status.get("rejected", 0)
+    resolved_count = sent + auto_sent + rejected
+    sent_any = sent + auto_sent
+
+    return SupportMetrics(
+        window_days=window_days,
+        total_tickets=total,
+        by_status=by_status,
+        drafts_total=drafts_total,
+        escalations=escalations,
+        escalation_rate=round(escalations / drafts_total, 3) if drafts_total else 0.0,
+        sent=sent,
+        auto_sent=auto_sent,
+        rejected=rejected,
+        resolved=resolved_count,
+        resolved_rate=round(resolved_count / total, 3) if total else 0.0,
+        auto_send_rate=round(auto_sent / sent_any, 3) if sent_any else 0.0,
+        avg_confidence=round(conf_sum / conf_n, 2) if conf_n else None,
+        avg_time_to_resolve_seconds=(
+            round(sum(resolve_secs) / len(resolve_secs), 1) if resolve_secs else None
+        ),
     )
 
 
@@ -378,111 +551,17 @@ async def send_ticket(
     if not gmail_service.has_send_scope(scopes):
         raise HTTPException(status_code=403, detail="gmail_send_scope_missing")
 
-    subject = body.subject or f"Re: {ticket.get('subject') or ''}".strip()
-    if len(subject) > 998:
-        subject = subject[:998]
-
-    # 1. Conversation row (admin-owned, hidden by default in chat list via title prefix).
-    conversation_id = str(uuid.uuid4())
-    await asyncio.to_thread(
-        lambda: svc.table("conversations").insert({
-            "id": conversation_id,
-            "org_id": org_id,
-            "user_id": user_id,
-            "title": f"Support: {(ticket.get('subject') or '(no subject)')[:80]}",
-        }).execute()
-    )
-
-    # 2. User-role message — the inbound email body for posterity.
-    inbound_msg_id = str(uuid.uuid4())
-    await asyncio.to_thread(
-        lambda: svc.table("messages").insert({
-            "id": inbound_msg_id,
-            "conversation_id": conversation_id,
-            "org_id": org_id,
-            "role": "user",
-            "content": (
-                f"Inbound support email\n"
-                f"From: {ticket.get('from_email')}\n"
-                f"Subject: {ticket.get('subject') or ''}\n\n"
-                f"{ticket.get('body') or ''}"
-            ),
-            "sources": None,
-        }).execute()
-    )
-
-    # 3. Assistant-role message — the draft (possibly edited by the admin
-    #    in the UI before clicking send). We carry the sources from the
-    #    agent run so the audit shows what the AI cited.
-    draft_msg_id = str(uuid.uuid4())
-    confidence = ticket.get("ai_draft_confidence")
-    metadata: dict[str, Any] = {}
-    if confidence is not None:
-        metadata["confidence"] = {"score": confidence}
-    await asyncio.to_thread(
-        lambda: svc.table("messages").insert({
-            "id": draft_msg_id,
-            "conversation_id": conversation_id,
-            "org_id": org_id,
-            "role": "assistant",
-            "content": body.body,
-            "sources": ticket.get("ai_draft_sources"),
-            "metadata": metadata or None,
-        }).execute()
-    )
-
-    # 4. Link draft back to ticket, optimistic state for the queue UI.
-    await asyncio.to_thread(
-        lambda: svc.table("support_tickets")
-        .update({
-            "ai_draft_message_id": draft_msg_id,
-            "status": "sent",
-            "resolved_by": user_id,
-            "resolved_at": datetime.now(UTC).isoformat(),
-        })
-        .eq("id", ticket_id)
-        .execute()
-    )
-
-    # 5. Fan to Gmail send pipeline. We replicate the gmail_router's send
-    #    semantics here — stamp delivery_status optimistically, then queue
-    #    the Inngest event. This is preferred over an HTTP self-call.
-    job_id = str(uuid.uuid4())
-    queued_at = datetime.now(UTC).isoformat()
-    await asyncio.to_thread(
-        lambda: svc.table("messages")
-        .update({
-            "delivery_status": {
-                "channel": "gmail",
-                "status": "queued",
-                "recipient": ticket["from_email"],
-                "job_id": job_id,
-                "queued_at": queued_at,
-            }
-        })
-        .eq("id", draft_msg_id)
-        .execute()
-    )
-    client = get_inngest_client()
-    await client.send(
-        inngest_pkg.Event(
-            name="gmail/send-email",
-            data={
-                "job_id": job_id,
-                "message_id": draft_msg_id,
-                "org_id": org_id,
-                "user_id": user_id,
-                "to": ticket["from_email"],
-                "subject": subject,
-                "body": body.body,
-                "cc": body.cc,
-                "reply_to": None,
-            },
-            id=f"gmail-send-{job_id}",
-        )
+    result = await deliver_ticket_reply(
+        org_id=org_id,
+        sender_user_id=user_id,
+        ticket=ticket,
+        body=body.body,
+        subject=body.subject,
+        cc=body.cc,
+        status="sent",
     )
     return TicketActionResponse(
-        ok=True, status="sent", detail=f"Reply queued to {ticket['from_email']}.",
+        ok=True, status="sent", detail=f"Reply queued to {result['to']}.",
     )
 
 

@@ -327,23 +327,6 @@ export default function MeetingDetailPage() {
           )}
         </ul>
       </section>
-
-      {data.derived_document_id ? (
-        <div className="flex items-start gap-2.5 rounded-xl border border-border bg-muted/40 p-4 text-xs text-muted-foreground">
-          <FileText className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
-          <p>
-            The structured body of this meeting is also indexed as a searchable
-            document.{" "}
-            <Link
-              href={`/documents?focus=${data.derived_document_id}`}
-              className="font-medium text-brand hover:underline"
-            >
-              Open &ldquo;{data.derived_document_name ?? "Meeting summary"}&rdquo;
-            </Link>
-            .
-          </p>
-        </div>
-      ) : null}
     </div>
   );
 }

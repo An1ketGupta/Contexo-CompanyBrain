@@ -11,7 +11,6 @@ from .duplicate_detection_functions import FUNCTIONS as _DUPLICATE_DETECTION_FUN
 from .announcement_functions import FUNCTIONS as _ANNOUNCEMENT_FUNCTIONS
 from .sequence_functions import FUNCTIONS as _SEQUENCE_FUNCTIONS
 from .calendar_functions import FUNCTIONS as _CALENDAR_FUNCTIONS
-from .action_item_functions import FUNCTIONS as _ACTION_ITEM_FUNCTIONS
 from .quality_functions import FUNCTIONS as _QUALITY_FUNCTIONS
 from .client import get_inngest_client
 from .compliance_functions import FUNCTIONS as _COMPLIANCE_FUNCTIONS
@@ -77,7 +76,6 @@ FUNCTIONS = [
     *_SEQUENCE_FUNCTIONS,
     *_ANNOUNCEMENT_FUNCTIONS,
     *_CALENDAR_FUNCTIONS,
-    *_ACTION_ITEM_FUNCTIONS,
     *_QUALITY_FUNCTIONS,
 ]
 

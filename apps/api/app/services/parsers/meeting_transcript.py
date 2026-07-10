@@ -120,10 +120,14 @@ def parse_transcript(*, file_type: str | None, content: str) -> MeetingTranscrip
 # ── Zoom WebVTT ─────────────────────────────────────────────────────────────
 
 # VTT cue header:
-#   00:00:01.500 --> 00:00:04.200
+#   00:00:01.500 --> 00:00:04.200        (hh:mm:ss.ttt)
+#   00:01.500 --> 00:04.200              (mm:ss.ttt — the hours group is
+#                                         optional per the WebVTT spec for
+#                                         cues under an hour; some tooling and
+#                                         non-Zoom exports emit this form)
 # Optional cue identifier line above the timestamp (digits or any string).
 _VTT_TS_RE = re.compile(
-    r"^\s*(\d{1,2}:\d{2}:\d{2}\.\d{1,3})\s+-->\s+(\d{1,2}:\d{2}:\d{2}\.\d{1,3})"
+    r"^\s*((?:\d{1,2}:)?\d{1,2}:\d{2}\.\d{1,3})\s+-->\s+((?:\d{1,2}:)?\d{1,2}:\d{2}\.\d{1,3})"
 )
 # Speaker line: "Speaker Name: <text>". Zoom sometimes prefixes a <v Speaker>
 # tag — strip both forms.
@@ -132,8 +136,14 @@ _VTT_SPEAKER_RE = re.compile(r"^([A-Za-z][^:\n]{1,80}):\s*(.*)$")
 
 
 def _parse_ts(ts: str) -> int:
-    """HH:MM:SS.sss → milliseconds."""
-    h, m, rest = ts.split(":", 2)
+    """`HH:MM:SS.sss` or `MM:SS.sss` → milliseconds."""
+    parts = ts.split(":")
+    if len(parts) == 3:
+        h, m, rest = parts
+    elif len(parts) == 2:
+        h, m, rest = "0", parts[0], parts[1]
+    else:
+        raise ValueError(f"unrecognized timestamp: {ts!r}")
     s, _, frac = rest.partition(".")
     ms_part = int((frac or "0").ljust(3, "0")[:3])
     return ((int(h) * 60 + int(m)) * 60 + int(s)) * 1000 + ms_part
@@ -154,8 +164,12 @@ def parse_zoom_vtt(content: str) -> MeetingTranscript:
 
     text = content.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
     if not text.lstrip().startswith("WEBVTT"):
-        # Strict-mode bail; the file claimed to be VTT but isn't.
-        return MeetingTranscript(format="zoom_vtt")
+        # Not a real WebVTT file. Rather than bailing, fall back to the
+        # bracketed-timestamp transcript form ("[00:00:24]\nSpeaker: text"),
+        # which many tools export with a misleading `.vtt` extension. If that
+        # finds nothing either, the empty result becomes EmptyDocumentError
+        # upstream — same as genuine garbage.
+        return _parse_bracketed_transcript(text)
 
     lines = text.split("\n")
     utterances: list[ParsedUtterance] = []
@@ -227,6 +241,97 @@ def parse_zoom_vtt(content: str) -> MeetingTranscript:
         utterances=tuple(utterances),
         speakers=tuple(speakers_order),
         duration_ms=duration_ms,
+    )
+
+
+# A timestamp on its own line: "[00:00:24]" or "[12:34]". The hours group is
+# optional. Anchored to the full (stripped) line so inline markers embedded in
+# running text — e.g. "…the [00:02:00] floppy disk…" — are left untouched.
+_BRACKET_TS_LINE_RE = re.compile(r"^\[((?:\d{1,2}:)?\d{1,2}:\d{2})\]\s*$")
+
+
+def _parse_bracketed_transcript(text: str) -> MeetingTranscript:
+    """Parse a plain-text transcript that uses bracketed timestamps rather
+    than WebVTT cues:
+
+        [00:00:24]
+        Interviewer 1: Just this week you surpassed Microsoft...
+
+        [00:00:35]
+        Interviewee: Um... it doesn't matter very much.
+
+    The timestamp sits alone on a line; the speaker/text block follows until a
+    blank line or the next timestamp. Speaker attribution reuses the same
+    `Speaker: text` extraction as the WebVTT path, and a turn with no explicit
+    speaker inherits the previous one.
+    """
+    lines = text.split("\n")
+    utterances: list[ParsedUtterance] = []
+    speakers_order: list[str] = []
+    speakers_seen: set[str] = set()
+    duration_ms: int | None = None
+    last_speaker: str = "Unknown Speaker"
+    pending_ts: int | None = None
+
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i].strip()
+        if not line:
+            i += 1
+            continue
+
+        ts_m = _BRACKET_TS_LINE_RE.match(line)
+        if ts_m:
+            try:
+                pending_ts = _parse_ts(ts_m.group(1))
+            except ValueError:
+                pending_ts = None
+            duration_ms = max(duration_ms or 0, pending_ts or 0)
+            i += 1
+            continue
+
+        # Gather the utterance body: consecutive non-empty lines that aren't a
+        # new timestamp line.
+        block_lines: list[str] = []
+        while i < n:
+            cur = lines[i].strip()
+            if cur == "" or _BRACKET_TS_LINE_RE.match(cur):
+                break
+            block_lines.append(cur)
+            i += 1
+        block_text = " ".join(block_lines).strip()
+        if not block_text:
+            continue
+
+        speaker = last_speaker
+        body_text = block_text
+        speaker_m = _VTT_SPEAKER_RE.match(block_text)
+        if speaker_m:
+            candidate = speaker_m.group(1).strip()
+            if len(candidate) <= 80 and not any(ch in candidate for ch in ".!?"):
+                speaker = candidate
+                body_text = speaker_m.group(2).strip()
+
+        body_text = body_text.strip()
+        if not body_text:
+            continue
+
+        if speaker not in speakers_seen:
+            speakers_seen.add(speaker)
+            speakers_order.append(speaker)
+        last_speaker = speaker
+
+        utterances.append(
+            ParsedUtterance(speaker=speaker, text=body_text, start_ms=pending_ts)
+        )
+        pending_ts = None
+
+    return MeetingTranscript(
+        format="zoom_vtt",
+        utterances=tuple(utterances),
+        speakers=tuple(speakers_order),
+        duration_ms=duration_ms or None,
     )
 
 

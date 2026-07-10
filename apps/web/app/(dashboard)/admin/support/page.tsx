@@ -18,6 +18,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "@/lib/date";
+import { AutoSendSettings } from "@/components/support/auto-send-settings";
+import { MetricsStrip } from "@/components/support/metrics-strip";
 
 interface TicketRow {
   id: string;
@@ -46,6 +48,7 @@ const STATUS_TABS: Array<{ key: string | null; label: string }> = [
   { key: "pending", label: "Pending" },
   { key: "drafted", label: "Drafted" },
   { key: "sent", label: "Sent" },
+  { key: "auto_sent", label: "Auto-sent" },
   { key: "rejected", label: "Rejected" },
   { key: "drafting_failed", label: "Failed" },
 ];
@@ -54,6 +57,7 @@ const STATUS_META: Record<string, { label: string; cls: string }> = {
   pending: { label: "Pending", cls: "bg-amber-tint text-amber-ink" },
   drafted: { label: "Draft ready", cls: "bg-brand-tint text-brand" },
   sent: { label: "Sent", cls: "bg-success-tint text-success-ink" },
+  auto_sent: { label: "Auto-sent", cls: "bg-success-tint text-success-ink" },
   rejected: { label: "Rejected", cls: "bg-muted text-muted-foreground" },
   drafting_failed: { label: "Failed", cls: "bg-destructive-soft text-destructive-ink" },
   no_draft: { label: "Skipped (low conf.)", cls: "bg-muted text-muted-foreground" },
@@ -105,6 +109,10 @@ export default function SupportQueuePage() {
           </p>
         </div>
       </header>
+
+      <MetricsStrip />
+
+      <AutoSendSettings />
 
       <div className="mb-4 flex flex-wrap gap-2">
         {STATUS_TABS.map((tab) => (
@@ -182,7 +190,7 @@ export default function SupportQueuePage() {
                             <Loader2 className="mr-1 h-3 w-3 animate-spin" />
                             {meta.label}
                           </>
-                        ) : t.status === "sent" ? (
+                        ) : t.status === "sent" || t.status === "auto_sent" ? (
                           <>
                             <MailCheck className="mr-1 h-3 w-3" />
                             {meta.label}

@@ -2,7 +2,7 @@
 
 Endpoints:
     POST /action-items/extract             paste notes → extract items
-    POST /action-items/create-tasks        provision in Notion/Asana/Linear
+    POST /action-items/post-to-slack       post extracted items to a channel
     GET  /action-items                     list (filter by status, owner)
     PATCH /action-items/{id}               manual edits (status, owner, due)
 """
@@ -61,34 +61,31 @@ async def extract(
     return {"action_items": rows}
 
 
-# ── Create tasks ────────────────────────────────────────────────────────────
+# ── Post to Slack ─────────────────────────────────────────────────────────────
 
 
-class CreateTasksRequest(BaseModel):
+class PostToSlackRequest(BaseModel):
     action_item_ids: list[str] = Field(..., min_length=1, max_length=100)
-    target: Literal["notion", "asana", "linear"]
-    notion_parent_page_id: str | None = None
+    channel_id: str = Field(..., min_length=1)
 
 
-@router.post("/create-tasks")
-async def create_tasks(
-    body: CreateTasksRequest,
+@router.post("/post-to-slack")
+async def post_to_slack(
+    body: PostToSlackRequest,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
-    org_id, user_id, _ = _require_user(current_user)
+    org_id, _user_id, _ = _require_user(current_user)
     try:
-        rows = await action_tracker.create_tracked_tasks(
+        result = await action_tracker.post_action_items_to_slack(
             org_id=org_id,
-            user_id=user_id,
             action_item_ids=body.action_item_ids,
-            target=body.target,
-            notion_parent_page_id=body.notion_parent_page_id,
+            channel_id=body.channel_id,
         )
     except PermissionError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    return {"action_items": rows}
+    return result
 
 
 # ── Read + edit ─────────────────────────────────────────────────────────────
@@ -125,7 +122,7 @@ class UpdateActionItemRequest(BaseModel):
     action_text: str | None = None
     owner_user_id: str | None = None
     due_date: date | None = None
-    status: Literal["pending", "tracked", "completed", "overdue", "cancelled"] | None = None
+    status: Literal["pending", "completed", "cancelled"] | None = None
 
 
 @router.patch("/{item_id}")
