@@ -550,11 +550,6 @@ export default function OnboardingDetailPage() {
                   .toUpperCase()}{" "}
                 template to continue
               </p>
-              <p className="mt-1 text-xs text-amber/90">
-                The agent paused because no template is tagged for this kind.
-                Upload the DOCX to the knowledge base, then tag it from the
-                document page — the agent will resume automatically.
-              </p>
               <Link
                 href="/onboarding/templates"
                 className="mt-2 inline-block text-xs font-bold text-amber underline hover:no-underline"

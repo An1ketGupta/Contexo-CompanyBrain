@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -175,6 +176,7 @@ def _to_read(row: dict[str, Any]) -> dict[str, Any]:
         "notion_candidates_db_id": row.get("notion_candidates_db_id"),
         "candidates_last_synced_at": row.get("candidates_last_synced_at"),
         "candidates_last_sync_error": row.get("candidates_last_sync_error"),
+        "hiring_completed_at": row.get("hiring_completed_at"),
     }
 
 
@@ -358,6 +360,52 @@ async def sync_candidates(
         raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
     return result
+
+
+@router.post(
+    "/requisitions/{requisition_id}/mark-hired",
+    response_model=RequisitionRead,
+)
+async def mark_hiring_completed(
+    requisition_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """HR clicks "Hiring completed" on the requisition. Stamps
+    hiring_completed_at once; replaces the old flow that collected candidate
+    identity + offer details inline and drove the Onboarding v2 agent."""
+    org_id, _user_id, _token = _require_org(current_user)
+    svc = get_service_client()
+
+    def _fetch() -> dict[str, Any] | None:
+        res = (
+            svc.table("job_requisitions")
+            .select("*")
+            .eq("id", requisition_id)
+            .eq("org_id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        return res.data if res else None
+
+    row = await asyncio.to_thread(_fetch)
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Requisition not found.")
+
+    if row.get("hiring_completed_at"):
+        return _to_read(row)
+
+    def _update() -> dict[str, Any]:
+        res = (
+            svc.table("job_requisitions")
+            .update({"hiring_completed_at": datetime.now(UTC).isoformat()})
+            .eq("id", requisition_id)
+            .eq("org_id", org_id)
+            .execute()
+        )
+        return (res.data or [{}])[0]
+
+    updated = await asyncio.to_thread(_update)
+    return _to_read({**row, **updated})
 
 
 # ── Edit / Delete (drafts only) ─────────────────────────────────────────────

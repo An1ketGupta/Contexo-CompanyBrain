@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { CheckCircle2, Cloud, Loader2, Upload, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Cloud,
+  Loader2,
+  Upload,
+  XCircle,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { openDriveFilePicker } from "@/components/integrations/google-drive-picker";
@@ -11,6 +18,12 @@ export interface TemplateStatusRow {
   id: string;
   name: string;
   template_kind: string;
+  /**
+   * `active` = promoted via "Save template", picked up by the agent.
+   * `draft` = tagged/uploaded but not saved yet — the agent ignores it.
+   * Absent on older responses; treat missing as unknown, not active.
+   */
+  template_status?: string | null;
 }
 
 export function TemplateSlot({
@@ -19,6 +32,7 @@ export function TemplateSlot({
   current,
   onAssign,
   onDriveImported,
+  onFinishSetup,
   isBusy,
   driveConnected,
   bare = false,
@@ -28,6 +42,11 @@ export function TemplateSlot({
   current: TemplateStatusRow | null;
   onAssign: (docId: string) => void;
   onDriveImported: () => void;
+  /**
+   * Re-open the mapper for an already-tagged draft so HR can hit
+   * "Save template" and promote it to active.
+   */
+  onFinishSetup?: (docId: string) => void;
   isBusy: boolean;
   driveConnected: boolean;
   /**
@@ -252,15 +271,23 @@ export function TemplateSlot({
   // status pill, and current-doc chip around us.
   if (bare) return controls;
 
+  const isActive = current?.template_status === "active";
+  const isDraft = Boolean(current) && !isActive;
+
   return (
     <div className="rounded-xl border border-border bg-muted/40 p-3.5">
       {/* Header */}
       <div className="mb-2 flex items-center justify-between gap-2">
         <p className="text-xs font-bold text-foreground">{label}</p>
-        {current ? (
+        {isActive ? (
           <span className="flex items-center gap-1 text-[10px] font-bold text-success">
             <CheckCircle2 className="h-3 w-3" />
             Configured
+          </span>
+        ) : isDraft ? (
+          <span className="flex items-center gap-1 text-[10px] font-bold text-amber">
+            <AlertTriangle className="h-3 w-3" />
+            Draft — not saved
           </span>
         ) : (
           <span className="flex items-center gap-1 text-[10px] font-bold text-destructive">
@@ -275,6 +302,27 @@ export function TemplateSlot({
         <p className="mb-2 truncate text-[11px] text-muted-foreground">
           {current.name}
         </p>
+      ) : null}
+
+      {/* Draft nudge — the agent ignores drafts until they're saved. */}
+      {isDraft ? (
+        <div className="mb-2 rounded-lg border border-amber/30 bg-amber-tint/50 p-2">
+          <p className="mb-1.5 text-[11px] font-medium text-amber">
+            Not saved yet — the onboarding agent won&apos;t use this until you
+            finish setup.
+          </p>
+          {onFinishSetup && current ? (
+            <Button
+              size="sm"
+              variant="primary"
+              className="h-7 text-[11px]"
+              disabled={isBusy}
+              onClick={() => onFinishSetup(current.id)}
+            >
+              Finish setup
+            </Button>
+          ) : null}
+        </div>
       ) : null}
 
       {controls}

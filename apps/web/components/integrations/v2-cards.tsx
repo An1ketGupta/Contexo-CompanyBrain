@@ -1420,6 +1420,65 @@ function ZoomOptinToggle() {
   );
 }
 
+function ZoomAttendeeOptinToggle() {
+  const [optedIn, setOptedIn] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/integrations/zoom/attendee-optin")
+      .then((res) => (res.ok ? res.json() : { opted_in: false }))
+      .then((data: { opted_in?: boolean }) => {
+        if (!cancelled) setOptedIn(Boolean(data.opted_in));
+      })
+      .catch(() => {
+        if (!cancelled) setOptedIn(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function toggle(next: boolean) {
+    setSaving(true);
+    const res = await fetch("/api/integrations/zoom/attendee-optin", {
+      method: next ? "PUT" : "DELETE",
+    });
+    setSaving(false);
+    if (!res.ok) {
+      toast.error("Could not update your attendee sharing preference");
+      return;
+    }
+    setOptedIn(next);
+    toast.success(
+      next
+        ? "You'll now automatically get transcripts of meetings you attend."
+        : "You'll no longer automatically receive transcripts as an attendee.",
+    );
+  }
+
+  return (
+    <div className="flex items-start gap-2">
+      <Checkbox
+        id="zoom-attendee-optin"
+        checked={optedIn === true}
+        disabled={optedIn === null || saving}
+        onCheckedChange={(v) => toggle(v === true)}
+      />
+      <label htmlFor="zoom-attendee-optin" className="cursor-pointer">
+        <span className="block text-xs font-medium">
+          Auto-share transcripts of meetings I attend
+        </span>
+        <span className="block text-[11px] text-muted-foreground">
+          When a meeting's host has transcript sync on, you'll get read
+          access to it automatically if you were on the call and opted in
+          here — no separate publish step needed.
+        </span>
+      </label>
+    </div>
+  );
+}
+
 export function ZoomCard({
   status,
   onChanged,
@@ -1467,6 +1526,7 @@ export function ZoomCard({
     >
       <div className="space-y-3">
         <ZoomOptinToggle />
+        <ZoomAttendeeOptinToggle />
         <Button
           variant="ghost"
           size="sm"

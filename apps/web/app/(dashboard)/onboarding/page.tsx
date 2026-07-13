@@ -165,7 +165,9 @@ export default function OnboardingListPage() {
   );
 
 const missingCount = templates
-    ? TEMPLATE_KINDS.filter((k) => !templates[k.key]).length
+    ? TEMPLATE_KINDS.filter(
+        (k) => templates[k.key]?.template_status !== "active",
+      ).length
     : 0;
 
   const allConfigured = missingCount === 0 && templates !== undefined;
@@ -259,6 +261,7 @@ const missingCount = templates
                     onDriveImported={() => {
                       void refreshTemplates();
                     }}
+                    onFinishSetup={(docId) => setMapper({ docId, kind: key })}
                     isBusy={busy === key}
                     driveConnected={driveConnected}
                   />
@@ -374,7 +377,12 @@ const missingCount = templates
         templateKind={mapper?.kind ?? "loi"}
         open={mapper !== null}
         onOpenChange={(o) => {
-          if (!o) setMapper(null);
+          if (!o) {
+            setMapper(null);
+            // Saving inside the mapper promotes draft→active; refresh so the
+            // slot badges reflect the new status without a reload.
+            void refreshTemplates();
+          }
         }}
         onApplied={() => {
           void refreshTemplates();

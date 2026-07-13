@@ -126,6 +126,7 @@ async def zoom_transcript_ready_fn(ctx: inngest.Context) -> dict[str, Any]:
             download_token=data.get("download_token") or "",
             meeting_topic=data.get("meeting_topic") or "",
             meeting_uuid=meeting_uuid,
+            attendee_user_ids=data.get("attendee_user_ids") or [],
         )
     except Exception as exc:
         log.warning(

@@ -398,20 +398,19 @@ export function TemplateMapperModal({
         ? "bg-destructive-soft text-destructive"
         : "bg-violet-tint text-violet";
 
+  // The editing / preview stages render document text and a PDF, so they need
+  // the wide canvas. Progress, saved and error states are short — a narrower
+  // dialog keeps them centered instead of floating in a mostly-empty box.
+  const wide = isEditing || stage === "preview";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="rounded-2xl sm:max-w-4xl">
+      <DialogContent
+        className={cn("rounded-2xl", wide ? "sm:max-w-4xl" : "sm:max-w-lg")}
+      >
         <DialogHeader>
           <div className="flex items-start gap-3">
-            <span
-              className={cn(
-                "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
-                headerChip,
-              )}
-            >
-              <HeaderIcon className="h-[18px] w-[18px]" />
-            </span>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 pt-0.5">
               <DialogTitle>{headerTitle}</DialogTitle>
               <DialogDescription className="mt-1">
                 {documentName ? (
@@ -435,28 +434,28 @@ export function TemplateMapperModal({
 
         {/* Progress — vertical stepper */}
         {inProgress ? (
-          <ol className="py-1">
+          <ol className="rounded-2xl border border-border bg-muted/30 p-4 pr-5">
             {STEPS.map((s, i) => {
               const done = i < currentStepIdx;
               const active = i === currentStepIdx;
               const last = i === STEPS.length - 1;
               return (
-                <li key={s.key} className="flex gap-3">
+                <li key={s.key} className="flex gap-3.5">
                   <div className="flex flex-col items-center">
                     <span
                       className={cn(
-                        "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold transition-colors",
+                        "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold transition-all",
                         done
                           ? "bg-success text-white"
                           : active
-                            ? "bg-brand text-brand-foreground"
-                            : "bg-muted text-muted-foreground",
+                            ? "bg-brand text-brand-foreground ring-4 ring-brand/15"
+                            : "bg-muted text-muted-foreground ring-1 ring-inset ring-border",
                       )}
                     >
                       {done ? (
-                        <Check className="h-3.5 w-3.5" />
+                        <Check className="h-4 w-4" />
                       ) : active ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         i + 1
                       )}
@@ -464,16 +463,16 @@ export function TemplateMapperModal({
                     {!last ? (
                       <span
                         className={cn(
-                          "my-1 w-0.5 flex-1 rounded-full",
+                          "my-1.5 w-px flex-1 rounded-full transition-colors",
                           done ? "bg-success" : "bg-border",
                         )}
                       />
                     ) : null}
                   </div>
-                  <div className={cn("min-w-0", last ? "pb-0" : "pb-5")}>
+                  <div className={cn("min-w-0 pt-0.5", last ? "pb-0.5" : "pb-5")}>
                     <p
                       className={cn(
-                        "text-sm font-bold",
+                        "text-sm font-semibold transition-colors",
                         active || done
                           ? "text-foreground"
                           : "text-muted-foreground",
@@ -482,7 +481,7 @@ export function TemplateMapperModal({
                       {s.label}
                     </p>
                     {active ? (
-                      <p className="mt-0.5 text-xs text-muted-foreground">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {stageLabel[stage]}
                       </p>
                     ) : null}

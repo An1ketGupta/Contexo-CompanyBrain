@@ -165,6 +165,7 @@ def _shape(row: dict[str, Any] | None, *, available: bool) -> dict[str, Any]:
     # caller only needs their own state (GET /integrations/zoom/transcript-optin).
     metadata = dict(row.get("metadata") or {})
     metadata.pop(zoom_svc.OPTINS_KEY, None)
+    metadata.pop(zoom_svc.ATTENDEE_OPTINS_KEY, None)
     return {
         "available": available,
         "connected": True,
@@ -601,6 +602,43 @@ async def zoom_optout(current_user: dict = Depends(verify_jwt)) -> dict[str, Any
     return {"opted_in": False}
 
 
+# Attendee auto-share opt-in (migration 089) — separate consent from hosting.
+# See zoom.py module docstring for the roster-buffer -> document_shares flow.
+
+
+@router.get("/integrations/zoom/attendee-optin")
+async def zoom_attendee_optin_status(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
+    org_id, user_id, _ = _require_org(current_user)
+    row = await _unified.get_row(org_id=org_id, provider="zoom")
+    return {"opted_in": zoom_svc.is_attendee_opted_in(row, user_id)}
+
+
+@router.put("/integrations/zoom/attendee-optin")
+async def zoom_attendee_optin(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
+    org_id, user_id, _ = _require_org(current_user)
+    email = await _current_user_email(user_id)
+    try:
+        await zoom_svc.set_attendee_optin(
+            org_id=org_id, user_id=user_id, email=email, opted_in=True
+        )
+    except RuntimeError:
+        raise HTTPException(status_code=404, detail="Zoom is not connected.")
+    return {"opted_in": True}
+
+
+@router.delete("/integrations/zoom/attendee-optin")
+async def zoom_attendee_optout(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
+    org_id, user_id, _ = _require_org(current_user)
+    email = await _current_user_email(user_id)
+    try:
+        await zoom_svc.set_attendee_optin(
+            org_id=org_id, user_id=user_id, email=email, opted_in=False
+        )
+    except RuntimeError:
+        raise HTTPException(status_code=404, detail="Zoom is not connected.")
+    return {"opted_in": False}
+
+
 # ──────────────────────────────────────────────────────────────────────────
 #                            Webhook stubs
 #
@@ -704,10 +742,14 @@ async def zoom_webhook(
 ) -> Any:
     """Zoom Event Subscription webhook.
 
-    Unlike the other providers' stubs above, this one is fully wired: on
-    `recording.transcript_completed` it fires `zoom/transcript-ready` for
-    the Inngest worker to download + ingest (see inngest/meeting_functions.py)
-    — the actual download happens off this request so we ack Zoom fast.
+    Fully wired for two event types:
+      * `meeting.participant_joined` — buffers (meeting_uuid, email) into
+        `zoom_meeting_participants` (migration 089) for later attendee-share
+        matching. Fire-and-forget, no Inngest hop needed — a single upsert.
+      * `recording.transcript_completed` — fires `zoom/transcript-ready` for
+        the Inngest worker to download + ingest (see
+        inngest/meeting_functions.py) — the actual download happens off this
+        request so we ack Zoom fast.
     """
     body = await request.body()
     payload = await request.json()
@@ -726,6 +768,19 @@ async def zoom_webhook(
         # response can get the endpoint auto-disabled by the platform.
         log.warning("zoom_webhook_signature_invalid event=%s", event)
         return {"ok": False, "reason": "signature"}
+
+    if event == "meeting.participant_joined":
+        obj = (payload.get("payload") or {}).get("object") or {}
+        participant = obj.get("participant") or {}
+        account_id = (payload.get("payload") or {}).get("account_id")
+        row = await zoom_svc.find_org_by_account_id(account_id) if account_id else None
+        if row and obj.get("uuid"):
+            await zoom_svc.record_participant(
+                org_id=row["org_id"],
+                meeting_uuid=obj["uuid"],
+                email=participant.get("email"),
+            )
+        return {"ok": True}
 
     if event != "recording.transcript_completed":
         return {"ok": True}
@@ -758,6 +813,15 @@ async def zoom_webhook(
         )
         return {"ok": True}
 
+    # Attendee auto-share: match the roster buffered by participant_joined
+    # events against attendee opt-ins, excluding the host (already the owner).
+    attendee_user_ids: list[str] = []
+    if obj.get("uuid"):
+        participant_emails = await zoom_svc.get_participant_emails(obj["uuid"])
+        attendee_user_ids = zoom_svc.resolve_opted_in_attendees(
+            row, participant_emails=participant_emails, exclude_user_id=host_user_id
+        )
+
     import inngest
 
     from app.inngest.client import get_inngest_client
@@ -773,6 +837,7 @@ async def zoom_webhook(
                 "download_token": (payload.get("payload") or {}).get("download_token") or "",
                 "meeting_topic": obj.get("topic"),
                 "meeting_uuid": obj.get("uuid"),
+                "attendee_user_ids": attendee_user_ids,
             },
             id=f"zoom-transcript-{obj.get('uuid')}",
         )

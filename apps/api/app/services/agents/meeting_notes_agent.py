@@ -354,6 +354,38 @@ class MeetingNotesAgent(BaseAgent):
             log.warning("meeting_derived_doc_insert_failed", error=str(exc))
             return None
 
+        # Mirror any document_shares (migration 089 — attendee auto-share)
+        # from the source transcript onto the derived summary doc, so an
+        # opted-in attendee who can read the transcript can also read its
+        # decisions/action-items summary.
+        try:
+            shares = await asyncio.to_thread(
+                lambda: svc.table("document_shares")
+                .select("user_id")
+                .eq("document_id", self.document_id)
+                .execute()
+            )
+            share_rows = shares.data or []
+            if share_rows:
+                await asyncio.to_thread(
+                    lambda: svc.table("document_shares")
+                    .upsert(
+                        [
+                            {
+                                "document_id": derived_id,
+                                "org_id": self.org_id,
+                                "user_id": row["user_id"],
+                            }
+                            for row in share_rows
+                        ],
+                        on_conflict="document_id,user_id",
+                        ignore_duplicates=True,
+                    )
+                    .execute()
+                )
+        except Exception as exc:
+            log.warning("meeting_derived_doc_share_cascade_failed", error=str(exc))
+
         body = _render_summary_body(
             transcript=transcript,
             extraction=extraction,

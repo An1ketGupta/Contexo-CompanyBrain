@@ -1751,14 +1751,26 @@ async def template_status(
     svc = get_service_client()
     res = await asyncio.to_thread(
         lambda: svc.table("documents")
-        .select("id, name, template_kind, created_at")
+        .select("id, name, template_kind, template_status, created_at")
         .eq("org_id", org_id)
         .in_("template_kind", ["loi", "appointment_letter", "nda", "induction"])
+        .order("created_at", desc=True)
         .execute()
     )
+    # Prefer the `active` template per kind (the one the agent actually uses);
+    # fall back to the most recent draft so the UI can nudge HR to finish
+    # setup rather than showing the slot as empty.
     by_kind: dict[str, dict[str, Any]] = {}
     for r in res.data or []:
-        by_kind.setdefault(r["template_kind"], r)
+        kind = r["template_kind"]
+        existing = by_kind.get(kind)
+        if existing is None:
+            by_kind[kind] = r
+        elif (
+            existing.get("template_status") != "active"
+            and r.get("template_status") == "active"
+        ):
+            by_kind[kind] = r
     return {
         "loi": by_kind.get("loi"),
         "appointment_letter": by_kind.get("appointment_letter"),
@@ -2614,7 +2626,7 @@ async def edit_template_text(
         preview_url = await ob_storage.mint_signed_url(preview_path)
     except Exception as exc:  # noqa: BLE001 — preview is best-effort
         preview_error = (
-            f"Saved your edits, but couldn't render a preview ({type(exc).__name__})."
+            f"Saved your edits, but couldn't render a preview."
         )
         log.info("template_edit_text.preview_failed doc=%s err=%s", document_id, exc)
 

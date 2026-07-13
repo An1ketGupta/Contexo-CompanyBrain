@@ -280,3 +280,5 @@ class RequisitionRead(BaseModel):
     notion_candidates_db_id: str | None = None
     candidates_last_synced_at: datetime | None = None
     candidates_last_sync_error: str | None = None
+    # Set once HR clicks "Hiring completed" on this requisition. NULL until then.
+    hiring_completed_at: datetime | None = None

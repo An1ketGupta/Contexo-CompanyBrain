@@ -43,7 +43,6 @@ import {
 } from "@/components/actual/kit";
 import { NotionParentPicker } from "@/components/recruiting/notion-parent-picker";
 import { SlackChannelPicker } from "@/components/recruiting/slack-channel-picker";
-import { StartOnboardingDialog } from "@/components/onboarding/start-onboarding-dialog";
 
 interface JdVariant {
   tone: string;
@@ -115,6 +114,7 @@ interface Requisition {
   notion_candidates_db_id: string | null;
   candidates_last_synced_at: string | null;
   candidates_last_sync_error: string | null;
+  hiring_completed_at: string | null;
   sourcing_templates: SourcingTemplate[];
   linkedin_search_urls: LinkedinSearch[];
   naukri_search_urls: NaukriSearch[];
@@ -218,6 +218,7 @@ export default function RequisitionDetailPage() {
   const [savingJd, setSavingJd] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [markingHired, setMarkingHired] = useState(false);
   const [syncSummary, setSyncSummary] = useState<{
     total: number;
     new: number;
@@ -479,6 +480,27 @@ export default function RequisitionDetailPage() {
       toast.error(err instanceof Error ? err.message : "Sync failed");
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleMarkHiringCompleted = async () => {
+    if (!id) return;
+    setMarkingHired(true);
+    try {
+      const res = await fetch(`/api/recruiting/requisitions/${id}/mark-hired`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          body?.message || body?.detail || `Failed (${res.status})`,
+        );
+      }
+      await mutate();
+      router.push("/onboarding");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to mark hiring completed");
+      setMarkingHired(false);
     }
   };
 
@@ -1195,10 +1217,24 @@ export default function RequisitionDetailPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <StartOnboardingDialog
-                    defaultRoleTitle={data.role_request}
-                    requisitionId={data.id}
-                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleMarkHiringCompleted}
+                    disabled={markingHired || Boolean(data.hiring_completed_at)}
+                    title={
+                      data.hiring_completed_at
+                        ? `Hiring marked completed ${new Date(data.hiring_completed_at).toLocaleString()}`
+                        : "Mark hiring as completed and open onboarding"
+                    }
+                  >
+                    {markingHired ? (
+                      <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                    ) : data.hiring_completed_at ? (
+                      <Check className="mr-2 h-3 w-3" />
+                    ) : null}
+                    Hiring completed
+                  </Button>
                   <Button
                     size="sm"
                     onClick={handleSyncCandidates}

@@ -256,6 +256,7 @@ def _v2_summary(row: dict[str, Any] | None, *, available: bool) -> dict[str, Any
     # Zoom's opt-in map holds teammates' emails/user ids — not the UI's business.
     metadata = dict(row.get("metadata") or {})
     metadata.pop("transcript_optins", None)
+    metadata.pop("attendee_optins", None)
     return {
         "available": available,
         "connected": True,

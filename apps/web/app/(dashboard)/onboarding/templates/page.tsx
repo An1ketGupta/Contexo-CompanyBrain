@@ -10,7 +10,6 @@ import {
   Eye,
   FileText,
   Loader2,
-  Sparkles,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -85,7 +84,12 @@ export default function OnboardingTemplatesPage() {
   );
 
   const configuredCount = useMemo(
-    () => (status ? TEMPLATES.filter((t) => status[t.kind]).length : 0),
+    () =>
+      status
+        ? TEMPLATES.filter(
+            (t) => status[t.kind]?.template_status === "active",
+          ).length
+        : 0,
     [status],
   );
   const allSet = status !== undefined && configuredCount === TEMPLATES.length;
@@ -239,8 +243,10 @@ export default function OnboardingTemplatesPage() {
                     </p>
                   </div>
                 </div>
-                {current ? (
+                {current?.template_status === "active" ? (
                   <StatusPill tone="green">Active</StatusPill>
+                ) : current ? (
+                  <StatusPill tone="amber">Draft — not saved</StatusPill>
                 ) : (
                   <StatusPill tone="gray">Not configured</StatusPill>
                 )}
@@ -285,22 +291,6 @@ export default function OnboardingTemplatesPage() {
                     )}
                     Preview with sample data
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setMapper({ docId: current.id, kind })}
-                  >
-                    <Sparkles className="h-3.5 w-3.5 text-violet" />
-                    AI convert blanks
-                  </Button>
-                  <a
-                    href="https://github.com/nirnayaiq/docs/blob/main/onboarding-template-vars.md"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    Variable reference <ExternalLink className="h-3 w-3" />
-                  </a>
                 </div>
               ) : null}
             </section>
@@ -313,7 +303,12 @@ export default function OnboardingTemplatesPage() {
         templateKind={mapper?.kind ?? "loi"}
         open={mapper !== null}
         onOpenChange={(o) => {
-          if (!o) setMapper(null);
+          if (!o) {
+            setMapper(null);
+            // "Save template" inside the mapper promotes draft→active; refresh
+            // so the Active/Draft pill updates without a reload.
+            void refreshStatus();
+          }
         }}
         onApplied={() => {
           void refreshStatus();
