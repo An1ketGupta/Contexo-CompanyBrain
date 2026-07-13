@@ -253,10 +253,13 @@ def _v2_summary(row: dict[str, Any] | None, *, available: bool) -> dict[str, Any
     """Strip token material from a unified-table row before sending to the UI."""
     if not row:
         return {"available": available, "connected": False}
+    # Zoom's opt-in map holds teammates' emails/user ids — not the UI's business.
+    metadata = dict(row.get("metadata") or {})
+    metadata.pop("transcript_optins", None)
     return {
         "available": available,
         "connected": True,
-        "metadata": row.get("metadata") or {},
+        "metadata": metadata,
         "resources": row.get("resources") or [],
         "last_synced_at": row.get("last_synced_at"),
         "last_error": row.get("last_error"),

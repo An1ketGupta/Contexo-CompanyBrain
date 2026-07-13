@@ -9,6 +9,7 @@ import {
   Clock,
   Loader2,
   MessageSquare,
+  Mic,
   Pencil,
   RefreshCw,
   Tag as TagIcon,
@@ -17,12 +18,14 @@ import { toast } from "sonner";
 import { formatAbsolute, formatRelativeShort } from "@/lib/date";
 import type { Document } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { FileIcon } from "./file-icon";
 import { StatusBadge } from "./status-badge";
 import { HealthBadge } from "./health-badge";
 import { DeleteDocumentDialog } from "./delete-document-dialog";
+import { ShareTranscriptDialog } from "./share-transcript-dialog";
 import { ProcessingIndicator } from "./processing-indicator";
 import { TagDialog } from "./tag-dialog";
 import { ReviewSettingsDialog } from "./review-settings-dialog";
@@ -41,6 +44,7 @@ interface DocumentTableProps {
   onDelete: (id: string) => Promise<void>;
   onRetry: (id: string) => Promise<void>;
   onUpdateTags: (id: string, tags: string[]) => Promise<void>;
+  onUpdateVisibility: (id: string, visibility: "private" | "org") => Promise<void>;
   onRefresh?: () => void;
 }
 
@@ -61,6 +65,18 @@ function extractEmbeddingStats(metadata: unknown): EmbeddingStats | null {
 function hasFailedChunks(metadata: unknown): boolean {
   const s = extractEmbeddingStats(metadata);
   return !!s && s.failed > 0;
+}
+
+// Zoom/Google Meet auto-sync (source) or a manually uploaded VTT/Teams-JSON
+// transcript (file_type) — both route into MeetingNotesAgent server-side.
+// Mirrors the backend predicate in routers/documents.py (DocumentKind filter).
+function isMeetingTranscript(doc: Document): boolean {
+  return (
+    doc.source === "zoom" ||
+    doc.source === "google_meet_transcript" ||
+    doc.file_type === "vtt" ||
+    doc.file_type === "teams_transcript"
+  );
 }
 
 function extractErrorReason(metadata: unknown): string | null {
@@ -89,6 +105,7 @@ export function DocumentTable({
   onDelete,
   onRetry,
   onUpdateTags,
+  onUpdateVisibility,
   onRefresh,
 }: DocumentTableProps) {
   const allSelected =
@@ -149,6 +166,9 @@ export function DocumentTable({
               <span className="sr-only">Expand</span>
             </th>
             <th className="px-4 py-2.5 text-left font-medium">Name</th>
+            <th className="hidden w-44 px-4 py-2.5 text-left font-medium sm:table-cell">
+              Meeting Transcript
+            </th>
             <th className="hidden w-28 px-4 py-2.5 text-left font-medium lg:table-cell">
               Added
             </th>
@@ -168,6 +188,7 @@ export function DocumentTable({
               onDelete={onDelete}
               onRetry={onRetry}
               onUpdateTags={onUpdateTags}
+              onUpdateVisibility={onUpdateVisibility}
               onRefresh={onRefresh}
             />
           ))}
@@ -184,6 +205,7 @@ function Row({
   onDelete,
   onRetry,
   onUpdateTags,
+  onUpdateVisibility,
   onRefresh,
 }: {
   doc: Document;
@@ -192,6 +214,7 @@ function Row({
   onDelete: (id: string) => Promise<void>;
   onRetry: (id: string) => Promise<void>;
   onUpdateTags: (id: string, tags: string[]) => Promise<void>;
+  onUpdateVisibility: (id: string, visibility: "private" | "org") => Promise<void>;
   onRefresh?: () => void;
 }) {
   const [tagOpen, setTagOpen] = useState(false);
@@ -311,6 +334,22 @@ function Row({
           </div>
         </div>
       </td>
+      <td className="hidden px-4 py-3 sm:table-cell">
+        {isMeetingTranscript(doc) ? (
+          <div className="flex flex-col items-start gap-1">
+            <Badge variant="brand">
+              <Mic className="h-3 w-3" />
+              Meeting Transcript
+            </Badge>
+            <ShareTranscriptDialog
+              document={doc}
+              onUpdateVisibility={onUpdateVisibility}
+            />
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground/40">—</span>
+        )}
+      </td>
       <td
         className="hidden whitespace-nowrap px-4 py-3 text-xs tabular-nums text-muted-foreground lg:table-cell"
         title={formatAbsolute(doc.created_at)}
@@ -428,7 +467,7 @@ function Row({
     </tr>
     {expanded && canExpand && (
       <tr className="bg-muted/20">
-        <td colSpan={6} className="border-t border-border/60 px-0 py-0">
+        <td colSpan={7} className="border-t border-border/60 px-0 py-0">
           <div className="mx-auto max-w-3xl space-y-6 px-6 py-6 md:px-10 md:py-7">
             <ExpandedHeader
               doc={doc}

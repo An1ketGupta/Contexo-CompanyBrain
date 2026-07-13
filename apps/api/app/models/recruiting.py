@@ -161,6 +161,13 @@ class PublishRequisitionRequest(BaseModel):
     naukri_taxonomy: NaukriTaxonomy | None = None
 
 
+class JdVariantEdit(BaseModel):
+    """Direct manual edit of one JD variant's markdown text."""
+
+    variant_index: int = Field(ge=0)
+    text: str = Field(min_length=1, max_length=32000)
+
+
 class UpdateRequisitionRequest(BaseModel):
     """Edit a draft requisition. None = leave unchanged.
 
@@ -177,6 +184,9 @@ class UpdateRequisitionRequest(BaseModel):
     working_hours: str | None = Field(default=None, max_length=300)
     context_notes: str | None = Field(default=None, max_length=4000)
     regenerate_variants: bool = False
+    # Manual JD edit — replaces one variant's text in place. Mutually
+    # exclusive with regenerate_variants (regeneration would clobber it).
+    jd_variant_edit: JdVariantEdit | None = None
 
 
 class CandidateRecord(BaseModel):

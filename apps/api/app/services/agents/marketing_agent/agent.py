@@ -14,9 +14,9 @@ Status machine:
     draft → generating → ready → published
                         ↘ failed
 
-Mirrors InterviewKitAgent's shape: BaseAgent for audit + token tracking,
-service-role storage helpers, and 4-step parallel fan-out after the first
-synthesis. Output is one editable document the marketer reviews as a whole.
+Uses BaseAgent for audit + token tracking, service-role storage helpers, and
+4-step parallel fan-out after the first synthesis. Output is one editable
+document the marketer reviews as a whole.
 """
 from __future__ import annotations
 

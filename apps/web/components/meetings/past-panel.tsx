@@ -146,50 +146,132 @@ export function PastMeetingsPanel() {
       ) : (
         <ul className="divide-y divide-border rounded-xl border border-border bg-card">
           {data.summaries.map((m) => (
-            <li key={m.id}>
-              <Link
-                href={`/meetings/${m.id}`}
-                className="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-muted/50"
-              >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-tint text-brand">
-                  <CalendarDays className="h-4 w-4" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate text-sm font-medium">
-                      {m.source_document_name ?? "Untitled meeting"}
-                    </p>
-                    <span className="rounded-full bg-secondary px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-secondary-foreground">
-                      {FORMAT_LABEL[m.source_format] ?? m.source_format}
-                    </span>
-                    {formatDuration(m.meeting_duration_seconds) ? (
-                      <span className="text-xs text-muted-foreground">
-                        {formatDuration(m.meeting_duration_seconds)}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="mt-1 flex items-center gap-3 text-[11px] text-muted-foreground">
-                    <span className="inline-flex items-center gap-1">
-                      <Users className="h-3 w-3" />
-                      {m.attendee_count} attendees
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      <CheckCircle2 className="h-3 w-3" />
-                      {m.decision_count} decisions
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      <FileText className="h-3 w-3" />
-                      {m.action_item_count} action items
-                    </span>
-                  </div>
-                </div>
-                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-              </Link>
-            </li>
+            <SummaryRow key={m.id} meeting={m} onChanged={() => mutate()} />
           ))}
         </ul>
       )}
     </div>
+  );
+}
+
+// A completed summary row. Links into the meeting detail, and exposes a delete
+// that removes the source transcript document — its `ON DELETE CASCADE` FK also
+// drops this summary row (same path the pending rows use).
+function SummaryRow({
+  meeting,
+  onChanged,
+}: {
+  meeting: MeetingSummary;
+  onChanged: () => void;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const name = meeting.source_document_name ?? "Untitled meeting";
+  const duration = formatDuration(meeting.meeting_duration_seconds);
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    // Keep the dialog open until the async delete resolves.
+    e.preventDefault();
+    if (!meeting.source_document_id) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(
+        `/api/documents/${meeting.source_document_id}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.detail || `Failed (${res.status})`);
+      }
+      toast.success("Meeting transcript deleted.");
+      setDeleteOpen(false);
+      onChanged();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <li className="relative">
+      <Link
+        href={`/meetings/${meeting.id}`}
+        className="flex items-center gap-4 px-4 py-3 pr-20 transition-colors hover:bg-muted/50"
+      >
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-tint text-brand">
+          <CalendarDays className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="truncate text-sm font-medium">{name}</p>
+            <span className="rounded-full bg-secondary px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-secondary-foreground">
+              {FORMAT_LABEL[meeting.source_format] ?? meeting.source_format}
+            </span>
+            {duration ? (
+              <span className="text-xs text-muted-foreground">{duration}</span>
+            ) : null}
+          </div>
+          <div className="mt-1 flex items-center gap-3 text-[11px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              <Users className="h-3 w-3" />
+              {meeting.attendee_count} attendees
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <CheckCircle2 className="h-3 w-3" />
+              {meeting.decision_count} decisions
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <FileText className="h-3 w-3" />
+              {meeting.action_item_count} action items
+            </span>
+          </div>
+        </div>
+      </Link>
+      <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-1">
+        {meeting.source_document_id ? (
+          <AlertDialog
+            open={deleteOpen}
+            onOpenChange={(next) => !deleting && setDeleteOpen(next)}
+          >
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                disabled={deleting}
+                aria-label="Delete transcript"
+                title="Delete transcript"
+              >
+                {deleting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete this transcript?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  <span className="font-medium text-foreground">{name}</span> and
+                  its extracted attendees, decisions, and action items will be
+                  removed. This can&apos;t be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={handleDelete} disabled={deleting}>
+                  {deleting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {deleting ? "Deleting…" : "Delete"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : null}
+        <ChevronRight className="pointer-events-none h-4 w-4 text-muted-foreground" />
+      </div>
+    </li>
   );
 }
 

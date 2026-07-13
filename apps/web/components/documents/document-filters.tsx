@@ -35,6 +35,11 @@ const TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "md", label: "Markdown" },
 ];
 
+const KIND_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "All documents" },
+  { value: "meeting_transcript", label: "Meeting transcripts only" },
+];
+
 const SORT_OPTIONS: {
   value: DocumentFilters["sort_by"];
   label: string;
@@ -103,6 +108,12 @@ export function DocumentFiltersBar({
           onChange={(v) => onChange({ ...filters, file_type: v })}
           options={TYPE_OPTIONS}
           aria-label="Filter by file type"
+        />
+        <NativeSelect
+          value={filters.kind}
+          onChange={(v) => onChange({ ...filters, kind: v })}
+          options={KIND_OPTIONS}
+          aria-label="Filter by document kind"
         />
 
         <div className="ml-auto flex items-center gap-1.5">

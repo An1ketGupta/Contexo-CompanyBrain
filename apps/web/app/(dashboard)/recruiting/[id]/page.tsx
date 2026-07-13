@@ -211,7 +211,11 @@ export default function RequisitionDetailPage() {
   const [naukriKeySkills, setNaukriKeySkills] = useState<string>("");
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
-  const [editing, setEditing] = useState(false);
+  // Inline JD editing — the Edit button swaps the rendered variant for a
+  // markdown textarea instead of re-prompting the agent.
+  const [editingJd, setEditingJd] = useState(false);
+  const [jdDraft, setJdDraft] = useState("");
+  const [savingJd, setSavingJd] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncSummary, setSyncSummary] = useState<{
@@ -478,6 +482,33 @@ export default function RequisitionDetailPage() {
     }
   };
 
+  const handleSaveJd = async () => {
+    if (!id) return;
+    setSavingJd(true);
+    try {
+      const res = await fetch(`/api/recruiting/requisitions/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jd_variant_edit: { variant_index: selectedIdx, text: jdDraft },
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          body?.message || body?.detail || `Save failed (${res.status})`,
+        );
+      }
+      toast.success("JD updated");
+      await mutate();
+      setEditingJd(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSavingJd(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!id) return;
     if (!confirm("Delete this requisition? This cannot be undone.")) return;
@@ -548,10 +579,18 @@ export default function RequisitionDetailPage() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => setEditing((v) => !v)}
+                disabled={!activeVariant}
+                onClick={() => {
+                  if (editingJd) {
+                    setEditingJd(false);
+                    return;
+                  }
+                  setJdDraft(activeVariant?.text ?? "");
+                  setEditingJd(true);
+                }}
               >
                 <Pencil className="h-3.5 w-3.5" />
-                {editing ? "Close" : "Edit"}
+                {editingJd ? "Cancel" : "Edit"}
               </Button>
               <Button
                 size="sm"
@@ -618,16 +657,6 @@ export default function RequisitionDetailPage() {
         )}
       </header>
 
-      {editing && canEdit && (
-        <EditRequisitionForm
-          requisition={data}
-          onSaved={async () => {
-            await mutate();
-            setEditing(false);
-          }}
-        />
-      )}
-
       <section>
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-muted-foreground">
@@ -641,7 +670,7 @@ export default function RequisitionDetailPage() {
                 <button
                   key={i}
                   type="button"
-                  disabled={isPublished}
+                  disabled={isPublished || editingJd}
                   onClick={() => setSelectedIdx(i)}
                   className={`rounded px-3 py-1 text-xs font-medium transition ${
                     isActive
@@ -658,9 +687,49 @@ export default function RequisitionDetailPage() {
 
         {activeVariant && (
           <div className="rounded-2xl border border-border bg-card p-6 sm:p-8">
-            <div className="prose prose-sm dark:prose-invert mx-auto max-w-3xl">
-              <Markdown>{activeVariant.text}</Markdown>
-            </div>
+            {editingJd && canEdit ? (
+              <div className="mx-auto max-w-3xl space-y-3">
+                <Textarea
+                  value={jdDraft}
+                  onChange={(e) => setJdDraft(e.target.value)}
+                  rows={24}
+                  className="font-mono text-sm leading-relaxed"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Markdown supported. This edits only the &ldquo;
+                  {activeVariant.tone}&rdquo; variant — the other variants stay
+                  as generated.
+                </p>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setEditingJd(false)}
+                    disabled={savingJd}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={handleSaveJd}
+                    disabled={savingJd || !jdDraft.trim()}
+                  >
+                    {savingJd ? (
+                      <>
+                        <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />{" "}
+                        Saving…
+                      </>
+                    ) : (
+                      "Save JD"
+                    )}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="prose prose-sm dark:prose-invert mx-auto max-w-3xl">
+                <Markdown>{activeVariant.text}</Markdown>
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -673,10 +742,6 @@ export default function RequisitionDetailPage() {
             <div className="space-y-3 md:col-span-2">
               <div className="space-y-1">
                 <Label>Posting destinations</Label>
-                <p className="text-xs text-muted-foreground">
-                  Pick one or more. The job posts to every checked destination
-                  in parallel; if any one fails the others still go through.
-                </p>
               </div>
               {/* Grouped by kind so the recruiter sees ATSes (internal
                   hiring systems) and Job boards (external candidate reach)
@@ -697,7 +762,10 @@ export default function RequisitionDetailPage() {
                           <label
                             key={p.value}
                             className={cn(
-                              "flex cursor-pointer items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium transition-colors",
+                              // relative anchors the sr-only (absolute) checkbox inside
+                              // the pill — otherwise it lands past the app root's height
+                              // and focusing it scrolls the overflow-hidden layout.
+                              "relative flex cursor-pointer items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium transition-colors",
                               active
                                 ? "border-accent bg-accent text-accent-foreground"
                                 : "border-input bg-background text-foreground hover:border-foreground/40 hover:bg-muted/40",
@@ -1131,15 +1199,6 @@ export default function RequisitionDetailPage() {
                     defaultRoleTitle={data.role_request}
                     requisitionId={data.id}
                   />
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => router.push(`/recruiting/${data.id}/interview-kit`)}
-                    title="Generate or view the AI-drafted interview kit"
-                  >
-                    <FileText className="mr-2 h-3 w-3" />
-                    Interview kit
-                  </Button>
                   <Button
                     size="sm"
                     onClick={handleSyncCandidates}
@@ -1597,112 +1656,6 @@ function buildDeptOverride(platform: AtsPlatform, dept: AtsDept): Record<string,
   // is layered separately via naukri_taxonomy. The "team" key remains the
   // best signal for Lever which accepts free-text team strings.
   return { team: dept.name };
-}
-
-function EditRequisitionForm({
-  requisition,
-  onSaved,
-}: {
-  requisition: Requisition;
-  onSaved: () => Promise<void>;
-}) {
-  const [roleRequest, setRoleRequest] = useState(requisition.role_request);
-  const [location, setLocation] = useState(requisition.location ?? "");
-  const [department, setDepartment] = useState(requisition.department ?? "");
-  const [contextNotes, setContextNotes] = useState(requisition.context_notes ?? "");
-  const [regenerate, setRegenerate] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/recruiting/requisitions/${requisition.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          role_request: roleRequest !== requisition.role_request ? roleRequest : null,
-          location: location !== (requisition.location ?? "") ? location : null,
-          department:
-            department !== (requisition.department ?? "") ? department : null,
-          context_notes:
-            contextNotes !== (requisition.context_notes ?? "") ? contextNotes : null,
-          regenerate_variants: regenerate,
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        toast.error(body?.message || body?.detail || "Save failed");
-        return;
-      }
-      toast.success(regenerate ? "Variants regenerated" : "Requisition updated");
-      await onSaved();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <section className="rounded-2xl border border-border bg-card p-6">
-      <h2 className="mb-4 text-base font-extrabold tracking-tight">Edit requisition</h2>
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2 md:col-span-2">
-          <Label htmlFor="role-edit">Role request</Label>
-          <Textarea
-            id="role-edit"
-            rows={2}
-            value={roleRequest}
-            onChange={(e) => setRoleRequest(e.target.value)}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="loc-edit">Location</Label>
-          <Input
-            id="loc-edit"
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="dept-edit">Department</Label>
-          <Input
-            id="dept-edit"
-            value={department}
-            onChange={(e) => setDepartment(e.target.value)}
-          />
-        </div>
-        <div className="space-y-2 md:col-span-2">
-          <Label htmlFor="ctx-edit">Hire-specific context</Label>
-          <Textarea
-            id="ctx-edit"
-            rows={4}
-            value={contextNotes}
-            onChange={(e) => setContextNotes(e.target.value)}
-          />
-        </div>
-      </div>
-
-      <label className="mt-4 flex items-center gap-2 text-xs">
-        <input
-          type="checkbox"
-          checked={regenerate}
-          onChange={(e) => setRegenerate(e.target.checked)}
-        />
-        Regenerate all JD variants
-      </label>
-
-      <div className="mt-4 flex justify-end">
-        <Button onClick={save} disabled={saving}>
-          {saving ? (
-            <>
-              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> Saving…
-            </>
-          ) : (
-            "Save changes"
-          )}
-        </Button>
-      </div>
-    </section>
-  );
 }
 
 function NotionParentField({

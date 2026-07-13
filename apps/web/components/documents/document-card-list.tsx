@@ -3,13 +3,16 @@
 import { useState } from "react";
 import {
   AlertCircle,
+  Lock,
   MessageSquare,
+  Mic,
   MoreVertical,
   RefreshCw,
   Trash2,
 } from "lucide-react";
 import { formatAbsolute, formatRelativeShort } from "@/lib/date";
 import type { Document } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -112,6 +115,17 @@ export function DocumentCardList({
   );
 }
 
+// Mirrors isMeetingTranscript() in document-table.tsx / the backend's
+// DocumentKind filter (routers/documents.py).
+function isMeetingTranscript(doc: Document): boolean {
+  return (
+    doc.source === "zoom" ||
+    doc.source === "google_meet_transcript" ||
+    doc.file_type === "vtt" ||
+    doc.file_type === "teams_transcript"
+  );
+}
+
 function extractErrorReason(metadata: unknown): string | null {
   if (!metadata || typeof metadata !== "object") return null;
   const v = (metadata as Record<string, unknown>).error_reason;
@@ -144,6 +158,19 @@ function DocumentCard({
         <p className="line-clamp-1 text-sm font-medium text-foreground">
           {doc.name}
         </p>
+        {isMeetingTranscript(doc) && (
+          <div className="mt-1 flex items-center gap-1.5">
+            <Badge variant="brand">
+              <Mic className="h-3 w-3" />
+              Meeting Transcript
+            </Badge>
+            {doc.visibility === "private" && (
+              <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Lock className="h-2.5 w-2.5" /> Private
+              </span>
+            )}
+          </div>
+        )}
         <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
           {doc.current_version_number != null && (
             <>

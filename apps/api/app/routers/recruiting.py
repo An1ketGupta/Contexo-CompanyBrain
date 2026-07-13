@@ -414,6 +414,24 @@ async def update_requisition(
         if val is not None:
             updates[field_name] = val
 
+    # Manual JD edit: replace one variant's text in place. Rejected alongside
+    # regenerate_variants — the regenerated set would silently discard the edit.
+    if body.jd_variant_edit is not None:
+        if body.regenerate_variants:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "jd_variant_edit and regenerate_variants are mutually exclusive.",
+            )
+        variants = list(row.get("jd_variants") or [])
+        idx = body.jd_variant_edit.variant_index
+        if idx >= len(variants):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"variant_index {idx} out of range (requisition has {len(variants)} variants).",
+            )
+        variants[idx] = {**variants[idx], "text": body.jd_variant_edit.text}
+        updates["jd_variants"] = variants
+
     # Regenerate path: rerun the agent with the merged fields and overwrite
     # the variants. We don't change `created_at` so the requisition stays in
     # its original timeline position.

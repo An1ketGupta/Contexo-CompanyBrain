@@ -15,6 +15,7 @@ interface DocumentsResponse {
 export interface DocumentFilters {
   status: string;        // "" | pending | processing | ready | failed
   file_type: string;     // "" | pdf | docx | txt | md
+  kind: string;           // "" | meeting_transcript
   tags: string[];
   search: string;
   sort_by: "created_at" | "name" | "file_size_bytes";
@@ -24,6 +25,7 @@ export interface DocumentFilters {
 export const DEFAULT_FILTERS: DocumentFilters = {
   status: "",
   file_type: "",
+  kind: "",
   tags: [],
   search: "",
   sort_by: "created_at",
@@ -34,6 +36,7 @@ export function isFiltering(f: DocumentFilters): boolean {
   return (
     !!f.status ||
     !!f.file_type ||
+    !!f.kind ||
     !!f.search ||
     f.tags.length > 0 ||
     f.sort_by !== "created_at" ||
@@ -45,6 +48,7 @@ function buildKey(filters: DocumentFilters): string {
   const params = new URLSearchParams();
   if (filters.status) params.set("status", filters.status);
   if (filters.file_type) params.set("file_type", filters.file_type);
+  if (filters.kind) params.set("kind", filters.kind);
   if (filters.search) params.set("search", filters.search);
   for (const t of filters.tags) params.append("tag", t);
   params.set("sort_by", filters.sort_by);
@@ -63,6 +67,7 @@ function buildTagSearchKey(filters: DocumentFilters): string | null {
   const params = new URLSearchParams();
   if (filters.status) params.set("status", filters.status);
   if (filters.file_type) params.set("file_type", filters.file_type);
+  if (filters.kind) params.set("kind", filters.kind);
   params.append("tag", normalised);
   params.set("sort_by", filters.sort_by);
   params.set("sort_dir", filters.sort_dir);
@@ -215,6 +220,19 @@ export function useDocuments(filters: DocumentFilters = DEFAULT_FILTERS) {
     [mutate],
   );
 
+  const updateVisibility = useCallback(
+    async (id: string, visibility: "private" | "org"): Promise<void> => {
+      const res = await fetch(`/api/documents/${id}/visibility`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visibility }),
+      });
+      if (!res.ok) throw await parseApiError(res);
+      await mutate();
+    },
+    [mutate],
+  );
+
   const upsertDocument = useCallback(
     (doc: Document) => {
       mutate(
@@ -289,6 +307,7 @@ export function useDocuments(filters: DocumentFilters = DEFAULT_FILTERS) {
     bulkDelete,
     bulkAddTags,
     updateTags,
+    updateVisibility,
     upsertDocument,
     removeDocument,
     retryDocument,

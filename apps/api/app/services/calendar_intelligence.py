@@ -386,15 +386,23 @@ async def _get_or_build_recap(svc: Any, org_id: str, document_id: str) -> str | 
 
 async def resolve_prior_meeting_context(
     prior: dict[str, Any],
+    *,
+    series_match: bool = False,
 ) -> PriorContext | None:
     """Turn a previous-occurrence meeting into a compact grounding block.
 
     Resolves the meeting's transcript document (owned by the meeting owner,
     ingested within a window around the meeting), then either reuses its
     structured Zoom/Teams `meeting_summaries` or recaps the raw Google Meet
-    transcript. Confidence gate: a raw transcript is only used when its name
-    matches the meeting title; a structured summary is always trusted.
-    Returns None when nothing links confidently (never guesses).
+    transcript.
+
+    Confidence gate for a raw transcript: its name must match the meeting title
+    OR `series_match` must be True. `series_match` means the caller found this
+    prior occurrence via the Google recurring-series key (`recurring_event_id`),
+    not a title guess — a link strong enough to survive a mid-series rename,
+    where the transcript's frozen name no longer equals the renamed title. A
+    structured summary is always trusted. Returns None when nothing links
+    confidently (never guesses).
     """
     svc = get_service_client()
     org_id = prior.get("org_id")
@@ -428,7 +436,17 @@ async def resolve_prior_meeting_context(
     title_matched = [
         d for d in cands if title_norm and title_norm in _normalize_title(d.get("name") or "")
     ]
-    ordered = title_matched + [d for d in cands if d not in title_matched]
+    # Title matches first (strongest link). The rest follow ordered by how close
+    # each was filed to the meeting's start time — so when we fall back to the
+    # series key (rename case), the transcript nearest the call wins over other
+    # transcripts that happen to sit in the same window.
+    rest = [d for d in cands if d not in title_matched]
+    rest.sort(
+        key=lambda d: abs(
+            ((_parse_iso(d.get("created_at") or "") or start) - start).total_seconds()
+        )
+    )
+    ordered = title_matched + rest
 
     for d in ordered:
         doc_id = d["id"]
@@ -438,9 +456,15 @@ async def resolve_prior_meeting_context(
             recap = _format_structured_recap(summary)
             if recap.strip():
                 return PriorContext(recap, source_doc, prior.get("start_time"), prior.get("title"))
-        if d in title_matched and d.get("source") == "google_meet_transcript":
+        # Raw Google Meet transcript: trust it when its name matches the title,
+        # or when the series key already proved same-series (rename-safe).
+        if d.get("source") == "google_meet_transcript" and (d in title_matched or series_match):
             recap = await _get_or_build_recap(svc, org_id, doc_id)
             if recap and recap.strip():
+                if d not in title_matched:
+                    log.info(
+                        "calendar.brief.prior_context.series_rename_match doc=%s", doc_id
+                    )
                 return PriorContext(recap, source_doc, prior.get("start_time"), prior.get("title"))
     return None
 
@@ -507,7 +531,20 @@ async def generate_meeting_prep_brief(
         # skip guard below: a generic-titled "TG Meet" is perfectly briefable if
         # we have last week's transcript to continue from.
         prior = await find_previous_occurrence(meeting)
-        prior_ctx = await resolve_prior_meeting_context(prior) if prior else None
+        # A shared, non-null recurring_event_id means `prior` was located by the
+        # exact Google series key — trustworthy even if the meeting was renamed
+        # mid-series, so the transcript resolver can accept a name that no longer
+        # matches the (renamed) title.
+        series_match = bool(
+            prior
+            and meeting.get("recurring_event_id")
+            and prior.get("recurring_event_id") == meeting.get("recurring_event_id")
+        )
+        prior_ctx = (
+            await resolve_prior_meeting_context(prior, series_match=series_match)
+            if prior
+            else None
+        )
         if prior_ctx:
             log.info(
                 "calendar.brief.prior_context meeting=%s doc=%s",

@@ -154,9 +154,6 @@ from app.routers import (
     sales_agent as sales_agent_router,
 )
 from app.routers import (
-    interview_kits as interview_kits_router,
-)
-from app.routers import (
     marketing as marketing_router,
 )
 from app.routers import (
@@ -301,7 +298,6 @@ app.include_router(agent2_integrations_router.router)
 app.include_router(channels_router.router)
 app.include_router(onboarding_v2_router.router)
 app.include_router(sales_agent_router.router)
-app.include_router(interview_kits_router.router)
 app.include_router(marketing_router.router)
 app.include_router(onboarding_public_router.router)
 app.include_router(mcp_router)

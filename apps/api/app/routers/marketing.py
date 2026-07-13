@@ -1,5 +1,4 @@
-"""Marketing Agent endpoints (third agent in the family, after Sales/RFP
-and Recruiting/Interview Kit).
+"""Marketing Agent endpoints (third agent in the family, after Sales/RFP).
 
 Endpoints:
     POST   /marketing/briefs/generate    fire agent (creates brief + run)

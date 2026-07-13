@@ -46,6 +46,17 @@ DocumentSortField = Literal["created_at", "name", "file_size_bytes"]
 DocumentSortDir = Literal["asc", "desc"]
 DocumentStatus = Literal["pending", "processing", "ready", "failed"]
 DocumentFileType = Literal["pdf", "docx", "txt", "md", "xlsx", "pptx", "html", "csv"]
+DocumentKind = Literal["meeting_transcript"]
+
+# A document is a "meeting transcript" if it's a Zoom/Google Meet auto-sync
+# (services/integrations/zoom.py, google_meet_transcripts.py) or a manually
+# uploaded VTT/Teams-JSON file (both route into MeetingNotesAgent — see the
+# file_type comment near _resolve_file_type above). Checked directly rather
+# than via the 'meeting-notes' tag because that tag is only added once
+# MeetingNotesAgent finishes, so a just-uploaded transcript would briefly
+# fall through a tag-based filter.
+_TRANSCRIPT_SOURCES = ("zoom", "google_meet_transcript")
+_TRANSCRIPT_FILE_TYPES = ("vtt", "teams_transcript")
 
 
 def _normalise_tag(raw: str) -> str | None:
@@ -624,6 +635,9 @@ async def list_documents(
     file_type: DocumentFileType | None = Query(None),
     tag: list[str] | None = Query(None, description="Repeat to AND-filter multiple tags."),
     search: str | None = Query(None, max_length=120, description="Case-insensitive substring match on name."),
+    kind: DocumentKind | None = Query(
+        None, description="'meeting_transcript' restricts to Zoom/Meet/manual transcript uploads."
+    ),
     sort_by: DocumentSortField = Query("created_at"),
     sort_dir: DocumentSortDir = Query("desc"),
     limit: int = Query(50, ge=1, le=200),
@@ -651,6 +665,7 @@ async def list_documents(
         file_type,
         tuple(sorted({(t or "").strip().lower() for t in (tag or []) if t})),
         (search or "").strip().lower(),
+        kind,
         sort_by,
         sort_dir,
         limit,
@@ -666,13 +681,17 @@ async def list_documents(
 
     def _run() -> Any:
         q = client.table("documents").select(
-            "id, name, file_type, file_size_bytes, status, chunk_count, tags, metadata, created_at, health_score, health_label, last_accessed_at, review_frequency_days, review_due_at, last_reviewed_at, current_version_id, template_kind",
+            "id, name, file_type, file_size_bytes, status, chunk_count, tags, metadata, created_at, health_score, health_label, last_accessed_at, review_frequency_days, review_due_at, last_reviewed_at, current_version_id, template_kind, source, visibility, created_by",
             count="exact",
         )
         if status_filter:
             q = q.eq("status", status_filter)
         if file_type:
             q = q.eq("file_type", file_type)
+        if kind == "meeting_transcript":
+            sources = ",".join(_TRANSCRIPT_SOURCES)
+            file_types = ",".join(_TRANSCRIPT_FILE_TYPES)
+            q = q.or_(f"source.in.({sources}),file_type.in.({file_types})")
         if tag:
             cleaned = _normalise_tags(tag, cap=TAG_BULK_MAX)
             if cleaned:
@@ -1364,6 +1383,85 @@ async def update_document_tags(
         raise HTTPException(status_code=404, detail="Document not found.")
     await invalidate_document_caches(org_id)
     return {"document": result.data[0]}
+
+
+class VisibilityPatchBody(BaseModel):
+    visibility: Literal["private", "org"]
+
+
+@router.patch("/{doc_id}/visibility")
+async def update_document_visibility(
+    doc_id: str,
+    body: VisibilityPatchBody,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Owner publishes a private document (auto-synced Zoom/Meet transcript,
+    or reverts a published one back to private).
+
+    Ownership is checked here rather than left to RLS: `documents_update`
+    (migration 002) is org-scoped, not owner-scoped, so any org member could
+    otherwise flip a teammate's private meeting transcript public. Publishing
+    is a personal consent decision, so no admin override — see migrations
+    084/086 for the visibility model this closes the loop on.
+    """
+    org_id: str | None = current_user["org_id"]
+    user_id: str = current_user["user_id"]
+    if not org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No organization found.")
+    try:
+        uuid.UUID(doc_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid document id.")
+
+    svc = get_service_client()
+    row = await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .select("id, org_id, created_by, visibility")
+        .eq("id", doc_id)
+        .maybe_single()
+        .execute()
+    )
+    if not row or not row.data or row.data.get("org_id") != org_id:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if row.data.get("created_by") != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the document's owner can change who can see it.",
+        )
+
+    result = await asyncio.to_thread(
+        lambda: svc.table("documents")
+        .update({"visibility": body.visibility})
+        .eq("id", doc_id)
+        .execute()
+    )
+
+    # Cascade to the derived "Meeting summary" doc (MeetingNotesAgent) so
+    # publishing the transcript also publishes its decisions/action items —
+    # otherwise the summary would stay private and the publish would look
+    # like a no-op to anyone else in the org. Best-effort: a missing summary
+    # (agent hasn't run yet, or none exists) is not an error.
+    try:
+        summary = await asyncio.to_thread(
+            lambda: svc.table("meeting_summaries")
+            .select("derived_document_id")
+            .eq("source_document_id", doc_id)
+            .maybe_single()
+            .execute()
+        )
+        derived_id = (summary.data or {}).get("derived_document_id") if summary else None
+        if derived_id:
+            await asyncio.to_thread(
+                lambda: svc.table("documents")
+                .update({"visibility": body.visibility})
+                .eq("id", derived_id)
+                .execute()
+            )
+    except Exception as exc:
+        log.warning("visibility_cascade_to_summary_failed doc_id=%s error=%s", doc_id, exc)
+
+    await invalidate_document_caches(org_id)
+    return {"document": (result.data or [{}])[0]}
 
 
 # ── Delete ────────────────────────────────────────────────────────────────────

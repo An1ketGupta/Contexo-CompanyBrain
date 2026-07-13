@@ -1356,8 +1356,69 @@ function DropboxPicker({
 //
 // No picker, no manual sync — a webhook (recording.transcript_completed)
 // covers every cloud recording account-wide the moment its transcript is
-// ready, so there's nothing for the admin to select.
+// ready. Ingestion is gated per host: only meetings whose host opted in
+// ("Sync my Zoom meeting transcripts" below) are ingested, owned by that
+// host, and private to them until they publish. The connecting admin is
+// auto-opted-in at connect time.
 // ──────────────────────────────────────────────────────────────────────────
+
+function ZoomOptinToggle() {
+  const [optedIn, setOptedIn] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/integrations/zoom/transcript-optin")
+      .then((res) => (res.ok ? res.json() : { opted_in: false }))
+      .then((data: { opted_in?: boolean }) => {
+        if (!cancelled) setOptedIn(Boolean(data.opted_in));
+      })
+      .catch(() => {
+        if (!cancelled) setOptedIn(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function toggle(next: boolean) {
+    setSaving(true);
+    const res = await fetch("/api/integrations/zoom/transcript-optin", {
+      method: next ? "PUT" : "DELETE",
+    });
+    setSaving(false);
+    if (!res.ok) {
+      toast.error("Could not update your transcript sync preference");
+      return;
+    }
+    setOptedIn(next);
+    toast.success(
+      next
+        ? "Your Zoom meeting transcripts will now sync (visible only to you)."
+        : "Your Zoom meeting transcripts will no longer sync.",
+    );
+  }
+
+  return (
+    <div className="flex items-start gap-2">
+      <Checkbox
+        id="zoom-transcript-optin"
+        checked={optedIn === true}
+        disabled={optedIn === null || saving}
+        onCheckedChange={(v) => toggle(v === true)}
+      />
+      <label htmlFor="zoom-transcript-optin" className="cursor-pointer">
+        <span className="block text-xs font-medium">
+          Sync my Zoom meeting transcripts
+        </span>
+        <span className="block text-[11px] text-muted-foreground">
+          Only meetings you host are ingested, and they stay private to you
+          until you share them with the workspace.
+        </span>
+      </label>
+    </div>
+  );
+}
 
 export function ZoomCard({
   status,
@@ -1383,7 +1444,7 @@ export function ZoomCard({
       <Card
         icon={<Video className="h-4 w-4" />}
         title="Zoom"
-        description="Auto-ingest cloud-recording transcripts the moment Zoom finishes processing them — routed through decision/action-item extraction, not just raw text."
+        description="Auto-ingest cloud-recording transcripts the moment Zoom finishes processing them — routed through decision/action-item extraction, not just raw text. Each teammate opts in individually; transcripts stay private to their host."
       >
         <Button size="sm" onClick={() => startConnect("/api/integrations/zoom/connect")}>
           Connect Zoom
@@ -1405,6 +1466,7 @@ export function ZoomCard({
       description="Listening for new transcripts — no manual sync needed."
     >
       <div className="space-y-3">
+        <ZoomOptinToggle />
         <Button
           variant="ghost"
           size="sm"

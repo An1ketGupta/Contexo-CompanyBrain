@@ -2,13 +2,22 @@
 
 Google Meet auto-saves a transcript as a Google Doc in a "Meet Recordings"
 folder in the organizer/recorder's My Drive shortly after a recorded call
-ends. This module detects those docs and feeds them into the knowledge base
-as regular searchable documents — same "export Google Doc -> text ->
-doc/process-text" path the org-scoped Drive integration already uses for
-Google Docs (see services/integrations/drive.py:_ingest_file). No new
-parser, no MeetingNotesAgent routing — the transcript just becomes another
-document that hybrid search can surface (e.g. when a meeting-prep brief
-searches the KB for an attendee's company).
+ends. This module detects the files in that folder and feeds them into the
+knowledge base as regular searchable documents. No new parser, no
+MeetingNotesAgent routing — the transcript just becomes another document that
+hybrid search can surface, and that the meeting-prep brief can use as
+previous-meeting context.
+
+We trust the *folder*, not the filename. The user deliberately picks a
+dedicated transcripts folder via the Google Picker, so we ingest every
+ingestible file that lands in it rather than gating on Meet's
+"... - Transcript" naming convention. That's what lets third-party recorders
+(Otter, Fireflies, tl;dv, Fathom) and manual uploads work — they name and
+format their exports however they like:
+  * Google Docs (native Meet transcripts)  -> export to text  -> doc/process-text
+  * PDF / DOCX / TXT (third-party exports)  -> download bytes  -> doc/process-binary-external
+Google-native non-Doc types (Sheets/Slides) are skipped — they can't be
+downloaded via alt=media and aren't transcripts.
 
 Folder-scoped, not Drive-wide: the Google Workspace OAuth grant is drive.file
 only (see google_workspace.py) — no blanket "see all your Drive files" scope.
@@ -29,13 +38,27 @@ import httpx
 
 from app.database import get_service_client
 from app.services.integrations import google_workspace
+from app.services.integrations._unified import queue_binary_ingest
 from app.services.integrations.text_ingest import upsert_external_document
 
 log = logging.getLogger(__name__)
 
 SOURCE_TAG = "google_meet_transcript"
 _PROVIDER = "google_workspace"
-_TRANSCRIPT_MIME = "application/vnd.google-apps.document"
+_GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+# Real (non-Google-native) files: downloaded via alt=media and handed to the
+# standard binary pipeline. mimeType -> the file_type the pipeline expects.
+_BINARY_MIME_TO_TYPE = {
+    "application/pdf": "pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/msword": "docx",
+    "text/plain": "txt",
+    "text/markdown": "md",
+    "text/vtt": "txt",
+    "application/x-subrip": "txt",
+}
+# Every mimeType we're willing to pull from a connected folder.
+_INGESTIBLE_MIMES = [_GOOGLE_DOC_MIME, *_BINARY_MIME_TO_TYPE.keys()]
 _FOLDER_IDS_KEY = "meet_transcript_folder_ids"
 
 
@@ -132,14 +155,16 @@ async def sync_user(*, org_id: str, user_id: str) -> dict[str, Any]:
 async def _list_transcript_files(
     *, access_token: str, folder_id: str, modified_since: str
 ) -> list[dict[str, Any]]:
-    """Single page of Drive v3 files.list, scoped to one connected folder and
-    filtered to Google Docs whose name matches Meet's transcript naming
-    convention ("... - Transcript"). Capped at 50/cycle so a busy folder
-    doesn't blow the polling window."""
+    """Single page of Drive v3 files.list, scoped to one connected folder.
+
+    Filtered to the ingestible mimeTypes (Google Docs + PDF/DOCX/TXT/…) but NOT
+    by filename — the folder is the contract, so any transcript-shaped file the
+    user drops in is picked up regardless of what a third-party tool named it.
+    Capped at 50/cycle so a busy folder doesn't blow the polling window."""
+    mime_clause = " or ".join(f"mimeType = '{m}'" for m in _INGESTIBLE_MIMES)
     q = (
-        f"'{folder_id}' in parents and mimeType = '{_TRANSCRIPT_MIME}' "
-        f"and name contains 'Transcript' and trashed = false "
-        f"and modifiedTime > '{modified_since}'"
+        f"'{folder_id}' in parents and ({mime_clause}) "
+        f"and trashed = false and modifiedTime > '{modified_since}'"
     )
     params = {
         "q": q,
@@ -254,31 +279,61 @@ async def _ingest_transcript(
 ) -> None:
     file_id = file["id"]
     name = file.get("name") or f"Meet transcript {file_id}"
+    mime = file.get("mimeType") or ""
 
-    text = await _export_text(access_token, file_id)
-    if not text:
-        log.warning("meet_transcript_empty_export file=%s", file_id)
+    # Google-native Docs (native Meet transcripts): export to plain text and run
+    # the text pipeline. The event id carries modifiedTime so an edited Doc
+    # re-ingests rather than being deduped away by Inngest.
+    if mime == _GOOGLE_DOC_MIME:
+        text = await _export_text(access_token, file_id)
+        if not text.strip():
+            log.warning("meet_transcript_empty_export file=%s", file_id)
+            return
+
+        doc_id = await upsert_external_document(
+            org_id=org_id,
+            source=SOURCE_TAG,
+            external_id=file_id,
+            name=name,
+            file_type="txt",
+            user_id=user_id,
+        )
+
+        import inngest
+
+        from app.inngest.client import get_inngest_client
+        client = get_inngest_client()
+        await client.send(
+            inngest.Event(
+                name="doc/process-text",
+                data={"doc_id": doc_id, "org_id": org_id, "text": text},
+                id=f"meet-transcript-{doc_id}-{file.get('modifiedTime') or ''}",
+            )
+        )
         return
 
-    doc_id = await upsert_external_document(
+    # Real files (third-party exports): download the bytes with alt=media inside
+    # the Inngest worker and run the standard binary pipeline. The access token
+    # captured here is fresh (get_user_token refreshes it) and the worker runs
+    # promptly, so it's still valid at download time.
+    file_type = _BINARY_MIME_TO_TYPE.get(mime)
+    if not file_type:
+        log.warning("meet_transcript_unsupported_mime file=%s mime=%s", file_id, mime)
+        return
+
+    download_url = (
+        f"https://www.googleapis.com/drive/v3/files/{file_id}"
+        "?alt=media&supportsAllDrives=true"
+    )
+    await queue_binary_ingest(
         org_id=org_id,
         source=SOURCE_TAG,
         external_id=file_id,
         name=name,
-        file_type="txt",
+        file_type=file_type,
+        download_url=download_url,
+        auth_header=f"Bearer {access_token}",
         user_id=user_id,
-    )
-
-    import inngest
-
-    from app.inngest.client import get_inngest_client
-    client = get_inngest_client()
-    await client.send(
-        inngest.Event(
-            name="doc/process-text",
-            data={"doc_id": doc_id, "org_id": org_id, "text": text},
-            id=f"meet-transcript-{doc_id}-{file.get('modifiedTime') or ''}",
-        )
     )
 
 

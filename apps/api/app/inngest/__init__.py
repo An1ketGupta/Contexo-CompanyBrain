@@ -29,7 +29,6 @@ from .onboarding_functions import FUNCTIONS as _ONBOARDING_FUNCTIONS
 from .onboarding_v2_functions import FUNCTIONS as _ONBOARDING_V2_FUNCTIONS
 from .rfp_agent_functions import FUNCTIONS as _RFP_AGENT_FUNCTIONS
 from .sales_agent_functions import FUNCTIONS as _SALES_AGENT_FUNCTIONS
-from .interview_kit_functions import FUNCTIONS as _INTERVIEW_KIT_FUNCTIONS
 from .marketing_agent_functions import FUNCTIONS as _MARKETING_AGENT_FUNCTIONS
 from .policy_functions import FUNCTIONS as _POLICY_FUNCTIONS
 from .query_log_retention import FUNCTIONS as _QUERY_LOG_RETENTION_FUNCTIONS
@@ -57,7 +56,6 @@ FUNCTIONS = [
     *_ONBOARDING_V2_FUNCTIONS,
     *_SALES_AGENT_FUNCTIONS,
     *_RFP_AGENT_FUNCTIONS,
-    *_INTERVIEW_KIT_FUNCTIONS,
     *_MARKETING_AGENT_FUNCTIONS,
     *_POLICY_FUNCTIONS,
     *_COMPLIANCE_FUNCTIONS,

@@ -131,7 +131,7 @@ class MeetingNotesAgent(BaseAgent):
         await self.log_step("load_transcript", "started")
         doc_row = await asyncio.to_thread(
             lambda: svc.table("documents")
-            .select("id, name, file_path, file_type, org_id, created_by")
+            .select("id, name, file_path, file_type, org_id, created_by, visibility")
             .eq("id", self.document_id)
             .maybe_single()
             .execute()
@@ -250,14 +250,23 @@ class MeetingNotesAgent(BaseAgent):
             source_doc_name=doc.get("name") or "Meeting transcript",
             created_by=doc.get("created_by"),
             summary_id=summary_id,
+            visibility=doc.get("visibility") or "org",
         )
 
         # ── Step 5: best-effort Slack action-item ping ────────────────
-        await self._maybe_post_action_items_to_slack(
-            extraction=extraction,
-            summary_id=summary_id,
-            derived_doc_id=derived_doc_id,
-        )
+        # Not for private transcripts (auto-synced Zoom/Meet recordings) —
+        # posting their action items to a shared channel would broadcast the
+        # very content the visibility gate keeps owner-only.
+        if (doc.get("visibility") or "org") == "private":
+            await self.log_step(
+                "post_action_items", "skipped", {"reason": "private_source"}
+            )
+        else:
+            await self._maybe_post_action_items_to_slack(
+                extraction=extraction,
+                summary_id=summary_id,
+                derived_doc_id=derived_doc_id,
+            )
 
         return {
             "summary_id": summary_id,
@@ -304,11 +313,14 @@ class MeetingNotesAgent(BaseAgent):
         source_doc_name: str,
         created_by: str | None,
         summary_id: str | None,
+        visibility: str = "org",
     ) -> str | None:
         """Mint a "Meeting summary" doc that holds the structured body.
 
         We use the existing `doc/process-text` pipeline so the derived doc
         becomes chunked + embedded + searchable like any other text doc.
+        Visibility is inherited from the source transcript — a private
+        (auto-synced) transcript must not leak its summary org-wide.
         """
         svc = get_service_client()
         derived_id = str(uuid.uuid4())
@@ -331,6 +343,7 @@ class MeetingNotesAgent(BaseAgent):
                     "tags": ["meeting-notes"],
                     "auto_tagged": True,
                     "created_by": created_by,
+                    "visibility": visibility,
                     "metadata": {
                         "source_document_id": self.document_id,
                         "meeting_summary_id": summary_id,

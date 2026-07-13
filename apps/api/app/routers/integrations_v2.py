@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from app.auth import verify_jwt
 from app.config import get_settings
-from app.database import get_user_client
+from app.database import get_service_client, get_user_client
 from app.errors import NoOrganization
 from app.services.integrations import (
     _unified,
@@ -160,11 +160,15 @@ async def v2_status(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
 def _shape(row: dict[str, Any] | None, *, available: bool) -> dict[str, Any]:
     if not row:
         return {"available": available, "connected": False}
-    # Strip tokens — even though RLS limits access, defense in depth.
+    # Strip tokens — even though RLS limits access, defense in depth. Also
+    # drop the Zoom opt-in map: it holds teammates' emails/user ids, and the
+    # caller only needs their own state (GET /integrations/zoom/transcript-optin).
+    metadata = dict(row.get("metadata") or {})
+    metadata.pop(zoom_svc.OPTINS_KEY, None)
     return {
         "available": available,
         "connected": True,
-        "metadata": row.get("metadata") or {},
+        "metadata": metadata,
         "resources": row.get("resources") or [],
         "last_synced_at": row.get("last_synced_at"),
         "last_error": row.get("last_error"),
@@ -546,6 +550,57 @@ async def zoom_disconnect(current_user: dict = Depends(verify_jwt)) -> None:
     await zoom_svc.disconnect(org_id=org_id)
 
 
+# Per-user transcript opt-in: the account-wide webhook only ingests meetings
+# whose host appears in metadata.transcript_optins (see services/integrations/
+# zoom.py). Any org member can toggle themselves — deliberately NOT admin-only,
+# consent is personal.
+
+
+async def _current_user_email(user_id: str) -> str:
+    svc = get_service_client()
+    au = await asyncio.to_thread(lambda: svc.auth.admin.get_user_by_id(user_id))
+    email = getattr(getattr(au, "user", None), "email", None)
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your account has no email address; cannot match Zoom meetings.",
+        )
+    return email
+
+
+@router.get("/integrations/zoom/transcript-optin")
+async def zoom_optin_status(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
+    org_id, user_id, _ = _require_org(current_user)
+    row = await _unified.get_row(org_id=org_id, provider="zoom")
+    return {"opted_in": zoom_svc.is_user_opted_in(row, user_id)}
+
+
+@router.put("/integrations/zoom/transcript-optin")
+async def zoom_optin(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
+    org_id, user_id, _ = _require_org(current_user)
+    email = await _current_user_email(user_id)
+    try:
+        await zoom_svc.set_transcript_optin(
+            org_id=org_id, user_id=user_id, email=email, opted_in=True
+        )
+    except RuntimeError:
+        raise HTTPException(status_code=404, detail="Zoom is not connected.")
+    return {"opted_in": True}
+
+
+@router.delete("/integrations/zoom/transcript-optin")
+async def zoom_optout(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
+    org_id, user_id, _ = _require_org(current_user)
+    email = await _current_user_email(user_id)
+    try:
+        await zoom_svc.set_transcript_optin(
+            org_id=org_id, user_id=user_id, email=email, opted_in=False
+        )
+    except RuntimeError:
+        raise HTTPException(status_code=404, detail="Zoom is not connected.")
+    return {"opted_in": False}
+
+
 # ──────────────────────────────────────────────────────────────────────────
 #                            Webhook stubs
 #
@@ -690,6 +745,19 @@ async def zoom_webhook(
         log.warning("zoom_webhook_no_transcript_file meeting_uuid=%s", obj.get("uuid"))
         return {"ok": True}
 
+    # Per-host consent gate: the webhook fires for every host in the Zoom
+    # account, but we only ingest meetings whose host opted in. The matched
+    # user_id also becomes the document owner (created_by), so the private-
+    # by-default transcript is visible to the actual host — not to whoever
+    # connected the integration.
+    host_user_id = zoom_svc.resolve_opted_in_host(row, obj.get("host_email"))
+    if not host_user_id:
+        log.info(
+            "zoom_webhook_host_not_opted_in meeting_uuid=%s host_email=%s",
+            obj.get("uuid"), obj.get("host_email"),
+        )
+        return {"ok": True}
+
     import inngest
 
     from app.inngest.client import get_inngest_client
@@ -700,7 +768,7 @@ async def zoom_webhook(
             name="zoom/transcript-ready",
             data={
                 "org_id": row["org_id"],
-                "user_id": row.get("connected_by"),
+                "user_id": host_user_id,
                 "download_url": transcript_file.get("download_url"),
                 "download_token": (payload.get("payload") or {}).get("download_token") or "",
                 "meeting_topic": obj.get("topic"),

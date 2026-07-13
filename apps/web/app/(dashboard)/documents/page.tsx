@@ -33,6 +33,7 @@ export default function DocumentsPage() {
     bulkDelete,
     bulkAddTags,
     updateTags,
+    updateVisibility,
     upsertDocument,
     removeDocument,
     retryDocument,
@@ -109,6 +110,7 @@ export default function DocumentsPage() {
               onDelete={deleteDocument}
               onRetry={retryDocument}
               onUpdateTags={updateTags}
+              onUpdateVisibility={updateVisibility}
               onRefresh={refresh}
             />
           </div>

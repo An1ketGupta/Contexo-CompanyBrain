@@ -17,6 +17,21 @@ Delivery is a webhook (`recording.transcript_completed`), not polling. Zoom
 fires it account-wide, independent of any org-scoped request, so we resolve
 org_id from the webhook payload's `account_id` via
 `_unified.find_row_by_metadata`.
+
+Privacy model (mirrors Google Meet transcripts, migrations 084–086):
+  * Per-user opt-in. The webhook covers every host in the Zoom account, so
+    a meeting is only ingested when its host has opted in ("Sync my Zoom
+    meeting transcripts" on the settings page). Opt-ins live in the org row's
+    `metadata.transcript_optins` as {lowercased email: app user_id}; the
+    webhook matches on the payload's `host_email`. Best-effort match — a
+    user whose app email differs from their Zoom email can't opt in today.
+    The connecting admin is auto-opted-in with their Zoom account email
+    (they clearly consented, and it's the one email we know matches Zoom).
+  * Attribution to the actual host. `created_by` is the opted-in host's
+    user_id, not whoever connected the integration.
+  * Private by default. The migration-086 trigger forces visibility='private'
+    on insert, so a transcript is searchable only by its host until they
+    publish it to the org.
 """
 from __future__ import annotations
 
@@ -38,6 +53,7 @@ log = logging.getLogger(__name__)
 
 PROVIDER = "zoom"
 STORAGE_BUCKET = "document"
+OPTINS_KEY = "transcript_optins"  # metadata: {lowercased email: app user_id}
 
 _ZOOM_API = "https://api.zoom.us/v2"
 _ZOOM_OAUTH = "https://zoom.us/oauth"
@@ -107,6 +123,16 @@ async def store_credentials(
     account = await _fetch_account(access_token)
     if not account.get("account_id"):
         raise RuntimeError("zoom_account_lookup_failed")
+
+    # Preserve teammates' opt-ins across an admin re-connect, and auto-opt-in
+    # the connector under their Zoom email (see module docstring).
+    existing = await _unified.get_row(org_id=org_id, provider=PROVIDER)
+    optins: dict[str, str] = dict(
+        ((existing or {}).get("metadata") or {}).get(OPTINS_KEY) or {}
+    )
+    if account.get("email"):
+        optins[account["email"].lower()] = user_id
+
     await _unified.upsert_row(
         org_id=org_id,
         provider=PROVIDER,
@@ -115,7 +141,11 @@ async def store_credentials(
         refresh_token=token_payload.get("refresh_token"),
         token_expiry=expiry,
         scopes=(token_payload.get("scope") or "").split(),
-        metadata={"account_id": account["account_id"], "email": account.get("email")},
+        metadata={
+            "account_id": account["account_id"],
+            "email": account.get("email"),
+            OPTINS_KEY: optins,
+        },
     )
 
 
@@ -126,6 +156,53 @@ async def disconnect(*, org_id: str) -> None:
 async def find_org_by_account_id(account_id: str) -> dict[str, Any] | None:
     return await _unified.find_row_by_metadata(
         provider=PROVIDER, key="account_id", value=account_id
+    )
+
+
+# ── Per-user transcript opt-in ──────────────────────────────────────────────
+
+
+def resolve_opted_in_host(row: dict[str, Any], host_email: str | None) -> str | None:
+    """Map a webhook's host_email to the opted-in app user_id, or None.
+
+    None means "this host never consented" and the meeting must be skipped —
+    the webhook fires for every host in the Zoom account, opted-in or not.
+    """
+    if not host_email:
+        return None
+    optins = (row.get("metadata") or {}).get(OPTINS_KEY) or {}
+    return optins.get(host_email.strip().lower())
+
+
+def is_user_opted_in(row: dict[str, Any] | None, user_id: str) -> bool:
+    if not row:
+        return False
+    optins = (row.get("metadata") or {}).get(OPTINS_KEY) or {}
+    return user_id in optins.values()
+
+
+async def set_transcript_optin(
+    *, org_id: str, user_id: str, email: str, opted_in: bool
+) -> None:
+    """Add/remove the caller from the org row's opt-in map.
+
+    Matching is by email (Zoom's host_email vs the app auth email), so a user
+    whose Zoom email differs from their app email won't match — best effort,
+    documented in the module docstring. Opting out also removes any stale
+    entries pointing at this user_id under an old email.
+    """
+    row = await _unified.get_row(org_id=org_id, provider=PROVIDER)
+    if not row:
+        raise RuntimeError("zoom_not_connected")
+    metadata = dict(row.get("metadata") or {})
+    optins: dict[str, str] = {
+        k: v for k, v in (metadata.get(OPTINS_KEY) or {}).items() if v != user_id
+    }
+    if opted_in:
+        optins[email.strip().lower()] = user_id
+    metadata[OPTINS_KEY] = optins
+    await _unified.update_fields(
+        org_id=org_id, provider=PROVIDER, fields={"metadata": metadata}
     )
 
 

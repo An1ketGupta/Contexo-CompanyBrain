@@ -11,7 +11,10 @@ export type DocumentFileType =
   | "xlsx"
   | "pptx"
   | "html"
-  | "csv";
+  | "csv"
+  | "vtt"
+  | "teams_transcript";
+export type DocumentVisibility = "private" | "org";
 export type MessageRole = "user" | "assistant";
 export type MessageFeedback = "positive" | "negative";
 
@@ -50,6 +53,10 @@ export interface Document {
   created_by: string | null;
   created_at: string;
   tags?: string[];
+  // Source integration ('zoom' | 'google_meet_transcript' | 'upload' | …)
+  // and the migration-084/086 privacy gate — private docs are owner-only.
+  source?: string | null;
+  visibility?: DocumentVisibility;
   // V4 #34
   health_score?: number | null;
   health_label?: DocumentHealthLabel | null;
