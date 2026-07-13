@@ -1,4 +1,7 @@
--- ── Migration 036: in-app notifications ────────────────────────────────────
+-- ── Migration 0365: in-app notifications ───────────────────────────────────
+-- Renumbered from 036 — that version collided with 036_unified_integrations.sql,
+-- which several later migrations' comments already reference as "migration
+-- 036" (068, 073, 085), so it kept the number and this file moved instead.
 -- General-purpose per-user notification feed. First consumer is the Monday
 -- review-reminder cron (V2 Day 13 / #38); future consumers include knowledge
 -- gaps, compliance acks, approval queues, etc.
