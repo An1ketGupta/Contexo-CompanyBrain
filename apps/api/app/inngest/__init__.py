@@ -5,7 +5,6 @@ from app.services.email.worker import FUNCTIONS as _EMAIL_FUNCTIONS
 from .api_trigger_functions import FUNCTIONS as _API_TRIGGER_FUNCTIONS
 from .approval_functions import FUNCTIONS as _APPROVAL_FUNCTIONS
 from .archive_functions import FUNCTIONS as _ARCHIVE_FUNCTIONS
-from .autoflow_functions import FUNCTIONS as _AUTOFLOW_FUNCTIONS
 from .curator_functions import FUNCTIONS as _CURATOR_FUNCTIONS
 from .duplicate_detection_functions import FUNCTIONS as _DUPLICATE_DETECTION_FUNCTIONS
 from .announcement_functions import FUNCTIONS as _ANNOUNCEMENT_FUNCTIONS
@@ -68,7 +67,6 @@ FUNCTIONS = [
     *_QUERY_LOG_RETENTION_FUNCTIONS,
     *_REPORT_FUNCTIONS,
     *_EMBEDDING_FT_FUNCTIONS,
-    *_AUTOFLOW_FUNCTIONS,
     *_DUPLICATE_DETECTION_FUNCTIONS,
     *_CURATOR_FUNCTIONS,
     *_SEQUENCE_FUNCTIONS,

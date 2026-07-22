@@ -862,9 +862,9 @@ async def _attach_user_to_org(
             "onboarding_agent_dispatch_failed", user_id=user_id, error=str(exc)
         )
 
-    # Agent2 Day 1: public-surface event for webhooks + autoflows. The
-    # org/member-joined Inngest event above is internal-only (drives the
-    # onboarding agent); this exposes the same lifecycle moment via the
+    # Public-surface event for webhooks. The org/member-joined Inngest event
+    # above is internal-only (drives the onboarding agent); this exposes the
+    # same lifecycle moment via the
     # standard webhook taxonomy so customers can route "new hire joined"
     # into Slack / Notion / their HRIS without touching internal events.
     try:

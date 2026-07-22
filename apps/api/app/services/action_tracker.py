@@ -10,10 +10,6 @@ Two flows:
   post_action_items_to_slack(action_item_ids, channel_id)
     Formats the extracted items into a single mrkdwn message and posts it to
     the chosen Slack channel via the Slack adapter.
-
-`_create_one` (single-provider task creation) also lives here because the
-autoflow `create_task` action reuses it; it is no longer wired to the
-action-items UI.
 """
 from __future__ import annotations
 
@@ -21,14 +17,10 @@ import asyncio
 import difflib
 import logging
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any
 
 from app.database import get_service_client
 from app.services.agents.kb_synthesis import synthesize_json
-from app.services.integrations import asana as asana_svc
-from app.services.integrations import jira as jira_svc
-from app.services.integrations import linear as linear_svc
-from app.services.integrations import notion as notion_svc
 from app.services.integrations import slack as slack_service
 
 log = logging.getLogger(__name__)
@@ -252,70 +244,3 @@ async def post_action_items_to_slack(
         text="\n".join(lines),
     )
     return {"posted": len(items), "ts": result.get("ts")}
-
-
-# ── Autoflow task creation ───────────────────────────────────────────────────
-# `_create_one` is reused by the autoflow `create_task` action
-# (services/autoflow_actions.py). It is intentionally not wired to the
-# action-items UI, which posts to Slack instead of provisioning tasks.
-
-
-TaskProvider = Literal["notion", "asana", "linear", "jira"]
-
-
-async def _create_one(
-    *,
-    target: TaskProvider,
-    org_id: str,
-    user_id: str,
-    action_text: str,
-    notes: str,
-    owner_email: str | None,
-    due_date: str | None,
-    notion_parent_page_id: str | None,
-) -> dict[str, Any]:
-    if target == "notion":
-        if not notion_parent_page_id:
-            raise PermissionError("notion_parent_required")
-        content_lines = [f"# {action_text}", ""]
-        if owner_email:
-            content_lines += [f"**Owner:** {owner_email}"]
-        if due_date:
-            content_lines += [f"**Due:** {due_date}"]
-        if notes:
-            content_lines += ["", "## Source notes", notes[:1500]]
-        page = await notion_svc.create_page(
-            org_id=org_id,
-            parent_page_id=notion_parent_page_id,
-            title=action_text[:200],
-            content="\n".join(content_lines),
-        )
-        return {"task_id": page.get("page_id"), "url": page.get("url")}
-    if target == "asana":
-        return await asana_svc.create_task(
-            org_id=org_id,
-            user_id=user_id,
-            name=action_text[:200],
-            notes=notes[:1500] or None,
-            assignee_email=owner_email,
-            due_date=due_date,
-        )
-    if target == "linear":
-        return await linear_svc.create_issue(
-            org_id=org_id,
-            user_id=user_id,
-            title=action_text[:200],
-            description=notes[:1500] or None,
-            assignee_email=owner_email,
-            due_date=due_date,
-        )
-    if target == "jira":
-        return await jira_svc.create_issue(
-            org_id=org_id,
-            user_id=user_id,
-            title=action_text[:200],
-            description=notes[:1500] or None,
-            assignee_email=owner_email,
-            due_date=due_date,
-        )
-    raise ValueError(f"unknown_target: {target}")

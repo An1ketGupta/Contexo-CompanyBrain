@@ -30,9 +30,6 @@ from app.routers import (
     internal_announcements as internal_announcements_router,
 )
 from app.routers import (
-    autoflows as autoflows_router,
-)
-from app.routers import (
     billing as billing_router,
 )
 from app.routers import (
@@ -279,7 +276,6 @@ app.include_router(internal_router.router)
 app.include_router(scheduled_reports_router.router)
 app.include_router(billing_router.router)
 app.include_router(webhooks_stripe_router.router)
-app.include_router(autoflows_router.router)
 app.include_router(admin_intake_router.router)
 app.include_router(knowledge_health_router.router)
 app.include_router(sequences_router.router)

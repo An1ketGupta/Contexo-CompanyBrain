@@ -36,7 +36,6 @@ import {
   Target,
   ThumbsDown,
   Users,
-  Workflow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/hooks/use-user";
@@ -132,7 +131,6 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/admin/competitor-mentions", label: "Competitors", icon: ShieldAlert, adminOnly: true },
       { href: "/admin/rate-limits", label: "Rate limits", icon: Gauge, adminOnly: true },
       { href: "/admin/embeddings", label: "Embeddings", icon: Brain, adminOnly: true },
-      { href: "/admin/autoflows", label: "Autoflows", icon: Workflow, adminOnly: true },
       { href: "/admin/personas", label: "Shared personas", icon: Users, adminOnly: true },
     ],
   },

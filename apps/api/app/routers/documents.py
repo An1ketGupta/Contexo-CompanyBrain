@@ -427,10 +427,9 @@ async def complete_upload(
         version_id=initial_version["id"] if initial_version else None,
     )
 
-    # Agent2 Day 1: emit document.uploaded so webhook subscribers + autoflows
-    # see this BEFORE the ingest pipeline finishes. document.processed will
-    # fire later when chunks are embedded. Fire-and-forget — a webhook glitch
-    # never blocks an upload response.
+    # Emit document.uploaded so webhook subscribers see this BEFORE the ingest
+    # pipeline finishes. document.processed will fire later when chunks are
+    # embedded. Fire-and-forget — a webhook glitch never blocks an upload response.
     try:
         from app.services.webhooks import trigger_event as _trigger_webhook
 

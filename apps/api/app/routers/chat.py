@@ -1354,8 +1354,8 @@ async def update_message_feedback(
             metadata={"feedback": body.feedback},
         )
 
-    # Agent2 Day 1: negative feedback fans into webhooks + autoflows. Lets an
-    # org auto-route a thumbs-down into a review queue or escalation channel.
+    # Negative feedback fans into webhooks. Lets an org auto-route a thumbs-down
+    # into a review queue or escalation channel via a webhook subscriber.
     # Fire-and-forget — the user's PATCH has already succeeded.
     if body.feedback == "negative" and current_user.get("org_id"):
         try:

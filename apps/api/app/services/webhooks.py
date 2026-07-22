@@ -63,31 +63,13 @@ ALLOWED_EVENTS: tuple[str, ...] = (
     # Distinct from document.processed so a Zapier user can decide whether to
     # react on "saw the upload" vs "ready to query".
     "document.uploaded",
-    # Fires when a user gives negative feedback on an assistant message.
-    # Pairs with the autoflow trigger of the same name so an org can route
-    # negative feedback into a quality-review queue without extra plumbing.
+    # Fires when a user gives negative feedback on an assistant message. Lets an
+    # org route negative feedback into a quality-review queue via a webhook.
     "message.feedback.negative",
-    # Emitted when a teammate accepts an invitation. Lets HR autoflows kick
-    # off an onboarding sequence (welcome email + grant access + Slack invite)
-    # without a polling job.
+    # Emitted when a teammate accepts an invitation. Lets an external HR system
+    # kick off an onboarding sequence without a polling job.
     "employee.joined",
 )
-
-# Webhook events that also serve as autoflow triggers. The mapping converts
-# the public webhook name (dot-form) to the autoflow trigger_type (snake_form
-# — chosen to match SQL identifiers). When a webhook event has no autoflow
-# trigger, we still emit the webhook; only the autoflow side is skipped.
-_AUTOFLOW_TRIGGER_BY_EVENT: dict[str, str] = {
-    "document.processed": "document_ready",
-    "document.failed": "document_failed",
-    "document.uploaded": "document_uploaded",
-    "agent.completed": "agent_completed",
-    "approval.requested": "approval_requested",
-    "compliance.acknowledged": "compliance_acknowledged",
-    "knowledge_gap.detected": "knowledge_gap_detected",
-    "message.feedback.negative": "message_feedback_negative",
-    "employee.joined": "employee_joined",
-}
 
 
 async def trigger_event(
@@ -105,29 +87,6 @@ async def trigger_event(
     if event not in ALLOWED_EVENTS:
         log.warning("webhook_event_rejected", event=event)
         return 0
-
-    # Fan into the autoflow engine in parallel. Done before the early-return
-    # on no-webhooks so autoflows still run for orgs that haven't configured
-    # any outbound webhooks (the common case).
-    autoflow_trigger = _AUTOFLOW_TRIGGER_BY_EVENT.get(event)
-    if autoflow_trigger:
-        try:
-            # Local import avoids a circular: autoflow_service → webhooks (for
-            # emit_webhook action) → here.
-            from app.services.autoflow_service import emit_trigger
-
-            await emit_trigger(
-                org_id=org_id,
-                trigger_type=autoflow_trigger,
-                payload=payload,
-            )
-        except Exception as exc:
-            log.warning(
-                "autoflow_trigger_enqueue_failed",
-                event=event,
-                trigger_type=autoflow_trigger,
-                error=str(exc),
-            )
 
     webhooks = await _matching_webhooks(org_id=org_id, event=event)
     if not webhooks:

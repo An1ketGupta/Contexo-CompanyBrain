@@ -91,12 +91,9 @@ async def scan_document_for_duplicates(
             if row:
                 delivered += 1
 
-    # Webhook fan-out lives behind the regular taxonomy. We use the existing
-    # `knowledge_gap.detected` event would be wrong — duplicates aren't gaps.
-    # We don't add a new top-level event just for duplicates either; instead
-    # the admin in-app notification IS the primary signal and the autoflow
-    # engine can be configured to react to the `duplicate_document_detected`
-    # notification type via a future trigger. Keeping the surface tight.
+    # No dedicated webhook event: `knowledge_gap.detected` would be wrong —
+    # duplicates aren't gaps — and a new top-level event isn't warranted. The
+    # admin in-app notification is the primary signal. Keeping the surface tight.
 
     return {
         "status": "matched",

@@ -8,7 +8,7 @@ import { AlertTriangle, CalendarClock, Check, ListChecks, Loader2 } from "lucide
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { SlackChannelPicker } from "@/components/autoflows/forms/slack-channel-picker";
+import { SlackChannelPicker } from "@/components/action-items/slack-channel-picker";
 import { cn } from "@/lib/utils";
 
 interface ActionItem {
