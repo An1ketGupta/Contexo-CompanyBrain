@@ -4,8 +4,9 @@ FROM python:3.12-slim
 COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /uvx /bin/
 
 # Minimal OS hygiene + curl for HEALTHCHECK. No Pango/Cairo/fonts needed here —
-# unlike apps/api, this service never renders HTML to PDF, only stamps
-# signatures onto already-rendered PDFs via PyMuPDF.
+# unlike apps/api, this service never renders HTML to PDF. PyMuPDF is used only
+# to locate signature markers and derive Documenso field coordinates; Documenso
+# itself does the sealing.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl ca-certificates \

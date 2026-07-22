@@ -1,21 +1,17 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import SignatureCanvas from "react-signature-canvas";
+import { useEffect, useState } from "react";
+import { EmbedSignDocument } from "@documenso/embed-react";
 import { CheckCircle2, Clock, Loader2, ShieldCheck } from "lucide-react";
-
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 
 interface Prefill {
   envelope_id: string;
   role: string;
   signer_name: string;
   document_kinds: string[];
-  preview_url: string | null;
+  documenso_host: string;
+  documenso_token: string;
   already_signed: boolean;
 }
 
@@ -31,14 +27,7 @@ export default function SignDocumentPage() {
 
   const [prefill, setPrefill] = useState<Prefill | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-
-  const [mode, setMode] = useState<"draw" | "type">("draw");
-  const [typedName, setTypedName] = useState("");
-  const [consentAccepted, setConsentAccepted] = useState(false);
-  const sigPadRef = useRef<SignatureCanvas | null>(null);
+  const [completed, setCompleted] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,7 +44,7 @@ export default function SignDocumentPage() {
           return;
         }
         setPrefill(body);
-        if (body.already_signed) setSubmitted(true);
+        if (body.already_signed) setCompleted(true);
       } catch {
         if (!cancelled) setLoadError("Network error — try again in a minute.");
       }
@@ -65,66 +54,6 @@ export default function SignDocumentPage() {
       cancelled = true;
     };
   }, [token]);
-
-  function handleClear() {
-    if (mode === "draw") {
-      sigPadRef.current?.clear();
-    } else {
-      setTypedName("");
-    }
-  }
-
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!prefill || submitting) return;
-    setSubmitError(null);
-
-    if (!consentAccepted) {
-      setSubmitError("Please confirm you agree to sign electronically.");
-      return;
-    }
-
-    let signatureImageBase64: string | null = null;
-    let name: string | null = null;
-    if (mode === "draw") {
-      if (!sigPadRef.current || sigPadRef.current.isEmpty()) {
-        setSubmitError("Please draw your signature, or switch to “Type instead”.");
-        return;
-      }
-      signatureImageBase64 = sigPadRef.current
-        .getTrimmedCanvas()
-        .toDataURL("image/png");
-    } else {
-      if (!typedName.trim()) {
-        setSubmitError("Please type your full name.");
-        return;
-      }
-      name = typedName.trim();
-    }
-
-    setSubmitting(true);
-    try {
-      const res = await fetch(`/api/onboarding/public/sign/${token}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          consent_accepted: true,
-          signature_image_base64: signatureImageBase64,
-          typed_name: name,
-        }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as ErrorEnvelope;
-        setSubmitError(
-          body.detail || body.message || "Couldn't submit your signature.",
-        );
-        return;
-      }
-      setSubmitted(true);
-    } finally {
-      setSubmitting(false);
-    }
-  }
 
   if (loadError) {
     return (
@@ -150,7 +79,7 @@ export default function SignDocumentPage() {
     );
   }
 
-  if (submitted) {
+  if (completed) {
     return (
       <section className="mx-auto flex min-h-[60vh] max-w-xl flex-col items-center justify-center px-4 text-center">
         <CheckCircle2 className="mb-4 h-10 w-10 text-emerald-500" />
@@ -171,7 +100,7 @@ export default function SignDocumentPage() {
         <p className="text-xs text-muted-foreground">
           You&apos;re signing as{" "}
           <strong className="text-foreground">{prefill.signer_name}</strong>.
-          This is an electronic signature — no account needed.
+          This is a legally-binding electronic signature — no account needed.
         </p>
       </div>
 
@@ -179,108 +108,17 @@ export default function SignDocumentPage() {
         Review &amp; sign
       </h1>
 
-      {prefill.preview_url ? (
-        <div className="mt-6 overflow-hidden rounded-md border border-border">
-          <iframe
-            src={prefill.preview_url}
-            title="Document preview"
-            className="h-[60vh] w-full"
-          />
-        </div>
-      ) : (
-        <p className="mt-6 text-sm text-muted-foreground">
-          Preview unavailable — you can still sign below.
-        </p>
-      )}
-
-      <form className="mt-8 space-y-4" onSubmit={onSubmit}>
-        <div className="rounded-md border border-border bg-background p-4">
-          <div className="mb-3 flex gap-2">
-            <button
-              type="button"
-              onClick={() => setMode("draw")}
-              className={
-                mode === "draw"
-                  ? "rounded-full bg-foreground px-3 py-1 text-xs font-medium text-background"
-                  : "rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground"
-              }
-            >
-              Draw
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("type")}
-              className={
-                mode === "type"
-                  ? "rounded-full bg-foreground px-3 py-1 text-xs font-medium text-background"
-                  : "rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground"
-              }
-            >
-              Type instead
-            </button>
-          </div>
-
-          {mode === "draw" ? (
-            <div className="rounded-md border border-dashed border-border bg-muted/20">
-              <SignatureCanvas
-                ref={sigPadRef}
-                penColor="black"
-                canvasProps={{ className: "h-40 w-full" }}
-              />
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              <Label htmlFor="typed-name">Full name</Label>
-              <Input
-                id="typed-name"
-                value={typedName}
-                onChange={(e) => setTypedName(e.target.value)}
-                className="italic"
-                style={{ fontFamily: "cursive" }}
-              />
-            </div>
-          )}
-          <div className="mt-3 flex justify-end">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleClear}
-            >
-              Clear
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex items-start gap-2">
-          <Checkbox
-            checked={consentAccepted}
-            onCheckedChange={setConsentAccepted}
-            aria-label="Consent to sign electronically"
-            className="mt-0.5"
-          />
-          <p className="text-xs text-muted-foreground">
-            I agree that my typed/drawn signature above constitutes my legal
-            signature on this document, and I consent to conducting this
-            transaction electronically.
-          </p>
-        </div>
-
-        {submitError ? (
-          <p className="rounded-md border border-red-300/60 bg-red-50 p-3 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
-            {submitError}
-          </p>
-        ) : null}
-
-        <div className="flex justify-end pt-2">
-          <Button type="submit" disabled={submitting}>
-            {submitting ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : null}
-            Sign document
-          </Button>
-        </div>
-      </form>
+      {/* Documenso's signer, embedded on our domain. `host` targets the
+          self-hosted instance; `token` is this recipient's signing token from
+          the esign adapter's prefill. Completion is finalised server-side via
+          the Documenso webhook — this callback only advances the UI. */}
+      <div className="mt-6 overflow-hidden rounded-md border border-border">
+        <EmbedSignDocument
+          host={prefill.documenso_host}
+          token={prefill.documenso_token}
+          onDocumentCompleted={() => setCompleted(true)}
+        />
+      </div>
     </section>
   );
 }

@@ -12,6 +12,7 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@documenso/embed-react": "^0.6.2",
     "@radix-ui/react-alert-dialog": "^1.1.16",
     "@radix-ui/react-avatar": "^1.1.12",
     "@radix-ui/react-dialog": "^1.1.16",
@@ -37,7 +38,6 @@
     "react-dom": "19.2.4",
     "react-force-graph-2d": "^1.29.1",
     "react-markdown": "^10.1.0",
-    "react-signature-canvas": "^1.1.0-alpha.2",
     "recharts": "^3.8.1",
     "remark-gfm": "^4.0.1",
     "remove-markdown": "^0.6.4",
@@ -52,7 +52,6 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@types/react-signature-canvas": "^1.0.7",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

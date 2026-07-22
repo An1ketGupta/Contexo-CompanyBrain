@@ -1,14 +1,16 @@
-"""Client for apps/esign — our own signing service, replacing DocuSeal.
+"""Client for apps/esign — NirnayaIQ's signing service.
 
-Unlike the old DocuSeal integration, there's no webhook/HMAC verification
-step: apps/esign holds the same Supabase service-role key and writes
-onboarding_signing_envelopes / onboarding_documents directly, then fires the
-completion Inngest event itself. This client only needs to handle the
-outbound direction — create an envelope, get signing URLs back.
+apps/esign is now a thin *adapter* in front of self-hosted **Documenso**
+(migration 090; it previously did in-house PyMuPDF stamping, migration 082).
+This client's contract is unchanged either way: create an envelope, get back
+one signing URL per signer. apps/api never sees Documenso — the adapter holds
+the Supabase service-role key and, when Documenso's completion webhook lands,
+writes onboarding_signing_envelopes / onboarding_documents directly and fires
+the completion Inngest event itself.
 
-Deployed on Render (same free tier as DocuSeal was), so it shares that
-cold-start retry pattern: a sleeping instance can take 30-90s to wake on
-the first request.
+Deployed on a free tier, so it keeps the cold-start retry pattern: a sleeping
+instance (or a sleeping Documenso behind it) can take 30-90s to wake on the
+first request.
 """
 from __future__ import annotations
 
@@ -119,7 +121,10 @@ async def void_envelopes_for_run(*, org_id: str, run_id: str, reason: str) -> in
         lambda: svc.table("onboarding_signing_envelopes")
         .select("envelope_id")
         .eq("run_id", run_id)
-        .eq("provider", "inhouse")
+        # Documenso is the active provider (migration 090). Historical
+        # 'inhouse'/'docuseal' envelopes are read-only, so we don't try to
+        # void them here.
+        .eq("provider", "documenso")
         .not_.in_("status", ["completed", "declined", "voided", "expired"])
         .execute()
     )

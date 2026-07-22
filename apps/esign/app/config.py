@@ -33,6 +33,22 @@ class Settings(BaseSettings):
     # gated by this — the token itself is the credential there.
     esign_api_key: str = ""
 
+    # ── Documenso (the signing engine this adapter drives) ──────────────────
+    # base_url  : where the adapter reaches Documenso's v2 API (server↔server;
+    #             a compose service name / internal host in prod).
+    # public_url: what the BROWSER embeds the signer iframe from (must be
+    #             reachable from the candidate's browser). Often the same host
+    #             in prod, differs in local docker (localhost:3030).
+    # api_token : Documenso Team API token ("api_...") for the v2 API.
+    # webhook_secret: signing secret from the Documenso webhook config; the
+    #             /webhooks/documenso receiver verifies inbound calls with it.
+    # team_id   : optional Documenso team id, if the token isn't team-scoped.
+    documenso_base_url: str = ""
+    documenso_public_url: str = ""
+    documenso_api_token: str = ""
+    documenso_webhook_secret: str = ""
+    documenso_team_id: str = ""
+
     # Public web app base URL — used to build the {app_url}/sign/{token}
     # links emailed to signers. Same value as apps/api's APP_URL.
     app_url: str = "http://localhost:3000"
@@ -53,6 +69,9 @@ _PRODUCTION_REQUIRED: tuple[tuple[str, str], ...] = (
     ("SUPABASE_SERVICE_ROLE_KEY", "supabase_service_role_key"),
     ("ESIGN_API_KEY", "esign_api_key"),
     ("INNGEST_EVENT_KEY", "inngest_event_key"),
+    ("DOCUMENSO_BASE_URL", "documenso_base_url"),
+    ("DOCUMENSO_API_TOKEN", "documenso_api_token"),
+    ("DOCUMENSO_WEBHOOK_SECRET", "documenso_webhook_secret"),
 )
 
 

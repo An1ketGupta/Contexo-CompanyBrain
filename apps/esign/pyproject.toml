@@ -1,7 +1,7 @@
 [project]
 name = "esign"
-version = "0.1.0"
-description = "NirnayaIQ — in-house e-signature service"
+version = "0.2.0"
+description = "NirnayaIQ — e-signature adapter in front of self-hosted Documenso"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.136.3",

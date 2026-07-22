@@ -1,0 +1,76 @@
+# Render Blueprint for the free-tier Documenso deploy.
+#
+# Render's own free Postgres was retired, so this blueprint runs ONLY the
+# Documenso web service and expects an EXTERNAL free Postgres — create one on
+# Neon (neon.tech, free tier) or a second Supabase project, and paste its
+# connection string into NEXT_PRIVATE_DATABASE_URL in the Render dashboard.
+#
+# Free web services on Render sleep after ~15 min idle and cold-start in
+# 30-90s. That's the accepted tradeoff (see the module README). To remove it
+# later, bump this one service to the Starter instance — no other change.
+#
+# Deploy: push this repo to GitHub → Render → New → Blueprint → pick repo.
+services:
+  - type: web
+    name: nirnayaiq-documenso
+    runtime: image
+    plan: free
+    region: singapore # match your Supabase region to cut latency
+    image:
+      url: docker.io/documenso/documenso:latest
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: "3000"
+      # Everything below is set in the Render dashboard (secrets), not here.
+      # Mirror services/documenso/.env.example. sync:false keeps them out of git.
+      - key: NEXT_PUBLIC_WEBAPP_URL
+        sync: false
+      - key: NEXT_PRIVATE_DATABASE_URL
+        sync: false
+      - key: NEXT_PRIVATE_DIRECT_DATABASE_URL
+        sync: false
+      - key: NEXTAUTH_SECRET
+        sync: false
+      - key: NEXT_PRIVATE_ENCRYPTION_KEY
+        sync: false
+      - key: NEXT_PRIVATE_ENCRYPTION_SECONDARY_KEY
+        sync: false
+      - key: NEXT_PRIVATE_SIGNING_TRANSPORT
+        value: local
+      - key: NEXT_PRIVATE_SIGNING_LOCAL_FILE_PATH
+        value: /opt/documenso/cert.p12
+      - key: NEXT_PRIVATE_SIGNING_PASSPHRASE
+        sync: false
+      # Cert can't be a mounted host file on Render — pass it base64-encoded.
+      # `base64 -w0 cert.p12` and paste as NEXT_PRIVATE_SIGNING_LOCAL_FILE_CONTENTS.
+      - key: NEXT_PRIVATE_SIGNING_LOCAL_FILE_CONTENTS
+        sync: false
+      - key: NEXT_PUBLIC_UPLOAD_TRANSPORT
+        value: s3
+      - key: NEXT_PRIVATE_UPLOAD_ENDPOINT
+        sync: false
+      - key: NEXT_PRIVATE_UPLOAD_REGION
+        sync: false
+      - key: NEXT_PRIVATE_UPLOAD_BUCKET
+        sync: false
+      - key: NEXT_PRIVATE_UPLOAD_ACCESS_KEY_ID
+        sync: false
+      - key: NEXT_PRIVATE_UPLOAD_SECRET_ACCESS_KEY
+        sync: false
+      - key: NEXT_PRIVATE_UPLOAD_FORCE_PATH_STYLE
+        value: "true"
+      - key: NEXT_PRIVATE_SMTP_TRANSPORT
+        value: smtp-auth
+      - key: NEXT_PRIVATE_SMTP_HOST
+        value: smtp.resend.com
+      - key: NEXT_PRIVATE_SMTP_PORT
+        value: "587"
+      - key: NEXT_PRIVATE_SMTP_USERNAME
+        value: resend
+      - key: NEXT_PRIVATE_SMTP_PASSWORD
+        sync: false
+      - key: NEXT_PRIVATE_SMTP_FROM_NAME
+        value: NirnayaIQ
+      - key: NEXT_PRIVATE_SMTP_FROM_ADDRESS
+        sync: false

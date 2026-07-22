@@ -1,0 +1,4 @@
+# Secrets + signing key — never commit these.
+.env
+cert.p12
+*.p12

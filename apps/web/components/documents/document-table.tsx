@@ -46,6 +46,8 @@ interface DocumentTableProps {
   onUpdateTags: (id: string, tags: string[]) => Promise<void>;
   onUpdateVisibility: (id: string, visibility: "private" | "org") => Promise<void>;
   onRefresh?: () => void;
+  hideVersioning?: boolean;
+  hideTags?: boolean;
 }
 
 type EmbeddingStats = { embedded: number; failed: number; total: number };
@@ -70,7 +72,7 @@ function hasFailedChunks(metadata: unknown): boolean {
 // Zoom/Google Meet auto-sync (source) or a manually uploaded VTT/Teams-JSON
 // transcript (file_type) — both route into MeetingNotesAgent server-side.
 // Mirrors the backend predicate in routers/documents.py (DocumentKind filter).
-function isMeetingTranscript(doc: Document): boolean {
+export function isMeetingTranscript(doc: Document): boolean {
   return (
     doc.source === "zoom" ||
     doc.source === "google_meet_transcript" ||
@@ -107,6 +109,8 @@ export function DocumentTable({
   onUpdateTags,
   onUpdateVisibility,
   onRefresh,
+  hideVersioning = false,
+  hideTags = false,
 }: DocumentTableProps) {
   const allSelected =
     documents.length > 0 && documents.every((d) => selectedIds.has(d.id));
@@ -166,9 +170,6 @@ export function DocumentTable({
               <span className="sr-only">Expand</span>
             </th>
             <th className="px-4 py-2.5 text-left font-medium">Name</th>
-            <th className="hidden w-44 px-4 py-2.5 text-left font-medium sm:table-cell">
-              Meeting Transcript
-            </th>
             <th className="hidden w-28 px-4 py-2.5 text-left font-medium lg:table-cell">
               Added
             </th>
@@ -190,6 +191,8 @@ export function DocumentTable({
               onUpdateTags={onUpdateTags}
               onUpdateVisibility={onUpdateVisibility}
               onRefresh={onRefresh}
+              hideVersioning={hideVersioning}
+              hideTags={hideTags}
             />
           ))}
         </tbody>
@@ -207,6 +210,8 @@ function Row({
   onUpdateTags,
   onUpdateVisibility,
   onRefresh,
+  hideVersioning,
+  hideTags,
 }: {
   doc: Document;
   selected: boolean;
@@ -216,6 +221,8 @@ function Row({
   onUpdateTags: (id: string, tags: string[]) => Promise<void>;
   onUpdateVisibility: (id: string, visibility: "private" | "org") => Promise<void>;
   onRefresh?: () => void;
+  hideVersioning: boolean;
+  hideTags: boolean;
 }) {
   const [tagOpen, setTagOpen] = useState(false);
   const [savingTags, setSavingTags] = useState(false);
@@ -284,14 +291,26 @@ function Row({
           />
           <div className="min-w-0 flex-1">
             <p className="truncate font-medium text-foreground">{doc.name}</p>
+            {isMeetingTranscript(doc) && (
+              <div className="mt-1 flex items-center gap-1.5">
+                <Badge variant="brand">
+                  <Mic className="h-3 w-3" />
+                  Meeting Transcript
+                </Badge>
+                <ShareTranscriptDialog
+                  document={doc}
+                  onUpdateVisibility={onUpdateVisibility}
+                />
+              </div>
+            )}
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
-              {doc.current_version_number != null && (
+              {!hideVersioning && doc.current_version_number != null && (
                 <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                   v{doc.current_version_number}
                   {(doc.version_count ?? 0) > 1 ? ` of ${doc.version_count}` : ""}
                 </span>
               )}
-              {(doc.tags ?? []).length === 0 ? (
+              {!hideTags && ((doc.tags ?? []).length === 0 ? (
                 <button
                   type="button"
                   onClick={() => setTagOpen(true)}
@@ -323,7 +342,7 @@ function Row({
                   )}
                   <Pencil className="h-3 w-3 shrink-0 text-muted-foreground/40 opacity-0 transition-opacity group-hover:opacity-100" />
                 </button>
-              )}
+              ))}
               <span
                 className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground/70 lg:hidden"
                 title={formatAbsolute(doc.created_at)}
@@ -333,22 +352,6 @@ function Row({
             </div>
           </div>
         </div>
-      </td>
-      <td className="hidden px-4 py-3 sm:table-cell">
-        {isMeetingTranscript(doc) ? (
-          <div className="flex flex-col items-start gap-1">
-            <Badge variant="brand">
-              <Mic className="h-3 w-3" />
-              Meeting Transcript
-            </Badge>
-            <ShareTranscriptDialog
-              document={doc}
-              onUpdateVisibility={onUpdateVisibility}
-            />
-          </div>
-        ) : (
-          <span className="text-xs text-muted-foreground/40">—</span>
-        )}
       </td>
       <td
         className="hidden whitespace-nowrap px-4 py-3 text-xs tabular-nums text-muted-foreground lg:table-cell"
@@ -401,7 +404,7 @@ function Row({
               </Link>
             </Button>
           )}
-          {isAdmin && doc.status === "ready" && (
+          {!hideVersioning && isAdmin && doc.status === "ready" && (
             <UploadVersionButton
               documentId={doc.id}
               documentName={doc.name}
@@ -437,7 +440,7 @@ function Row({
         open={tagOpen}
         onOpenChange={setTagOpen}
         initial={doc.tags ?? []}
-        title={`Tags for "${doc.name}"`}
+        title={`Tags for ${doc.name}`}
         submitLabel="Save tags"
         busy={savingTags}
         onSubmit={async (tags) => {
@@ -467,7 +470,7 @@ function Row({
     </tr>
     {expanded && canExpand && (
       <tr className="bg-muted/20">
-        <td colSpan={7} className="border-t border-border/60 px-0 py-0">
+        <td colSpan={6} className="border-t border-border/60 px-0 py-0">
           <div className="mx-auto max-w-3xl space-y-6 px-6 py-6 md:px-10 md:py-7">
             <ExpandedHeader
               doc={doc}
@@ -500,18 +503,23 @@ function Row({
 
             {!hasExpandableInsights && (
               <p className="text-sm text-muted-foreground">
-                Document insights are still generating. Version history is available below.
+                Document insights are still generating.
+                {!hideVersioning && " Version history is available below."}
               </p>
             )}
 
-            <section className="space-y-2 rounded-xl border border-border bg-background p-3">
-              <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                Version history
-              </div>
-              <DocumentVersionHistory documentId={doc.id} />
-            </section>
+            {!hideVersioning && (
+              <>
+                <section className="space-y-2 rounded-xl border border-border bg-background p-3">
+                  <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Version history
+                  </div>
+                  <DocumentVersionHistory documentId={doc.id} />
+                </section>
 
-            <VersionDiffSection documentId={doc.id} />
+                <VersionDiffSection documentId={doc.id} />
+              </>
+            )}
           </div>
         </td>
       </tr>

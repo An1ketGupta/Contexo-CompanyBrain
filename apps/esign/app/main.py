@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
 from app.config import get_settings, validate_production_config
-from app.routers import envelopes, health, public_sign
+from app.routers import envelopes, health, public_sign, webhooks
 
 
 def create_app() -> FastAPI:
@@ -25,3 +25,4 @@ app = create_app()
 app.include_router(health.router)
 app.include_router(envelopes.router)
 app.include_router(public_sign.router)
+app.include_router(webhooks.router)

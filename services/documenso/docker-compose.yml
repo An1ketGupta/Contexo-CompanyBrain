@@ -1,0 +1,76 @@
+name: nirnayaiq-documenso
+
+services:
+  database:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - documenso_db:/var/lib/postgresql/data
+
+  documenso:
+    image: documenso/documenso:latest
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      # Host 3030 → container PORT. 3030 avoids clashing with apps/web (3000)
+      # and apps/api (8000) when everything runs on one dev box.
+      - "${DOCUMENSO_HOST_PORT:-3030}:${PORT:-3000}"
+    environment:
+      PORT: ${PORT:-3000}
+
+      # ── URLs ────────────────────────────────────────────────────────────
+      NEXT_PUBLIC_WEBAPP_URL: ${NEXT_PUBLIC_WEBAPP_URL}
+      NEXT_PRIVATE_INTERNAL_WEBAPP_URL: ${NEXT_PRIVATE_INTERNAL_WEBAPP_URL:-http://localhost:3000}
+
+      # ── Database ────────────────────────────────────────────────────────
+      NEXT_PRIVATE_DATABASE_URL: ${NEXT_PRIVATE_DATABASE_URL}
+      NEXT_PRIVATE_DIRECT_DATABASE_URL: ${NEXT_PRIVATE_DIRECT_DATABASE_URL:-${NEXT_PRIVATE_DATABASE_URL}}
+
+      # ── Auth / encryption (generate with scripts/generate-secrets.sh) ───
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      NEXT_PRIVATE_ENCRYPTION_KEY: ${NEXT_PRIVATE_ENCRYPTION_KEY}
+      NEXT_PRIVATE_ENCRYPTION_SECONDARY_KEY: ${NEXT_PRIVATE_ENCRYPTION_SECONDARY_KEY}
+
+      # ── Signing certificate (PAdES). Mounted read-only below. ───────────
+      NEXT_PRIVATE_SIGNING_TRANSPORT: local
+      NEXT_PRIVATE_SIGNING_LOCAL_FILE_PATH: /opt/documenso/cert.p12
+      NEXT_PRIVATE_SIGNING_PASSPHRASE: ${NEXT_PRIVATE_SIGNING_PASSPHRASE}
+
+      # ── File storage ────────────────────────────────────────────────────
+      # Local default: 'database' (PDFs stored in Documenso's own Postgres —
+      # zero extra infra). Production: set these to 's3' pointed at the
+      # Supabase Storage S3 endpoint (see .env.example).
+      NEXT_PUBLIC_UPLOAD_TRANSPORT: ${NEXT_PUBLIC_UPLOAD_TRANSPORT:-database}
+      NEXT_PRIVATE_UPLOAD_ENDPOINT: ${NEXT_PRIVATE_UPLOAD_ENDPOINT:-}
+      NEXT_PRIVATE_UPLOAD_FORCE_PATH_STYLE: ${NEXT_PRIVATE_UPLOAD_FORCE_PATH_STYLE:-true}
+      NEXT_PRIVATE_UPLOAD_REGION: ${NEXT_PRIVATE_UPLOAD_REGION:-}
+      NEXT_PRIVATE_UPLOAD_BUCKET: ${NEXT_PRIVATE_UPLOAD_BUCKET:-}
+      NEXT_PRIVATE_UPLOAD_ACCESS_KEY_ID: ${NEXT_PRIVATE_UPLOAD_ACCESS_KEY_ID:-}
+      NEXT_PRIVATE_UPLOAD_SECRET_ACCESS_KEY: ${NEXT_PRIVATE_UPLOAD_SECRET_ACCESS_KEY:-}
+
+      # ── Email (Resend via SMTP relay — same provider apps/api uses) ─────
+      NEXT_PRIVATE_SMTP_TRANSPORT: ${NEXT_PRIVATE_SMTP_TRANSPORT:-smtp-auth}
+      NEXT_PRIVATE_SMTP_HOST: ${NEXT_PRIVATE_SMTP_HOST:-smtp.resend.com}
+      NEXT_PRIVATE_SMTP_PORT: ${NEXT_PRIVATE_SMTP_PORT:-587}
+      NEXT_PRIVATE_SMTP_USERNAME: ${NEXT_PRIVATE_SMTP_USERNAME:-resend}
+      NEXT_PRIVATE_SMTP_PASSWORD: ${NEXT_PRIVATE_SMTP_PASSWORD}
+      NEXT_PRIVATE_SMTP_FROM_NAME: ${NEXT_PRIVATE_SMTP_FROM_NAME:-NirnayaIQ}
+      NEXT_PRIVATE_SMTP_FROM_ADDRESS: ${NEXT_PRIVATE_SMTP_FROM_ADDRESS}
+    volumes:
+      # Cert is generated on the host and mounted read-only — NEVER baked into
+      # the image (a rebuild would silently invalidate every signature).
+      - ${DOCUMENSO_CERT_PATH:-./cert.p12}:/opt/documenso/cert.p12:ro
+
+volumes:
+  documenso_db:

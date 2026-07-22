@@ -37,6 +37,8 @@ interface DocumentCardListProps {
   documents: Document[];
   onDelete: (id: string) => Promise<void>;
   onRetry: (id: string) => Promise<void>;
+  hideVersioning?: boolean;
+  hideTags?: boolean;
 }
 
 /**
@@ -48,6 +50,8 @@ export function DocumentCardList({
   documents,
   onDelete,
   onRetry,
+  hideVersioning = false,
+  hideTags = false,
 }: DocumentCardListProps) {
   const [confirmDelete, setConfirmDelete] = useState<Document | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -76,6 +80,8 @@ export function DocumentCardList({
           doc={doc}
           onDelete={() => setConfirmDelete(doc)}
           onRetry={() => onRetry(doc.id)}
+          hideVersioning={hideVersioning}
+          hideTags={hideTags}
         />
       ))}
       <AlertDialog
@@ -144,10 +150,14 @@ function DocumentCard({
   doc,
   onDelete,
   onRetry,
+  hideVersioning,
+  hideTags,
 }: {
   doc: Document;
   onDelete: () => void;
   onRetry: () => void;
+  hideVersioning: boolean;
+  hideTags: boolean;
 }) {
   const tags = doc.tags ?? [];
   const errorReason = extractErrorReason(doc.metadata);
@@ -172,7 +182,7 @@ function DocumentCard({
           </div>
         )}
         <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-          {doc.current_version_number != null && (
+          {!hideVersioning && doc.current_version_number != null && (
             <>
               <span className="rounded-full bg-muted px-1.5 py-0.5 font-medium text-muted-foreground">
                 v{doc.current_version_number}
@@ -192,7 +202,7 @@ function DocumentCard({
             <span className="line-clamp-2">{errorReason}</span>
           </div>
         )}
-        {tags.length > 0 && (
+        {!hideTags && tags.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1">
             {tags.slice(0, 3).map((t) => (
               <span

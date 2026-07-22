@@ -414,7 +414,7 @@ async def resolve_prior_meeting_context(
     lo = (start - timedelta(hours=1)).isoformat()
     hi = (start + timedelta(hours=6)).isoformat()
 
-    def _docs() -> list[dict[str, Any]]:
+    def _own_docs() -> list[dict[str, Any]]:
         res = (
             svc.table("documents")
             .select("id, name, source, created_by, created_at")
@@ -428,7 +428,44 @@ async def resolve_prior_meeting_context(
         )
         return res.data or []
 
-    cands = [d for d in await asyncio.to_thread(_docs) if d.get("source") in _TRANSCRIPT_SOURCES]
+    def _shared_doc_ids() -> list[str]:
+        res = (
+            svc.table("document_shares")
+            .select("document_id")
+            .eq("org_id", org_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        return [row["document_id"] for row in (res.data or [])]
+
+    def _shared_docs(doc_ids: list[str]) -> list[dict[str, Any]]:
+        if not doc_ids:
+            return []
+        res = (
+            svc.table("documents")
+            .select("id, name, source, created_by, created_at")
+            .eq("org_id", org_id)
+            .in_("id", doc_ids)
+            .gte("created_at", lo)
+            .lte("created_at", hi)
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+        return res.data or []
+
+    # Own transcripts (host/auto-synced) plus transcripts shared via the Zoom
+    # attendee auto-share grant (migration 089) — an attendee's own brief should
+    # see the same prior-meeting context the host's brief does.
+    own_docs, shared_doc_ids = await asyncio.gather(
+        asyncio.to_thread(_own_docs), asyncio.to_thread(_shared_doc_ids)
+    )
+    shared_docs = await asyncio.to_thread(_shared_docs, shared_doc_ids)
+    docs_by_id = {d["id"]: d for d in own_docs}
+    for d in shared_docs:
+        docs_by_id.setdefault(d["id"], d)
+
+    cands = [d for d in docs_by_id.values() if d.get("source") in _TRANSCRIPT_SOURCES]
     if not cands:
         return None
 

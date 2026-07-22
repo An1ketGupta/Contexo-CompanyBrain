@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, EmailStr
 
 
 class SignerIn(BaseModel):
-    role: str  # our internal role, e.g. "hr" | "candidate" — free text, not DocuSeal role names
+    role: str  # our internal role, e.g. "hr" | "candidate" — mapped to a Documenso SIGNER
     email: EmailStr
     name: str
     routing_order: int = 1
@@ -48,20 +46,16 @@ class EnvelopeStatus(BaseModel):
 
 
 class SignPrefill(BaseModel):
+    """What the /sign/{token} page needs to embed Documenso's signer.
+
+    The signing UI is Documenso's, rendered by @documenso/embed-react in an
+    iframe against `documenso_host` with `documenso_token`. NirnayaIQ no longer
+    collects the signature itself — hence no preview_url / submit models here.
+    """
     envelope_id: str
     role: str
     signer_name: str
     document_kinds: list[str]
-    preview_url: str | None
+    documenso_host: str  # public Documenso URL the iframe loads from
+    documenso_token: str  # recipient signing token for the embed
     already_signed: bool
-
-
-class SubmitSignatureRequest(BaseModel):
-    consent_accepted: bool
-    signature_image_base64: str | None = None
-    typed_name: str | None = None
-
-
-class SubmitSignatureResponse(BaseModel):
-    status: Literal["signed"]
-    next: Literal["awaiting_next_signer", "completed"]

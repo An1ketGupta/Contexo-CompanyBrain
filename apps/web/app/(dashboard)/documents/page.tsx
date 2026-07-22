@@ -5,7 +5,7 @@ import { FileText } from "lucide-react";
 import { UploadDialog } from "@/components/documents/upload-dialog";
 import { DOCUMENTS_REFRESH_EVENT } from "@/components/documents/upload-context";
 import { DocumentCardList } from "@/components/documents/document-card-list";
-import { DocumentTable } from "@/components/documents/document-table";
+import { DocumentTable, isMeetingTranscript } from "@/components/documents/document-table";
 import { DocumentFiltersBar } from "@/components/documents/document-filters";
 import { BulkActionBar } from "@/components/documents/bulk-action-bar";
 import { RecommendationsWidget } from "@/components/documents/recommendations-widget";
@@ -63,6 +63,8 @@ export default function DocumentsPage() {
 
   const filtering = isFiltering(filters);
   const isEmpty = !loading && !error && documents.length === 0;
+  const meetingDocuments = documents.filter(isMeetingTranscript);
+  const otherDocuments = documents.filter((d) => !isMeetingTranscript(d));
 
   return (
     <div className="mx-auto max-w-6xl p-6 md:p-8">
@@ -102,25 +104,60 @@ export default function DocumentsPage() {
         filtering ? <NoMatchesState onClear={() => setFilters(DEFAULT_FILTERS)} /> : <EmptyState />
       ) : (
         <>
-          <div className="hidden md:block">
-            <DocumentTable
-              documents={documents}
-              selectedIds={selectedIds}
-              onSelectionChange={setSelectedIds}
-              onDelete={deleteDocument}
-              onRetry={retryDocument}
-              onUpdateTags={updateTags}
-              onUpdateVisibility={updateVisibility}
-              onRefresh={refresh}
-            />
-          </div>
-          <div className="md:hidden">
-            <DocumentCardList
-              documents={documents}
-              onDelete={deleteDocument}
-              onRetry={retryDocument}
-            />
-          </div>
+          {meetingDocuments.length > 0 && (
+            <div className="mb-8">
+              <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-muted-foreground">
+                Meeting
+              </h2>
+              <div className="hidden md:block">
+                <DocumentTable
+                  documents={meetingDocuments}
+                  selectedIds={selectedIds}
+                  onSelectionChange={setSelectedIds}
+                  onDelete={deleteDocument}
+                  onRetry={retryDocument}
+                  onUpdateTags={updateTags}
+                  onUpdateVisibility={updateVisibility}
+                  onRefresh={refresh}
+                  hideVersioning
+                  hideTags
+                />
+              </div>
+              <div className="md:hidden">
+                <DocumentCardList
+                  documents={meetingDocuments}
+                  onDelete={deleteDocument}
+                  onRetry={retryDocument}
+                  hideVersioning
+                  hideTags
+                />
+              </div>
+            </div>
+          )}
+
+          {otherDocuments.length > 0 && (
+            <div className="hidden md:block">
+              <DocumentTable
+                documents={otherDocuments}
+                selectedIds={selectedIds}
+                onSelectionChange={setSelectedIds}
+                onDelete={deleteDocument}
+                onRetry={retryDocument}
+                onUpdateTags={updateTags}
+                onUpdateVisibility={updateVisibility}
+                onRefresh={refresh}
+              />
+            </div>
+          )}
+          {otherDocuments.length > 0 && (
+            <div className="md:hidden">
+              <DocumentCardList
+                documents={otherDocuments}
+                onDelete={deleteDocument}
+                onRetry={retryDocument}
+              />
+            </div>
+          )}
         </>
       )}
     </div>
