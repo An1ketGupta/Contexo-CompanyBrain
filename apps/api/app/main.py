@@ -24,9 +24,6 @@ from app.routers import (
     knowledge_health as knowledge_health_router,
 )
 from app.routers import (
-    sequences as sequences_router,
-)
-from app.routers import (
     internal_announcements as internal_announcements_router,
 )
 from app.routers import (
@@ -118,12 +115,6 @@ from app.routers import (
     admin_recruiting as admin_recruiting_router,
 )
 from app.routers import (
-    sales_enablement as sales_enablement_router,
-)
-from app.routers import (
-    rfp as rfp_router,
-)
-from app.routers import (
     executive_assistant as executive_assistant_router,
 )
 from app.routers import (
@@ -146,12 +137,6 @@ from app.routers import (
 )
 from app.routers import (
     onboarding_v2 as onboarding_v2_router,
-)
-from app.routers import (
-    sales_agent as sales_agent_router,
-)
-from app.routers import (
-    marketing as marketing_router,
 )
 from app.routers import (
     onboarding_public as onboarding_public_router,
@@ -278,13 +263,10 @@ app.include_router(billing_router.router)
 app.include_router(webhooks_stripe_router.router)
 app.include_router(admin_intake_router.router)
 app.include_router(knowledge_health_router.router)
-app.include_router(sequences_router.router)
 app.include_router(internal_announcements_router.router)
 app.include_router(recruiting_router.router)
 app.include_router(ats_integrations_router.router)
 app.include_router(admin_recruiting_router.router)
-app.include_router(sales_enablement_router.router)
-app.include_router(rfp_router.router)
 app.include_router(executive_assistant_router.router)
 app.include_router(calendar_meetings_router.router)
 app.include_router(action_items_router.router)
@@ -293,8 +275,6 @@ app.include_router(google_workspace_router.router)
 app.include_router(agent2_integrations_router.router)
 app.include_router(channels_router.router)
 app.include_router(onboarding_v2_router.router)
-app.include_router(sales_agent_router.router)
-app.include_router(marketing_router.router)
 app.include_router(onboarding_public_router.router)
 app.include_router(mcp_router)
 

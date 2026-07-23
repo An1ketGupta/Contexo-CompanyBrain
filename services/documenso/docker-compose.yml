@@ -1,27 +1,11 @@
 name: nirnayaiq-documenso
 
 services:
-  database:
-    image: postgres:15
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    volumes:
-      - documenso_db:/var/lib/postgresql/data
-
+  # No local `database` service — NEXT_PRIVATE_DATABASE_URL /
+  # NEXT_PRIVATE_DIRECT_DATABASE_URL point at a managed Neon Postgres instead.
   documenso:
     image: documenso/documenso:latest
     restart: unless-stopped
-    depends_on:
-      database:
-        condition: service_healthy
     ports:
       # Host 3030 → container PORT. 3030 avoids clashing with apps/web (3000)
       # and apps/api (8000) when everything runs on one dev box.
@@ -71,6 +55,3 @@ services:
       # Cert is generated on the host and mounted read-only — NEVER baked into
       # the image (a rebuild would silently invalidate every signature).
       - ${DOCUMENSO_CERT_PATH:-./cert.p12}:/opt/documenso/cert.p12:ro
-
-volumes:
-  documenso_db:

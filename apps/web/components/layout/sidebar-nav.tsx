@@ -10,7 +10,6 @@ import {
   CalendarDays,
   Hash,
   CheckCircle2,
-  ClipboardCheck,
   FileQuestion,
   FileText,
   Gauge,
@@ -22,12 +21,9 @@ import {
   LineChart,
   ListChecks,
   MessageSquare,
-  Phone,
   PieChart,
   Presentation,
-  Rocket,
   Settings,
-  Mail,
   Megaphone,
   Shield,
   ShieldAlert,
@@ -79,20 +75,6 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/meetings/prep", label: "Preparation", icon: Sparkles },
       { href: "/action-items", label: "Action items", icon: ListChecks },
       { href: "/briefings", label: "Briefings", icon: Sparkles },
-    ],
-  },
-  {
-    label: "Sales",
-    items: [
-      { href: "/sequences", label: "Sequences", icon: Mail },
-      { href: "/sales/precall-brief", label: "Pre-call brief", icon: Phone },
-      { href: "/sales/rfp", label: "RFP responses", icon: ClipboardCheck },
-    ],
-  },
-  {
-    label: "Marketing",
-    items: [
-      { href: "/marketing", label: "Briefs", icon: Rocket },
     ],
   },
   {

@@ -40,8 +40,10 @@ bash scripts/generate-secrets.sh
 #    as NEXT_PRIVATE_SIGNING_PASSPHRASE in .env
 bash scripts/generate-cert.sh "some-cert-passphrase"
 
-# 3. Fill in NEXT_PRIVATE_SMTP_PASSWORD (Resend API key) + a DB password.
-#    Local file storage (NEXT_PUBLIC_UPLOAD_TRANSPORT=database) needs nothing else.
+# 3. Fill in NEXT_PRIVATE_SMTP_PASSWORD (Resend API key), and
+#    NEXT_PRIVATE_DATABASE_URL / NEXT_PRIVATE_DIRECT_DATABASE_URL with your
+#    Neon connection strings (pooled + direct). No local Postgres container —
+#    Documenso connects straight to Neon.
 
 # 4. Boot
 docker compose --env-file .env up -d

@@ -8,7 +8,6 @@ from .archive_functions import FUNCTIONS as _ARCHIVE_FUNCTIONS
 from .curator_functions import FUNCTIONS as _CURATOR_FUNCTIONS
 from .duplicate_detection_functions import FUNCTIONS as _DUPLICATE_DETECTION_FUNCTIONS
 from .announcement_functions import FUNCTIONS as _ANNOUNCEMENT_FUNCTIONS
-from .sequence_functions import FUNCTIONS as _SEQUENCE_FUNCTIONS
 from .calendar_functions import FUNCTIONS as _CALENDAR_FUNCTIONS
 from .quality_functions import FUNCTIONS as _QUALITY_FUNCTIONS
 from .client import get_inngest_client
@@ -26,9 +25,6 @@ from .briefing_functions import FUNCTIONS as _BRIEFING_FUNCTIONS
 from .meeting_functions import FUNCTIONS as _MEETING_FUNCTIONS
 from .onboarding_functions import FUNCTIONS as _ONBOARDING_FUNCTIONS
 from .onboarding_v2_functions import FUNCTIONS as _ONBOARDING_V2_FUNCTIONS
-from .rfp_agent_functions import FUNCTIONS as _RFP_AGENT_FUNCTIONS
-from .sales_agent_functions import FUNCTIONS as _SALES_AGENT_FUNCTIONS
-from .marketing_agent_functions import FUNCTIONS as _MARKETING_AGENT_FUNCTIONS
 from .policy_functions import FUNCTIONS as _POLICY_FUNCTIONS
 from .query_log_retention import FUNCTIONS as _QUERY_LOG_RETENTION_FUNCTIONS
 from .report_functions import FUNCTIONS as _REPORT_FUNCTIONS
@@ -53,9 +49,6 @@ FUNCTIONS = [
     *_APPROVAL_FUNCTIONS,
     *_ONBOARDING_FUNCTIONS,
     *_ONBOARDING_V2_FUNCTIONS,
-    *_SALES_AGENT_FUNCTIONS,
-    *_RFP_AGENT_FUNCTIONS,
-    *_MARKETING_AGENT_FUNCTIONS,
     *_POLICY_FUNCTIONS,
     *_COMPLIANCE_FUNCTIONS,
     *_SUPPORT_FUNCTIONS,
@@ -69,7 +62,6 @@ FUNCTIONS = [
     *_EMBEDDING_FT_FUNCTIONS,
     *_DUPLICATE_DETECTION_FUNCTIONS,
     *_CURATOR_FUNCTIONS,
-    *_SEQUENCE_FUNCTIONS,
     *_ANNOUNCEMENT_FUNCTIONS,
     *_CALENDAR_FUNCTIONS,
     *_QUALITY_FUNCTIONS,
