@@ -19,13 +19,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.database import get_service_client
 from app.services.agents.kb_synthesis import (
-    build_context_block,
+    FacetResult,
     collect_sources,
     fetch_document_text,
     search_facets_concurrent,
@@ -166,26 +167,165 @@ def _has_topic_signal(title: str, description: str) -> bool:
     return len(meaningful) >= 1
 
 
-_BRIEF_SYSTEM = """You are a chief of staff prepping the user for a meeting in <5 hours. Produce a tight, actionable brief grounded ONLY in the context provided.
+_BRIEF_SYSTEM = """You are a chief of staff prepping the user for a meeting in <5 hours. Produce a tight, actionable brief grounded ONLY in the sources provided.
 
-When a "## Previous meeting" section is present, it is the PRIMARY grounding: this is a recurring/repeated meeting, so write a continuity brief. Lean on what the last session decided and left open; treat "## Company-internal context (secondary)" as supporting detail only.
+Each source block is labeled with an ID: [PRIOR] is the recap of this meeting's previous occurrence; [S1], [S2], … are company knowledge-base excerpts. When a [PRIOR] source is present it is the PRIMARY grounding — this is a recurring meeting, so write a continuity brief leaning on what the last session decided and left open, and treat the [S#] excerpts as supporting detail only.
 
-Sections to produce (each ≤80 words):
-- executive_summary: where things stand coming in — what the last session settled, what's still open, and what a good outcome looks like this time (if no prior meeting, the meeting in one paragraph + decisions needed)
-- attendee_context: per-attendee one-liner grounded in real prior contributions/ownership if present (who, what they own, their open items)
+CITATION CONTRACT — every factual statement you write MUST be supported by a specific source, and you must cite the ID(s) that support it. If you cannot point to a source, do NOT write the statement. Never invent owners, dates, numbers, or decisions; every number or date you write must appear verbatim in a cited source.
+
+Produce three sections, each a LIST of claims. A claim is an object {"text": "one sentence", "sources": ["S1", ...]}:
+- executive_summary: where things stand coming in — what the last session settled, what's still open, what a good outcome looks like this time
+- attendee_context: per-attendee one-liner grounded in real prior contributions/ownership (who, what they own, their open items)
 - topic_research: carried-over decisions, open threads, and key facts/numbers on the meeting topic
-- suggested_questions: 4–6 concrete follow-ups to drive the meeting ("Did X ship?", "Status on Y?")
 
-If a section has no signal, return an empty string rather than inventing. Never invent owners, dates, or decisions.
+Also produce:
+- suggested_questions: 4–6 concrete follow-ups grounded in the sources ("Did X ship?", "Status on Y?"), as plain strings
+
+If a section has no grounded claim, return an empty list []. Keep each claim to a single sentence.
 
 Output JSON only:
 {
-  "executive_summary": "string",
-  "attendee_context": "string",
-  "topic_research": "string",
+  "executive_summary": [{"text": "string", "sources": ["S1"]}, ...],
+  "attendee_context": [{"text": "string", "sources": ["S2"]}, ...],
+  "topic_research": [{"text": "string", "sources": ["PRIOR"]}, ...],
   "suggested_questions": ["string", ...]
 }
 """.strip()
+
+
+# ── Grounding filter: verification + mechanical backstop ─────────────────────
+#
+# Three layers defend against a brief "not connected to anything":
+#   1. Citation-forced generation (the prompt above) — the model may only write
+#      what it can attribute to a labeled source.
+#   2. An independent verification pass (_verify_claims) — a second, cold LLM
+#      re-checks every claim against the sources and rejects any it cannot fully
+#      support. "When in doubt, reject."
+#   3. A deterministic number/date check (_entity_grounded) — any claim carrying
+#      a figure or date absent from the grounding text is dropped, catching the
+#      invented-metric failure that slips past a semantic check.
+# A claim must clear all three to survive. If nothing survives, the meeting is
+# marked 'skipped' exactly like the no-context case.
+
+_VERIFY_SYSTEM = """You are a strict fact-checker. You are given SOURCE material and a numbered list of CLAIMS drawn from a meeting brief. For each claim decide whether it is DIRECTLY and FULLY supported by the sources: every entity, owner, number, date, and decision in the claim must be present in — or unambiguously entailed by — the sources. Reject a claim if any part is unsupported, exaggerated, or inferred beyond what the sources state. When in doubt, reject.
+
+Return JSON only, listing the 0-based indices of the claims that are fully supported:
+{"supported": [0, 2, 5]}
+""".strip()
+
+# Numbers/dates worth verifying mechanically. Single bare digits (1–9) are
+# excluded: they are usually derived counts ("3 open items") the model computed
+# from the sources rather than fabricated figures, and checking them yields more
+# false drops than catches. We target money, percentages, decimals, multi-digit
+# integers/years, and fiscal-period tokens — the shapes an invented metric takes.
+_SIG_NUM_RE = re.compile(
+    r"\$\s?\d[\d,]*(?:\.\d+)?"   # money: $2.4  $1,200
+    r"|\d[\d,]*\.\d+%?"          # decimals, optionally a percentage
+    r"|\d[\d,]*%"               # whole percentages: 40%
+    r"|FY\s?\d{2,4}"            # fiscal year: FY24
+    r"|[QH][1-4]\b"            # quarters/halves: Q3  H1
+    r"|\b\d{2,}\b",            # multi-digit integers and years
+    re.IGNORECASE,
+)
+
+
+def _normalize_for_entity_check(text: str) -> str:
+    """Lowercase and strip whitespace/commas/$ so figures compare across
+    formatting ("$1,200" vs "1200")."""
+    return re.sub(r"[\s,$]", "", (text or "").lower())
+
+
+def _entity_grounded(text: str, grounding_norm: str) -> bool:
+    """True if every significant number/date in `text` appears in the (already
+    normalized) grounding. A single ungrounded figure fails the whole claim."""
+    for token in _SIG_NUM_RE.findall(text or ""):
+        core = re.sub(r"[\s,$]", "", token).lower()
+        if core and core not in grounding_norm:
+            return False
+    return True
+
+
+def _normalize_claims(raw: Any) -> list[dict[str, Any]]:
+    """Coerce a section's model output into [{"text","sources"}]. Tolerates the
+    model returning a bare string or a list of strings instead of claim objects
+    (older shape / sloppy compliance) so we never hard-fail on formatting."""
+    out: list[dict[str, Any]] = []
+    if isinstance(raw, str):
+        if raw.strip():
+            out.append({"text": raw.strip(), "sources": []})
+        return out
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if isinstance(item, str):
+            if item.strip():
+                out.append({"text": item.strip(), "sources": []})
+        elif isinstance(item, dict):
+            text = str(item.get("text") or "").strip()
+            if text:
+                srcs = [str(s) for s in (item.get("sources") or []) if isinstance(s, (str, int))]
+                out.append({"text": text, "sources": srcs})
+    return out
+
+
+def _build_labeled_context(
+    facet_results: dict[str, FacetResult],
+    sources: list[dict[str, Any]],
+    prior_ctx: "PriorContext | None",
+) -> str:
+    """Render retrieved context as source-labeled blocks the model can cite.
+
+    [PRIOR] leads (primary grounding); KB excerpts are relabeled from their
+    document name to a stable [S#] matching `sources` order. The label is what
+    the citation contract and the verifier reference — it never reaches the UI.
+    """
+    name_to_label = {s["document_name"]: f"S{i + 1}" for i, s in enumerate(sources)}
+    blocks: list[str] = []
+    if prior_ctx and prior_ctx.recap_text.strip():
+        blocks.append(f"[PRIOR] Previous occurrence recap:\n{prior_ctx.recap_text.strip()}")
+    for fr in facet_results.values():
+        if not fr.packed_context:
+            continue
+        for raw in fr.packed_context.split("\n\n---\n\n"):
+            m = re.match(r"^\[(.*?)\]\s*(.*)$", raw, re.DOTALL)
+            if not m:
+                blocks.append(raw)
+                continue
+            name, body = m.group(1), m.group(2)
+            label = name_to_label.get(name, "S?")
+            blocks.append(f"[{label}] {body}")
+    return "\n\n".join(blocks)
+
+
+async def _verify_claims(labeled_context: str, claim_texts: list[str]) -> set[int]:
+    """Independent second-pass check: which claim indices are fully supported.
+
+    Fails OPEN on error (returns every index) — a verifier outage must not nuke
+    every brief; the citation contract and the number/date backstop still apply.
+    """
+    if not claim_texts:
+        return set()
+    numbered = "\n".join(f"[{i}] {t}" for i, t in enumerate(claim_texts))
+    try:
+        result = await synthesize_json(
+            system_prompt=_VERIFY_SYSTEM,
+            user_prompt=f"## Sources\n{labeled_context}\n\n## Claims\n{numbered}\n\n## Output\nJSON only.",
+            temperature=0.0,
+            timeout=60.0,
+        )
+    except Exception as exc:
+        log.warning("calendar.brief.verify_failed err=%s", exc)
+        return set(range(len(claim_texts)))
+    supported = result.get("supported") if isinstance(result, dict) else None
+    if not isinstance(supported, list):
+        return set(range(len(claim_texts)))
+    out: set[int] = set()
+    for v in supported:
+        try:
+            out.add(int(v))
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 # ── Prior-meeting grounding ─────────────────────────────────────────────────
@@ -631,8 +771,9 @@ async def generate_meeting_prep_brief(
             char_budget_per_facet=2000,
             min_similarity=_BRIEF_MIN_SIMILARITY,
         )
-        context = build_context_block(facet_results)
         sources = collect_sources(facet_results)
+        kb_present = any(fr.packed_context for fr in facet_results.values())
+        labeled_context = _build_labeled_context(facet_results, sources, prior_ctx)
 
         # No prior-meeting grounding AND no chunk cleared the relevance floor —
         # the meeting topic/attendees have no grounding anywhere. Skip synthesis
@@ -640,7 +781,7 @@ async def generate_meeting_prep_brief(
         # sections; in practice it fabricates a plausible brief from thin air
         # (the exact failure this guard exists to prevent). Clear any stale
         # brief too. (When prior_ctx exists we always proceed — it's primary.)
-        if not context and prior_ctx is None:
+        if not kb_present and prior_ctx is None:
             log.info(
                 "calendar.brief.skipped meeting=%s reason=no_relevant_context",
                 meeting_id,
@@ -663,36 +804,93 @@ async def generate_meeting_prep_brief(
 
             return await asyncio.to_thread(_skip)
 
-        prior_block = ""
-        if prior_ctx:
-            when = ""
-            dt = _parse_iso(prior_ctx.meeting_date or "")
-            if dt:
-                when = f" ({dt.date().isoformat()})"
-            prior_block = (
-                f"## Previous meeting{when}\n"
-                "This is the PRIMARY grounding — prefer it. Continue from where the last "
-                "session left off; surface open action items and follow-ups.\n"
-                f"{prior_ctx.recap_text}\n\n"
-            )
-
         user_prompt = (
             f"## Meeting\n{topic}\n\n"
             + (f"## Description\n{description}\n\n" if description else "")
             + f"## Attendees\n{', '.join(attendees) if attendees else '(none on the invite)'}\n\n"
-            + prior_block
-            + (f"## Company-internal context (secondary)\n{context}\n\n" if context else "")
+            + f"## Sources\n{labeled_context}\n\n"
             + "## Output\nJSON only."
         )
 
         result = await synthesize_json(
             system_prompt=_BRIEF_SYSTEM,
             user_prompt=user_prompt,
-            temperature=0.3,
+            temperature=0.1,
             timeout=60.0,
         )
         if not isinstance(result, dict):
             raise RuntimeError("brief_synthesis_returned_non_object")
+
+        # ── Grounding filter (see the module comment above _VERIFY_SYSTEM) ──
+        # Layer 1 (citation-forced generation) already happened in the call
+        # above. Now run layer 2 (verifier) and layer 3 (number/date check) and
+        # keep only claims that clear both.
+        section_claims = {
+            name: _normalize_claims(result.get(name))
+            for name in ("executive_summary", "attendee_context", "topic_research")
+        }
+        flat: list[tuple[str, str]] = [
+            (name, c["text"]) for name in section_claims for c in section_claims[name]
+        ]
+        supported = await _verify_claims(labeled_context, [t for _, t in flat])
+
+        grounding_norm = _normalize_for_entity_check(
+            "\n".join([labeled_context, topic, description, " ".join(attendees)])
+        )
+
+        kept: dict[str, list[str]] = {name: [] for name in section_claims}
+        dropped = 0
+        for idx, (name, text) in enumerate(flat):
+            if idx not in supported or not _entity_grounded(text, grounding_norm):
+                dropped += 1
+                continue
+            kept[name].append(text)
+
+        # Questions carry no assertion for the verifier to check, but they must
+        # not smuggle in an invented figure/date either.
+        questions = [
+            q
+            for q in (result.get("suggested_questions") or [])
+            if isinstance(q, str) and q.strip() and _entity_grounded(q, grounding_norm)
+        ]
+
+        exec_summary = " ".join(kept["executive_summary"]).strip()
+        attendee_ctx = " ".join(kept["attendee_context"]).strip()
+        topic_research = " ".join(kept["topic_research"]).strip()
+
+        if dropped:
+            log.info(
+                "calendar.brief.claims_dropped meeting=%s dropped=%d kept=%d",
+                meeting_id,
+                dropped,
+                len(flat) - dropped,
+            )
+
+        # Every claim failed grounding — the brief is "connected to nothing".
+        # Treat it exactly like the no-context skip rather than surface an empty
+        # or half-invented brief.
+        if not any([exec_summary, attendee_ctx, topic_research, questions]):
+            log.info(
+                "calendar.brief.skipped meeting=%s reason=grounding_stripped_all",
+                meeting_id,
+            )
+
+            def _skip_stripped() -> dict[str, Any]:
+                res = (
+                    svc.table("calendar_meetings")
+                    .update(
+                        {
+                            "prep_brief": None,
+                            "prep_brief_status": "skipped",
+                            "prep_brief_error": None,
+                        }
+                    )
+                    .eq("id", meeting_id)
+                    .execute()
+                )
+                return (res.data or [{}])[0]
+
+            return await asyncio.to_thread(_skip_stripped)
 
         # Surface the prior transcript in "Based on" (front, it's the primary
         # source) and expose a provenance stub for the UI's continuity chip.
@@ -703,12 +901,10 @@ async def generate_meeting_prep_brief(
             ]
 
         prep_brief = {
-            "executive_summary": result.get("executive_summary") or "",
-            "attendee_context": result.get("attendee_context") or "",
-            "topic_research": result.get("topic_research") or "",
-            "suggested_questions": [
-                q for q in result.get("suggested_questions") or [] if isinstance(q, str)
-            ],
+            "executive_summary": exec_summary,
+            "attendee_context": attendee_ctx,
+            "topic_research": topic_research,
+            "suggested_questions": questions,
             "source_documents": sources,
             "prior_meeting": (
                 {"title": prior_ctx.prior_title, "date": prior_ctx.meeting_date}

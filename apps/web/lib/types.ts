@@ -13,7 +13,8 @@ export type DocumentFileType =
   | "html"
   | "csv"
   | "vtt"
-  | "teams_transcript";
+  | "teams_transcript"
+  | "transcript";
 export type DocumentVisibility = "private" | "org";
 export type MessageRole = "user" | "assistant";
 export type MessageFeedback = "positive" | "negative";

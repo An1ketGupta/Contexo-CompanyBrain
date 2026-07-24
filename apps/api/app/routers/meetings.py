@@ -142,7 +142,7 @@ async def list_meeting_summaries(
     }
 
 
-_TRANSCRIPT_FILE_TYPES = ("vtt", "teams_transcript")
+_TRANSCRIPT_FILE_TYPES = ("vtt", "teams_transcript", "transcript")
 
 
 async def _list_pending_transcripts(svc: Any, org_id: str) -> list[dict[str, Any]]:

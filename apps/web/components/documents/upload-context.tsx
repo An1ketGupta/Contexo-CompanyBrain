@@ -28,6 +28,10 @@ export interface UploadItem {
   error?: string;
   /** Server-minted doc row id, set once /api/documents/upload responds. */
   doc_id?: string;
+  /** Set by the meeting-transcript upload button so an ambiguous .txt file
+   *  resolves to file_type='transcript' (Google Meet export) server-side
+   *  instead of the generic text pipeline. */
+  kind?: "meeting_transcript";
 }
 
 export interface UploadSummary {
@@ -43,7 +47,10 @@ interface UploadContextValue {
   isRunning: boolean;
   dialogOpen: boolean;
   summary: UploadSummary;
-  enqueue: (files: File[] | FileList) => { added: number; rejected: number };
+  enqueue: (
+    files: File[] | FileList,
+    opts?: { kind?: UploadItem["kind"] },
+  ) => { added: number; rejected: number };
   startAll: () => void;
   cancel: (key: string) => void;
   cancelAll: () => void;
@@ -148,6 +155,7 @@ async function processOne(
             filename: item.file.name,
             content_type: item.file.type || "application/octet-stream",
             file_size: item.file.size,
+            upload_kind: item.kind,
           }),
           signal,
         });
@@ -177,6 +185,7 @@ async function processOne(
         filename: item.file.name,
         content_type: item.file.type || "application/octet-stream",
         file_size: item.file.size,
+        upload_kind: item.kind,
       }),
       signal,
     });
@@ -258,7 +267,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   );
 
   const enqueue = useCallback(
-    (input: File[] | FileList): { added: number; rejected: number } => {
+    (
+      input: File[] | FileList,
+      opts?: { kind?: UploadItem["kind"] },
+    ): { added: number; rejected: number } => {
       const incoming = Array.from(input);
       const accepted: UploadItem[] = [];
       let rejected = 0;
@@ -279,6 +291,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           file,
           status: "pending",
           progress: 0,
+          kind: opts?.kind,
         });
       }
 

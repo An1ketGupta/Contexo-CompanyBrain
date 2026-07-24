@@ -56,7 +56,7 @@ DocumentKind = Literal["meeting_transcript"]
 # MeetingNotesAgent finishes, so a just-uploaded transcript would briefly
 # fall through a tag-based filter.
 _TRANSCRIPT_SOURCES = ("zoom", "google_meet_transcript")
-_TRANSCRIPT_FILE_TYPES = ("vtt", "teams_transcript")
+_TRANSCRIPT_FILE_TYPES = ("vtt", "teams_transcript", "transcript")
 
 
 def _normalise_tag(raw: str) -> str | None:
@@ -119,12 +119,20 @@ _EXT_TO_TYPE: dict[str, str] = {
 }
 
 
-def _resolve_file_type(filename: str, content_type: str) -> str:
+def _resolve_file_type(
+    filename: str, content_type: str, upload_kind: str | None = None
+) -> str:
     # Prefer the file extension when present — content_type from a browser PUT
     # is often "application/octet-stream" or just wrong, but the user's chosen
     # extension is usually trustworthy and disambiguates Office formats that
     # share root MIME prefixes.
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    # Manual Google Meet transcript upload: .txt is otherwise indistinguishable
+    # from a regular text document, so the dedicated meeting-transcript upload
+    # button (past-panel.tsx) sends this hint to route plain-text transcripts
+    # into MeetingNotesAgent instead of the generic text pipeline.
+    if ext == "txt" and upload_kind == "meeting_transcript":
+        return "transcript"
     if ext in _EXT_TO_TYPE:
         return _EXT_TO_TYPE[ext]
     if content_type in _MIME_TO_TYPE:
@@ -144,6 +152,11 @@ class UploadInitRequest(BaseModel):
     filename: str
     content_type: str
     file_size: int
+    # Set by the dedicated meeting-transcript upload button so an otherwise-
+    # ambiguous .txt file resolves to file_type='transcript' (Google Meet
+    # export) instead of the generic 'txt' pipeline. Pydantic rejects any
+    # other value outright rather than trusting an arbitrary client string.
+    upload_kind: Literal["meeting_transcript"] | None = None
 
 
 class UploadCompleteRequest(BaseModel):
@@ -222,7 +235,7 @@ async def init_upload(
             },
         )
 
-    file_type = _resolve_file_type(body.filename, body.content_type)
+    file_type = _resolve_file_type(body.filename, body.content_type, body.upload_kind)
 
     doc_id = str(uuid.uuid4())
     safe_name = body.filename.replace("/", "_").replace("..", "_").strip()

@@ -125,7 +125,7 @@ export function UpcomingMeetingsPanel() {
           />
           {!data?.meetings?.length ? (
             <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
-              No upcoming meetings. Connect Google Workspace to sync your calendar.
+              No upcoming meetings.
             </div>
           ) : (
             renderMeetingsList(data.meetings, selectedDay, setSelectedDay)

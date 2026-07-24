@@ -1,8 +1,9 @@
-"""Meeting transcript parsers — Zoom WebVTT + Microsoft Teams JSON.
+"""Meeting transcript parsers — Zoom WebVTT + Microsoft Teams JSON + Google
+Meet plain text.
 
 What's returned (canonical `MeetingTranscript`):
 
-  * `format`      — 'zoom_vtt' | 'teams_json'
+  * `format`      — 'zoom_vtt' | 'teams_json' | 'google_meet'
   * `utterances`  — ordered list of (speaker, text, start_ms, end_ms)
   * `speakers`    — deduped speaker labels in first-appearance order
   * `duration_ms` — last cue's end_ms, or None if unknown
@@ -34,7 +35,7 @@ from typing import Literal
 
 log = logging.getLogger(__name__)
 
-TranscriptFormat = Literal["zoom_vtt", "teams_json", "unknown"]
+TranscriptFormat = Literal["zoom_vtt", "teams_json", "google_meet", "unknown"]
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,8 @@ def detect_transcript_format(*, file_type: str | None, content: str) -> Transcri
         return "zoom_vtt"
     if ft == "teams_transcript":
         return "teams_json"
+    if ft == "transcript":
+        return "google_meet"
 
     head = (content or "")[:400].lstrip("﻿").strip()
     if head.startswith("WEBVTT"):
@@ -114,6 +117,8 @@ def parse_transcript(*, file_type: str | None, content: str) -> MeetingTranscrip
         return parse_zoom_vtt(content)
     if fmt == "teams_json":
         return parse_teams_transcript(content)
+    if fmt == "google_meet":
+        return parse_google_meet_transcript(content)
     return MeetingTranscript(format="unknown")
 
 
@@ -250,7 +255,9 @@ def parse_zoom_vtt(content: str) -> MeetingTranscript:
 _BRACKET_TS_LINE_RE = re.compile(r"^\[((?:\d{1,2}:)?\d{1,2}:\d{2})\]\s*$")
 
 
-def _parse_bracketed_transcript(text: str) -> MeetingTranscript:
+def _parse_bracketed_transcript(
+    text: str, *, format: TranscriptFormat = "zoom_vtt"
+) -> MeetingTranscript:
     """Parse a plain-text transcript that uses bracketed timestamps rather
     than WebVTT cues:
 
@@ -264,6 +271,11 @@ def _parse_bracketed_transcript(text: str) -> MeetingTranscript:
     blank line or the next timestamp. Speaker attribution reuses the same
     `Speaker: text` extraction as the WebVTT path, and a turn with no explicit
     speaker inherits the previous one.
+
+    Shared by two callers: `parse_zoom_vtt`'s fallback for a .vtt file that
+    doesn't actually start with `WEBVTT` (stays labelled `zoom_vtt`), and
+    `parse_google_meet_transcript` for a manually uploaded plain-text export
+    (labelled `google_meet`) — hence the caller-supplied `format`.
     """
     lines = text.split("\n")
     utterances: list[ParsedUtterance] = []
@@ -328,11 +340,28 @@ def _parse_bracketed_transcript(text: str) -> MeetingTranscript:
         pending_ts = None
 
     return MeetingTranscript(
-        format="zoom_vtt",
+        format=format,
         utterances=tuple(utterances),
         speakers=tuple(speakers_order),
         duration_ms=duration_ms or None,
     )
+
+
+# ── Google Meet (manual plain-text upload) ──────────────────────────────────
+
+def parse_google_meet_transcript(content: str) -> MeetingTranscript:
+    """Parse a manually-uploaded plain-text Google Meet transcript.
+
+    Reuses the bracketed-timestamp parser (`[00:00:24]\\nSpeaker: text`) —
+    the shape of Google Docs' "Download as .txt" export for a Meet
+    transcript, and what most other transcription tools export as plain
+    text. Tagged file_type='transcript' by the dedicated upload button in
+    `past-panel.tsx` (see `_resolve_file_type` in routers/documents.py).
+    """
+    if not content:
+        return MeetingTranscript(format="google_meet")
+    text = content.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
+    return _parse_bracketed_transcript(text, format="google_meet")
 
 
 # ── Microsoft Teams transcript JSON ─────────────────────────────────────────

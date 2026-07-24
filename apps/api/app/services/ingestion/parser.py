@@ -60,7 +60,7 @@ def parse_document(file_bytes: bytes, file_type: str) -> list[RawSegment]:
         segments = list(_parse_html(file_bytes))
     elif file_type == "csv":
         segments = list(_parse_csv(file_bytes))
-    elif file_type in ("vtt", "teams_transcript"):
+    elif file_type in ("vtt", "teams_transcript", "transcript"):
         segments = list(_parse_meeting_transcript(_decode_bytes(file_bytes), file_type=file_type))
     else:
         raise ParseError(f"Unsupported file type: {file_type}")

@@ -614,7 +614,8 @@ async def _smart_route_doc(*, doc_id: str, org_id: str) -> dict[str, Any]:
 # Extensions recognised as meeting transcripts. .vtt = Zoom WebVTT,
 # .json = Microsoft Teams transcript export (other JSON docs are excluded
 # by the agent's parser detection rather than this filter so a generic
-# JSON upload doesn't get routed here).
+# JSON upload doesn't get routed here), .txt tagged 'transcript' = manually
+# uploaded Google Meet (or other bracketed-timestamp) plain-text transcript.
 _MEETING_TRANSCRIPT_FILE_TYPES = {"vtt", "teams_transcript", "transcript"}
 
 
@@ -629,6 +630,8 @@ async def _maybe_route_meeting_transcript(
     .json with file_type='teams_transcript' → Teams transcript export
         (the documents router sets that file_type when an admin uploads
         via the dedicated meeting-transcript path)
+    .txt with file_type='transcript' → manually uploaded Google Meet (or
+        other bracketed-timestamp) plain-text transcript
     """
     ft = (file_type or "").lower()
     if ft not in _MEETING_TRANSCRIPT_FILE_TYPES:

@@ -428,8 +428,9 @@ function EmptyState() {
       </div>
       <p className="mt-3 text-sm font-medium">No meeting summaries yet</p>
       <p className="mt-1 text-xs text-muted-foreground">
-        Upload a Zoom <code>.vtt</code> or Teams transcript JSON and Nirnaya IQ
-        will extract attendees, decisions, and action items automatically.
+        Upload a Zoom <code>.vtt</code>, Teams transcript JSON, or Google Meet{" "}
+        <code>.txt</code> transcript and Nirnaya IQ will extract attendees,
+        decisions, and action items automatically.
       </p>
       <div className="mt-4 flex justify-center">
         <TranscriptUploadButton />
@@ -440,7 +441,10 @@ function EmptyState() {
 
 // Transcript-only entry point into the shared document upload queue. Reuses the
 // global uploader (progress widget + retry live in the dashboard layout), but
-// scopes the picker to the two formats the MeetingNotesAgent understands. Once
+// scopes the picker to the three formats the MeetingNotesAgent understands.
+// The `kind: "meeting_transcript"` hint tells the backend to route an
+// otherwise-ambiguous .txt (Google Meet's plain-text export) into the
+// transcript pipeline instead of treating it as a regular text document. Once
 // ingested, the backend fans out `meeting/transcript-uploaded` and the summary
 // shows up in this list after the agent finishes.
 function TranscriptUploadButton() {
@@ -449,7 +453,7 @@ function TranscriptUploadButton() {
 
   const onPick = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const { added, rejected } = enqueue(files);
+    const { added, rejected } = enqueue(files, { kind: "meeting_transcript" });
     if (added > 0) {
       startAll();
       toast.success(
@@ -458,7 +462,7 @@ function TranscriptUploadButton() {
           : `${added} transcripts uploading — summaries will appear once processing finishes.`,
       );
     } else if (rejected > 0) {
-      toast.error("Upload a Zoom .vtt or Teams transcript .json file.");
+      toast.error("Upload a Zoom .vtt, Teams .json, or Google Meet .txt transcript file.");
     }
   };
 
@@ -468,7 +472,7 @@ function TranscriptUploadButton() {
         ref={inputRef}
         type="file"
         multiple
-        accept=".vtt,.json"
+        accept=".vtt,.json,.txt"
         className="hidden"
         onChange={(e) => {
           onPick(e.target.files);

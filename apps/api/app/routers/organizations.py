@@ -123,8 +123,7 @@ async def get_my_org(
         lambda: client.table("organizations")
         .select(
             "id, name, slug, plan, created_at, "
-            "industry, company_size, primary_use_case, onboarding_completed_at, "
-            "rfp_approved_collection_id"
+            "industry, company_size, primary_use_case, onboarding_completed_at"
         )
         .eq("id", org_id)
         .maybe_single()
@@ -133,50 +132,6 @@ async def get_my_org(
     if not res or not res.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found.")
     return res.data
-
-
-class RfpCollectionUpdate(BaseModel):
-    rfp_approved_collection_id: str | None = None
-
-
-@router.patch("/me/rfp-collection")
-async def update_rfp_collection(
-    body: RfpCollectionUpdate,
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Set (or clear) the org's RFP-approved KB scope. The RFP Agent uses this
-    as the default retrieval scope so customer-facing answers can't accidentally
-    pull from internal-only docs. Pass null to clear and fall through to the
-    whole KB."""
-    org_id = current_user.get("org_id")
-    if not org_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No organization found.")
-
-    svc = get_service_client()
-    # If a collection_id is provided, verify it belongs to this org. RLS would
-    # block the cross-org write but an explicit check yields a clearer 404.
-    if body.rfp_approved_collection_id:
-        coll = await asyncio.to_thread(
-            lambda: svc.table("collections")
-            .select("id")
-            .eq("id", body.rfp_approved_collection_id)
-            .eq("org_id", org_id)
-            .maybe_single()
-            .execute()
-        )
-        if not coll or not coll.data:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Collection not found in this organization.",
-            )
-
-    await asyncio.to_thread(
-        lambda: svc.table("organizations")
-        .update({"rfp_approved_collection_id": body.rfp_approved_collection_id})
-        .eq("id", org_id)
-        .execute()
-    )
-    return {"rfp_approved_collection_id": body.rfp_approved_collection_id}
 
 
 @router.get("/recommendations")

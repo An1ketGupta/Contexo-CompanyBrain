@@ -128,7 +128,8 @@ function isMeetingTranscript(doc: Document): boolean {
     doc.source === "zoom" ||
     doc.source === "google_meet_transcript" ||
     doc.file_type === "vtt" ||
-    doc.file_type === "teams_transcript"
+    doc.file_type === "teams_transcript" ||
+    doc.file_type === "transcript"
   );
 }
 

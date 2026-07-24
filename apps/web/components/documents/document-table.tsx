@@ -69,15 +69,17 @@ function hasFailedChunks(metadata: unknown): boolean {
   return !!s && s.failed > 0;
 }
 
-// Zoom/Google Meet auto-sync (source) or a manually uploaded VTT/Teams-JSON
-// transcript (file_type) — both route into MeetingNotesAgent server-side.
-// Mirrors the backend predicate in routers/documents.py (DocumentKind filter).
+// Zoom/Google Meet auto-sync (source) or a manually uploaded VTT/Teams-JSON/
+// Google Meet .txt transcript (file_type) — both route into MeetingNotesAgent
+// server-side. Mirrors the backend predicate in routers/documents.py
+// (DocumentKind filter).
 export function isMeetingTranscript(doc: Document): boolean {
   return (
     doc.source === "zoom" ||
     doc.source === "google_meet_transcript" ||
     doc.file_type === "vtt" ||
-    doc.file_type === "teams_transcript"
+    doc.file_type === "teams_transcript" ||
+    doc.file_type === "transcript"
   );
 }
 
