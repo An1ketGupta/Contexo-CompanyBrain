@@ -119,30 +119,6 @@ async def _dispatch_policy_propagation(ctx: AgentDispatchContext) -> None:
     )
 
 
-async def _dispatch_support_response(ctx: AgentDispatchContext) -> None:
-    client = get_inngest_client()
-    await client.send(
-        inngest.Event(
-            name="support/email-received",
-            data={
-                "org_id": ctx.org_id,
-                "from_email": ctx.input["from_email"],
-                "from_name": ctx.input.get("from_name"),
-                "subject": ctx.input.get("subject") or "",
-                "body": ctx.input.get("body") or "",
-                "category": ctx.input.get("category") or "support",
-                "_api_context": {
-                    "run_id": ctx.run_id,
-                    "webhook_url": ctx.webhook_url,
-                    "api_key_id": ctx.api_key_id,
-                    "approval_id": ctx.approval_id,
-                },
-            },
-            id=f"agent-support-{ctx.run_id}",
-        )
-    )
-
-
 async def _dispatch_weekly_digest(ctx: AgentDispatchContext) -> None:
     client = get_inngest_client()
     await client.send(
@@ -199,23 +175,6 @@ AGENT_REGISTRY: dict[str, AgentSpec] = {
         estimated_seconds=30,
         dispatch=_dispatch_policy_propagation,
         example_input={"document_name": "Refund Policy"},
-    ),
-    "support_response": AgentSpec(
-        agent_type="support_response",
-        description=(
-            "Generate a draft customer-support reply for an inbound email. "
-            "Returns a ticket id; the draft lands in the support queue for an "
-            "admin to review and send."
-        ),
-        required=("from_email", "subject", "body"),
-        optional=("from_name", "category"),
-        estimated_seconds=20,
-        dispatch=_dispatch_support_response,
-        example_input={
-            "from_email": "customer@example.com",
-            "subject": "Refund request",
-            "body": "Hi — I'd like to request a refund for order #12345…",
-        },
     ),
     "weekly_digest": AgentSpec(
         agent_type="weekly_digest",
@@ -298,12 +257,6 @@ def validate_agent_input(agent_type: str, payload: dict[str, Any]) -> dict[str, 
         sd = cleaned.get("start_date")
         if isinstance(sd, str) and not _ISO_DATE_RE.match(sd):
             raise AgentInputError("input.start_date must be ISO-8601 (YYYY-MM-DD)")
-    elif agent_type == "support_response":
-        v = cleaned.get("from_email")
-        if isinstance(v, str):
-            cleaned["from_email"] = v.strip().lower()
-            if not _EMAIL_RE.match(cleaned["from_email"]):
-                raise AgentInputError("input.from_email is not a valid email")
     elif agent_type == "weekly_digest":
         v = cleaned.get("send_to_email")
         if isinstance(v, str):

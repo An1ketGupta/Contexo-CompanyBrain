@@ -30,7 +30,7 @@ from .query_log_retention import FUNCTIONS as _QUERY_LOG_RETENTION_FUNCTIONS
 from .report_functions import FUNCTIONS as _REPORT_FUNCTIONS
 from .slack_functions import FUNCTIONS as _SLACK_FUNCTIONS
 from .slack_inbound_functions import FUNCTIONS as _SLACK_INBOUND_FUNCTIONS
-from .support_functions import FUNCTIONS as _SUPPORT_FUNCTIONS
+from .email_classify_functions import FUNCTIONS as _EMAIL_CLASSIFY_FUNCTIONS
 from .version_diff_functions import FUNCTIONS as _VERSION_DIFF_FUNCTIONS
 from .webhook_functions import FUNCTIONS as _WEBHOOK_FUNCTIONS
 
@@ -51,7 +51,7 @@ FUNCTIONS = [
     *_ONBOARDING_V2_FUNCTIONS,
     *_POLICY_FUNCTIONS,
     *_COMPLIANCE_FUNCTIONS,
-    *_SUPPORT_FUNCTIONS,
+    *_EMAIL_CLASSIFY_FUNCTIONS,
     *_MEETING_FUNCTIONS,
     *_API_TRIGGER_FUNCTIONS,
     *_FEEDBACK_FUNCTIONS,

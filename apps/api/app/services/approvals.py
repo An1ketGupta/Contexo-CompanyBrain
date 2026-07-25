@@ -87,7 +87,6 @@ _ALLOWED_CHANNELS: set[str] = {"gmail", "slack", "notion", "gdocs", "agent"}
 _AGENT_CHANNEL_TYPES: set[str] = {
     "onboarding",
     "policy_propagation",
-    "support_response",
     "weekly_digest",
 }
 

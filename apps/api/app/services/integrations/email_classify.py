@@ -10,7 +10,7 @@ Every email arriving on an org's inbound address gets a label:
 
 The label drives downstream routing:
 
-    support | sales  → SupportResponseAgent drafts an AI reply.
+    support | sales  → dropped; no ticket/agent pipeline consumes these.
     knowledge        → existing ingest-as-document path.
     internal         → drop; no ticket, no document.
 

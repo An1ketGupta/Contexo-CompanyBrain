@@ -6,9 +6,8 @@ parsed email envelopes here. The handler verifies the inbound signature,
 finds the matching org, and fans the envelope out to the classifier
 Inngest function which decides between three downstream paths:
 
-  support / sales  → SupportResponseAgent drafts an AI reply
   knowledge        → existing chunk+embed pipeline as a doc
-  internal         → drop (calendar bots, fwd: chains, etc.)
+  support / sales / internal → drop (no ticket/agent pipeline consumes these)
 
 Format-agnostic on purpose: as long as the body delivered has at minimum
 `to`, `from`, `subject`, `text` (or `html`), we can classify and route it.
@@ -162,8 +161,8 @@ async def ingest_email(envelope: dict[str, Any]) -> dict[str, Any]:
 
     subject = envelope.get("subject") or "Forwarded email"
     from_ = envelope.get("from_") or "unknown sender"
-    # Idempotency key matches the dedupe sig used in the classifier and
-    # SupportResponseAgent — same forwarded email won't reroute twice.
+    # Idempotency key matches the dedupe sig used in the classifier —
+    # same forwarded email won't reroute twice.
     sig = hashlib.sha256(f"{subject}\n{body[:256]}".encode()).hexdigest()[:24]
 
     import inngest

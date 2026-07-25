@@ -448,7 +448,6 @@ class MeetingNotesAgent(BaseAgent):
         meta = (org_row.data or {}).get("metadata") or {} if org_row and org_row.data else {}
         channel_id = (
             meta.get("meeting_channel_id")
-            or meta.get("support_channel_id")
             or meta.get("default_announcement_channel_id")
         )
         if not channel_id:

@@ -36,7 +36,6 @@
 - Posting Slack announcements that follow brand voice
 - Answering policy and HR questions
 - Prepping for meetings with relevant prior context
-- Generating support ticket responses
 
 Unlike pure RAG chatbots, NirnayaIQ is built around the idea that the AI should always have **full company context**, surface its **sources** transparently, route work through **compliance/approval workflows**, and offload long-running tasks to **autonomous background agents**.
 
@@ -83,15 +82,14 @@ The platform is multi-tenant (per-organization), enforces tenant isolation via P
 - **Org-level AI instructions** (custom system prompt)
 - **Rate limits** (Upstash Redis-backed): per-user-per-minute + monthly quota by plan
 
-### Background Agents (5 live, all Inngest-triggered)
+### Background Agents (4 live, all Inngest-triggered)
 - `OnboardingAgent` — first-run workspace setup
 - `MeetingNotesAgent` — turns transcripts into structured notes + action items
 - `PolicyPropagationAgent` — applies policy updates across affected documents
-- `SupportResponseAgent` — drafts support ticket replies
 - `VersionDiffAgent` — summarizes changes between document versions
 
 ### Admin & Insights
-- 10 admin pages: analytics, coverage, health, knowledge gaps, moderation, confidence tuning, compliance status, agent runs, support queue
+- 9 admin pages: analytics, coverage, health, knowledge gaps, moderation, confidence tuning, compliance status, agent runs
 - **Time-savings analytics** computed per use
 - **Knowledge gap detection** from under-served queries
 
@@ -468,7 +466,6 @@ All agents extend `BaseAgent` (`apps/api/app/services/agents/base_agent.py`) and
 | `OnboardingAgent` | `agent/onboarding` | Workspace config + initial tags + first knowledge-gap pass |
 | `MeetingNotesAgent` | `agent/meeting-notes` | Structured notes + action items from a transcript |
 | `PolicyPropagationAgent` | `agent/policy-propagation` | Cascades policy changes across documents |
-| `SupportResponseAgent` | `agent/support` | Drafts a support ticket reply |
 | `VersionDiffAgent` | `agent/version-diff` | Human-readable diff between two doc versions |
 
 The full Inngest set (17 files in `apps/api/app/inngest/`) also covers: document ingestion, approvals, compliance, feedback processing, integration polling, knowledge-gap detection, webhooks, and API-triggered workflows.

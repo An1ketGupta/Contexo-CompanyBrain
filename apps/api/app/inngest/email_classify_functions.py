@@ -1,19 +1,13 @@
-"""Support-agent Inngest pipeline (Agent Day 12).
-
-Two functions live here:
+"""Inbound email classifier pipeline (Agent Day 12).
 
     classify-inbound-email  — runs the two-tier classifier on the inbound
                               envelope. Heuristic first; LLM only if
-                              ambiguous. Fans out either to support-email
-                              -received (drafting agent) or
-                              doc/process-text (existing knowledge ingest),
-                              or drops as internal noise.
-
-    support-email-received  — wraps SupportResponseAgent.run_safely() so
-                              the drafting work happens asynchronously
-                              after classification. Concurrency capped at
-                              1 per org_id to bound the LLM token spike
-                              when an inbox gets blasted.
+                              ambiguous. Emails classified as `knowledge`
+                              are ingested as a document via doc/process-text.
+                              Everything else (support, sales, internal) is
+                              dropped — logged for audit but no downstream
+                              action, since there is no ticket/agent pipeline
+                              consuming those categories.
 
 The webhook handler in email_forward.py only does signature verification
 and envelope normalization, then fires `support/classify-inbound` and
@@ -28,10 +22,6 @@ import inngest
 
 from app.inngest.client import get_inngest_client
 from app.observability import get_logger
-from app.services.agents.support_response_agent import (
-    SupportResponseAgent,
-    parse_from_name,
-)
 from app.services.integrations.email_classify import classify_inbound_email
 from app.services.integrations.text_ingest import upsert_external_document
 
@@ -69,8 +59,8 @@ async def _classify_as_dict(
     concurrency=[inngest.Concurrency(limit=5, key="event.data.org_id", scope="fn")],
 )
 async def classify_inbound_email_fn(ctx: inngest.Context) -> dict[str, Any]:
-    """Decide whether the inbound email is support/sales (→ agent) or
-    something else (→ existing knowledge-ingest path)."""
+    """Decide whether the inbound email should be ingested as a knowledge
+    document, or dropped as noise/unsupported category."""
     step = ctx.step
     data = ctx.event.data
 
@@ -78,7 +68,6 @@ async def classify_inbound_email_fn(ctx: inngest.Context) -> dict[str, Any]:
     subject: str = data.get("subject") or ""
     body: str = data.get("body") or ""
     from_email: str = data.get("from_email") or ""
-    from_raw: str | None = data.get("from_raw")
 
     classification = await step.run(
         "classify",
@@ -95,28 +84,6 @@ async def classify_inbound_email_fn(ctx: inngest.Context) -> dict[str, Any]:
         confidence=classification.get("confidence"),
         source=classification.get("source"),
     )
-
-    if category in ("support", "sales"):
-        await step.send_event(
-            "fanout-support-email-received",
-            inngest.Event(
-                name="support/email-received",
-                data={
-                    "org_id": org_id,
-                    "from_email": from_email,
-                    "from_name": data.get("from_name") or parse_from_name(from_raw),
-                    "from_raw": from_raw,
-                    "subject": subject,
-                    "body": body,
-                    "category": category,
-                    "classifier_confidence": classification.get("confidence"),
-                    "classifier_reason": classification.get("reason"),
-                },
-                # Idempotency: same inbound (org + sig) won't double-trigger.
-                id=f"support-ticket-{org_id}-{_inbound_sig(subject, body)}",
-            ),
-        )
-        return {"category": category, "routed_to": "support_agent"}
 
     if category == "knowledge":
         # Lazily create the document row + queue text-ingest. We only
@@ -140,52 +107,16 @@ async def classify_inbound_email_fn(ctx: inngest.Context) -> dict[str, Any]:
         )
         return {"category": "knowledge", "routed_to": "knowledge_ingest", "doc_id": doc_id}
 
-    # internal — drop. We log so admins can see classifier behaviour in
-    # the audit pages without reading a mailbox.
+    # support / sales / internal — drop. We log so admins can see classifier
+    # behaviour in the audit pages without reading a mailbox.
     log.info(
-        "support_email_dropped_internal",
+        "support_email_dropped",
         org_id=org_id,
         from_email=from_email,
+        category=category,
         reason=classification.get("reason"),
     )
-    return {"category": "internal", "routed_to": "dropped"}
-
-
-@_inngest_client.create_function(
-    fn_id="support-email-received",
-    trigger=inngest.TriggerEvent(event="support/email-received"),
-    retries=2,
-    concurrency=[inngest.Concurrency(limit=1, key="event.data.org_id", scope="fn")],
-)
-async def support_email_received_fn(ctx: inngest.Context) -> dict[str, Any]:
-    data = ctx.event.data
-    if not data.get("org_id") or not data.get("from_email"):
-        return {"status": "skipped", "reason": "missing_required_fields"}
-
-    api_context = data.get("_api_context")
-    agent = SupportResponseAgent(
-        org_id=data["org_id"],
-        ticket_input={
-            "from_email": data["from_email"],
-            "from_name": data.get("from_name") or parse_from_name(data.get("from_raw")),
-            "subject": data.get("subject") or "",
-            "body": data.get("body") or "",
-            "category": data.get("category") or "support",
-            "classifier_confidence": data.get("classifier_confidence"),
-            "classifier_reason": data.get("classifier_reason"),
-        },
-        api_context=api_context if isinstance(api_context, dict) else None,
-    )
-    try:
-        result = await agent.run_safely()
-    except Exception as exc:
-        log.warning(
-            "support_agent_run_failed",
-            org_id=data["org_id"],
-            error=str(exc),
-        )
-        raise
-    return {"status": "ok", "run_id": agent.run_id, **(result or {})}
+    return {"category": category, "routed_to": "dropped"}
 
 
 async def _upsert_inbound_doc(
@@ -206,9 +137,4 @@ async def _upsert_inbound_doc(
     )
 
 
-def _inbound_sig(subject: str, body: str) -> str:
-    """Stable idempotency key matching the dedupe sig on support_tickets."""
-    return hashlib.sha256(f"{subject}\n{body[:256]}".encode()).hexdigest()[:24]
-
-
-FUNCTIONS = [classify_inbound_email_fn, support_email_received_fn]
+FUNCTIONS = [classify_inbound_email_fn]

@@ -46,7 +46,7 @@ Env files: `apps/web/.env.local`, `apps/api/.env`. See `.env.example` for all va
 
 4. **Tool-use, not pure RAG.** LLM calls `search_company_knowledge(query)` multiple times per turn (max 8 calls, 4 rounds). Never pre-compute a single search from the user message.
 
-5. **Chat is bounded; background agents are autonomous.** Chat: max 4 tool rounds, LLM does not self-correct. Inngest agents (Onboarding, MeetingNotes, PolicyPropagation, SupportResponse, VersionDiff) run full autonomous loops.
+5. **Chat is bounded; background agents are autonomous.** Chat: max 4 tool rounds, LLM does not self-correct. Inngest agents (Onboarding, MeetingNotes, PolicyPropagation, VersionDiff) run full autonomous loops.
 
 6. **Document processing is always async.** Never parse/embed in an HTTP handler. Always queue via Inngest (`document/ingest`).
 
