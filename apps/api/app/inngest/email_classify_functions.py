@@ -4,10 +4,12 @@
                               envelope. Heuristic first; LLM only if
                               ambiguous. Emails classified as `knowledge`
                               are ingested as a document via doc/process-text.
-                              Everything else (support, sales, internal) is
-                              dropped — logged for audit but no downstream
-                              action, since there is no ticket/agent pipeline
-                              consuming those categories.
+                              `support` fires `support/ticket-inbound`, which
+                              the customer support agent picks up (see
+                              customer_support_functions.py). `sales` and
+                              `internal` are still dropped — logged for audit
+                              but no downstream action, since there is no
+                              pipeline consuming those categories.
 
 The webhook handler in email_forward.py only does signature verification
 and envelope normalization, then fires `support/classify-inbound` and
@@ -68,6 +70,7 @@ async def classify_inbound_email_fn(ctx: inngest.Context) -> dict[str, Any]:
     subject: str = data.get("subject") or ""
     body: str = data.get("body") or ""
     from_email: str = data.get("from_email") or ""
+    from_raw: str = data.get("from_raw") or from_email
 
     classification = await step.run(
         "classify",
@@ -107,8 +110,28 @@ async def classify_inbound_email_fn(ctx: inngest.Context) -> dict[str, Any]:
         )
         return {"category": "knowledge", "routed_to": "knowledge_ingest", "doc_id": doc_id}
 
-    # support / sales / internal — drop. We log so admins can see classifier
-    # behaviour in the audit pages without reading a mailbox.
+    if category == "support":
+        # Hand off to the customer support agent. It decides for itself
+        # whether the org has the feature enabled — this function's job
+        # ends at "this is a support email", not "the org wants it acted on".
+        await step.send_event(
+            "fanout-support-ticket-inbound",
+            inngest.Event(
+                name="support/ticket-inbound",
+                data={
+                    "org_id": org_id,
+                    "from_email": from_email,
+                    "from_raw": from_raw,
+                    "subject": subject,
+                    "body": body,
+                },
+                id=f"support-ticket-{org_id}-{hashlib.sha256(f'{subject}{body[:256]}'.encode()).hexdigest()[:24]}",
+            ),
+        )
+        return {"category": "support", "routed_to": "customer_support_agent"}
+
+    # sales / internal — drop. We log so admins can see classifier behaviour
+    # in the audit pages without reading a mailbox.
     log.info(
         "support_email_dropped",
         org_id=org_id,

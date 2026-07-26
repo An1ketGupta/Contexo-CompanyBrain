@@ -13,6 +13,7 @@ import {
   CreditCard,
   Download,
   FolderOpen,
+  Inbox,
   KeyRound,
   Link2,
   Loader2,
@@ -131,6 +132,12 @@ export default function SettingsPage() {
               icon={<Plug className="h-4 w-4" />}
               title="Integrations"
               description="Google Drive, Notion, Email forward-to-brain, Slack bot"
+            />
+            <SettingsLink
+              href="/admin/support/settings"
+              icon={<Inbox className="h-4 w-4" />}
+              title="Customer support"
+              description="Trust mode, auto-send categories, sending mailbox, escalation"
             />
             <SettingsLink
               href="/settings/webhooks"

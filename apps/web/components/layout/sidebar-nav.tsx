@@ -16,6 +16,7 @@ import {
   HeartPulse,
   HelpCircle,
   History,
+  Inbox,
   LayoutTemplate,
   LineChart,
   ListChecks,
@@ -102,6 +103,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Admin",
     adminOnly: true,
     items: [
+      { href: "/admin/support", label: "Support", icon: Inbox, adminOnly: true },
       { href: "/admin/moderation", label: "Moderation", icon: Shield, adminOnly: true },
       { href: "/admin/announcements", label: "Announcements", icon: Megaphone, adminOnly: true },
       { href: "/admin/feedback", label: "Flagged feedback", icon: ThumbsDown, adminOnly: true },

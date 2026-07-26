@@ -232,25 +232,36 @@ class ImportTemplateFromDriveRequest(BaseModel):
 # ── Template analyzer (AI-assisted placeholder conversion) ──────────────────
 
 
-class TemplateMappingItem(BaseModel):
-    """One blank → variable mapping. The analyzer proposes these and HR
-    edits/confirms each one before they are applied to the DOCX.
+class TemplateFieldSlot(BaseModel):
+    """One persisted fill-point in a `fill_strategy='slots'` template.
 
-    `paragraph_index`/`start_offset`/`end_offset` locate the exact blank span
-    in the canonical paragraph enumeration (see `_canonical_paragraphs`); the
-    apply step substitutes by that position, not by re-finding `blank_text`.
-    `blank_text` is retained for HR-readability and as a drift safety-check at
-    apply time — if the text at that offset no longer equals `blank_text`
-    (e.g. the block was edited in between) the mapping is skipped rather than
-    corrupting the document. The UI must round-trip the offset fields
-    unchanged, exactly as it already does with `TemplateTextBlock.index`."""
+    `paragraph_index`/`start_offset`/`end_offset` locate the fill-point in the
+    canonical paragraph enumeration (see `docx_positions`); the renderer
+    substitutes by that position, never by re-finding `blank_text` as a
+    substring. The UI must round-trip them unchanged, exactly as it already does
+    with `TemplateTextBlock.index`. Two more fields drive the review UI:
 
-    blank_text: str = Field(..., min_length=1, max_length=500)
-    variable: str = Field(..., min_length=1, max_length=80)
+      * `action` — `replace_span` overwrites a marked blank; `insert_after_label`
+        appends after a label like `Signature:` that has nothing after it;
+        `insert_empty_cell` fills an empty table cell beside a labelled one. The
+        last two have `start_offset == end_offset` (an insertion point) and an
+        empty `blank_text`, so the UI must render them by their surrounding
+        context rather than by the (nonexistent) blank text.
+      * `status` — `proposed` slots are NOT rendered. HR confirms or rejects each
+        one, which is the human-in-the-loop step the old auto-apply flow skipped.
+    """
+
+    id: str
+    action: str = Field(default="replace_span")
+    status: str = Field(default="proposed")
+    source: str = Field(default="ai")
+    variable: str | None = None
+    confidence: str = Field(default="medium")
+    blank_text: str = Field(default="", max_length=500)
     context_before: str = Field(default="", max_length=200)
     context_after: str = Field(default="", max_length=200)
-    confidence: str = Field(default="medium", pattern=r"^(high|medium|low)$")
     paragraph_index: int = Field(..., ge=0)
+    paragraph_kind: str = Field(default="body")
     start_offset: int = Field(..., ge=0)
     end_offset: int = Field(..., ge=0)
 
@@ -258,41 +269,97 @@ class TemplateMappingItem(BaseModel):
 class TemplateAnalyzeResponse(BaseModel):
     """Returned by POST /templates/{id}/analyze.
 
-    `has_placeholders` short-circuits the UI — if the DOCX already has
-    `{{ var }}` placeholders, the mapper modal doesn't open.
+    `fill_strategy` tells the UI which flow to run:
 
-    `mappings` is the AI's best guess at blank → variable assignments. HR
-    reviews, edits, and confirms before they are applied.
+      * `slots` — fill-points are persisted as `slots` below; HR confirms each
+        one and nothing is written into the customer's DOCX. This is what an
+        ordinary HR document analyzes to.
+      * `jinja` — the document is a genuine hand-authored template (every
+        `{{ }}` tag parses); it renders via docxtpl and needs no mapping, so
+        `slots` comes back empty.
 
-    `text_preview` is the first ~1500 chars of extracted text. The UI uses
-    it as a "what we read from the document" sanity check.
-
-    `available_variables` is the vocabulary the UI populates dropdowns with.
+    `has_placeholders` means "this document has `{{ }}` tags", not "these tags
+    are valid" — that distinction is what `jinja_errors` carries. A malformed tag
+    (e.g. `{{ Signing Date }}`) yields `fill_strategy='slots'` PLUS a populated
+    `jinja_errors`, because a tag that can't parse must never be trusted as a
+    placeholder.
     """
 
     document_id: str
     template_kind: str
     has_placeholders: bool
-    mappings: list[TemplateMappingItem] = Field(default_factory=list)
+    fill_strategy: str = "slots"
+    slots: list[TemplateFieldSlot] = Field(default_factory=list)
     text_preview: str = ""
     available_variables: list[dict[str, str]] = Field(default_factory=list)
     warning: str | None = None
+    # Plain-English problems found in hand-typed `{{ }}` tags, surfaced at
+    # analyze time instead of as an opaque parser error mid-render.
+    jinja_errors: list[str] = Field(default_factory=list)
+    # Valid tags naming a variable we don't supply — these WOULD raise
+    # TemplateVariableError during generation, so HR sees them now.
+    unknown_variables: list[str] = Field(default_factory=list)
 
 
-class TemplateApplyMappingsRequest(BaseModel):
-    """HR's confirmed mappings — written back to the DOCX as `{{ var }}`."""
+class TemplateSlotDecisionRequest(BaseModel):
+    """HR's verdict on one proposed fill-point.
 
-    mappings: list[TemplateMappingItem] = Field(..., min_length=1, max_length=200)
+    `variable` is required when confirming and ignored when rejecting — a
+    confirmed slot with no variable would render as an empty string in a
+    legally-binding document, which the DB also refuses.
+    """
+
+    status: str = Field(..., pattern=r"^(confirmed|rejected)$")
+    variable: str | None = Field(default=None, max_length=80)
 
 
-class TemplateApplyMappingsResponse(BaseModel):
+class TemplateSlotCreateRequest(BaseModel):
+    """A fill-point HR located by hand because detection missed it.
+
+    The recall safety net: no heuristic will find every blank in every
+    customer's document, so HR must always be able to say "there is also a field
+    here". Created already-confirmed, since HR pointing at it *is* the
+    confirmation.
+    """
+
+    paragraph_index: int = Field(..., ge=0)
+    start_offset: int = Field(..., ge=0)
+    end_offset: int = Field(..., ge=0)
+    action: str = Field(
+        default="replace_span",
+        pattern=r"^(replace_span|insert_after_label|insert_empty_cell)$",
+    )
+    variable: str = Field(..., min_length=1, max_length=80)
+
+
+class TemplateSlotsResponse(BaseModel):
     document_id: str
     template_kind: str
-    applied_count: int
-    # Mappings dropped at apply time (stale offset / drifted text). 0 in the
-    # normal analyze→apply flow; >0 only if the document changed in between.
-    skipped_count: int = 0
+    fill_strategy: str | None = None
+    slots: list[TemplateFieldSlot] = Field(default_factory=list)
+    available_variables: list[dict[str, str]] = Field(default_factory=list)
+    pending_count: int = 0
+
+
+class TemplateRenderPreviewResponse(BaseModel):
+    """Returned by POST /templates/{id}/render-preview.
+
+    Generating a preview does NOT mutate the stored template — it renders a
+    throwaway copy from the confirmed slots.
+
+    `unfilled_warnings` is the post-render safety net: spots in the OUTPUT that
+    still look unfilled (`________`, a bare `Signature:`). Non-fatal by design —
+    a document with one missed field is still useful to HR, but they should hear
+    about it before a candidate does.
+    """
+
+    document_id: str
+    template_kind: str
     preview_url: str | None = None
+    filled_count: int = 0
+    pending_count: int = 0
+    unfilled_warnings: list[str] = Field(default_factory=list)
+    preview_error: str | None = None
 
 
 class TemplateTextBlock(BaseModel):

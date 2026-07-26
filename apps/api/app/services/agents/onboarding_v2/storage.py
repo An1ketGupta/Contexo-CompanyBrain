@@ -127,7 +127,7 @@ async def fetch_template_docx(
             svc.table("documents")
             .select(
                 "id, name, file_path, file_type, current_version_id, "
-                "template_kind, template_status"
+                "template_kind, template_status, fill_strategy"
             )
             .eq("org_id", org_id)
             .eq("template_kind", template_kind)

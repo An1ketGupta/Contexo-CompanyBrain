@@ -2,9 +2,9 @@ import { NextRequest } from "next/server";
 import { proxyPostJson } from "@/lib/api-proxy";
 
 export async function POST(
-  request: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+): Promise<Response> {
   const { id } = await params;
-  return proxyPostJson(request, `/onboarding/templates/${id}/apply-mappings`);
+  return proxyPostJson(req, `/admin/support/${encodeURIComponent(id)}/reject`);
 }

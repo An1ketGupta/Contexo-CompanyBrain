@@ -73,6 +73,9 @@ from app.routers import (
     organizations as organizations_router,
 )
 from app.routers import (
+    support as support_router,
+)
+from app.routers import (
     scheduled_reports as scheduled_reports_router,
 )
 from app.routers import (
@@ -252,6 +255,7 @@ app.include_router(collections_router.router)
 app.include_router(time_savings_router.router)
 app.include_router(approvals_router.router)
 app.include_router(compliance_router.router)
+app.include_router(support_router.router)
 app.include_router(notifications_router.router)
 app.include_router(internal_router.router)
 app.include_router(scheduled_reports_router.router)

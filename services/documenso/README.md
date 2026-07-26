@@ -59,12 +59,15 @@ docker compose --env-file .env up -d
    DOCUMENSO_BASE_URL=http://localhost:3030
    DOCUMENSO_PUBLIC_URL=http://localhost:3030   # what the browser embeds
    ```
-3. **Team → Webhooks** → add endpoint pointing at the adapter's receiver:
+3. **Team → Webhooks** → add endpoint pointing at the adapter's receiver. Since
+   Documenso runs in Docker, `localhost` from inside the container is the
+   container itself, not your host machine — use the Docker Desktop DNS name
+   instead:
    ```
-   http://localhost:8001/webhooks/documenso
+   http://host.docker.internal:8002/webhooks/documenso
    ```
-   subscribe to the `DOCUMENT_*` events, copy the signing secret → set in
-   `apps/esign/.env`:
+   subscribe to the `DOCUMENT_*` events (+ `document.recipient.completed`),
+   copy the signing secret → set in `apps/esign/.env`:
    ```
    DOCUMENSO_WEBHOOK_SECRET=whsec_xxxxxxxx
    ```

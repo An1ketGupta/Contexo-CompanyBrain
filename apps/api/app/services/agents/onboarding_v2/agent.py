@@ -79,11 +79,14 @@ from app.database import get_service_client
 from app.observability import get_logger
 from app.services.agents.base_agent import BaseAgent
 from app.services.agents.onboarding_v2 import storage as ob_storage
+from app.services.agents.onboarding_v2 import template_slots as ob_slots
+from app.services.agents.onboarding_v2.blank_detector import scan_for_unfilled_signals
 from app.services.agents.onboarding_v2.pre_join import (
     ensure_pre_join_user,
     send_magic_link,
 )
-from app.services.agents.onboarding_v2.template_vars import SIGNATURE_BLOCK_MARKERS
+from app.services.agents.onboarding_v2.render_context import build_render_context
+from app.services.agents.onboarding_v2.template_analyzer import extract_text
 from app.services.email import send_email_event
 from app.services.pdf import (
     PdfRenderError,
@@ -91,6 +94,7 @@ from app.services.pdf import (
     TemplateVariableError,
     render_docx_template_to_pdf,
 )
+from app.services.pdf.slot_renderer import SlotDriftError, render_docx_slots_to_pdf
 
 log = get_logger(__name__)
 
@@ -236,41 +240,142 @@ class OnboardingV2Agent(BaseAgent):
     # ── Render context ────────────────────────────────────────────────────
 
     async def _build_render_context(self) -> dict[str, Any]:
-        """The dict handed to docxtpl for placeholder substitution. Tracks
-        the variables a customer template can reference. Documented in
-        apps/api/tools/ONBOARDING_TEMPLATE_VARS.md."""
+        """The substitution context for this run's documents.
+
+        The shape lives in `render_context.build_render_context` — shared with
+        the template preview endpoints so a preview can never promise a variable
+        a real render doesn't supply. Documented for HR in
+        apps/api/tools/ONBOARDING_TEMPLATE_VARS.md.
+        """
         run = await self._load_run()
         branding = await self._resolve_org_branding()
-        ctc_amount = run.get("ctc_amount")
-        ctc_currency = run.get("ctc_currency") or "INR"
-        ctc_formatted = (
-            f"{ctc_currency} {float(ctc_amount):,.2f}" if ctc_amount else "TBD"
+        return build_render_context(run=run, branding=branding)
+
+    # ── Rendering ─────────────────────────────────────────────────────────
+
+    async def _render_template(
+        self,
+        *,
+        template_kind: str,
+        docx_bytes: bytes,
+        doc_row: dict[str, Any],
+        ctx: dict[str, Any],
+    ) -> tuple[bytes, bytes]:
+        """Render a customer template with whichever fill pipeline it uses.
+
+        Chosen per-template by `documents.fill_strategy`:
+
+          * `slots` — values are spliced in at recorded positions
+            (`template_field_slots`). The customer's document is never rewritten
+            and never parsed as template source. This is what every analyze
+            produces for an ordinary HR document.
+          * `jinja` — the document was hand-authored with valid `{{ }}` tags;
+            docxtpl renders it as-is.
+          * NULL — legacy: a template from before migration 097, whose stored
+            `.docx` may have `{{ }}` tags baked into it by the retired
+            rewrite step. Rendered with docxtpl so those keep working. Nothing
+            produces NULL any more; re-opening such a template in the mapper
+            re-analyzes it onto one of the two above.
+
+        Callers keep their existing `PdfRenderUnavailable` /
+        `TemplateVariableError` / `PdfRenderError` handling: the slots renderer
+        deliberately raises the same exception types. Only `SlotDriftError` is
+        distinct, and it is not a `PdfRenderError` subclass so it can't be
+        swallowed by those handlers.
+        """
+        if (doc_row.get("fill_strategy") or "") == "slots":
+            slots = await ob_slots.list_slots(
+                document_id=doc_row["id"], confirmed_only=True
+            )
+            filled_docx, pdf_bytes = await render_docx_slots_to_pdf(
+                docx_bytes=docx_bytes,
+                slots=slots,
+                context=ctx,
+                template_kind=template_kind,
+            )
+        else:
+            filled_docx, pdf_bytes = await render_docx_template_to_pdf(
+                template_bytes=docx_bytes,
+                context=ctx,
+                strict=True,
+                template_kind=template_kind,
+            )
+
+        await self._warn_if_unfilled(
+            template_kind=template_kind, filled_docx=filled_docx
         )
-        today = datetime.now(UTC).date().isoformat()
-        return {
-            "candidate_name": run["candidate_name"],
-            "candidate_email": run["candidate_email"],
-            "candidate_phone": run.get("candidate_phone") or "",
-            "role_title": run["role_title"],
-            "designation": run.get("designation") or run["role_title"],
-            "ctc": ctc_formatted,
-            "ctc_amount": float(ctc_amount) if ctc_amount else 0.0,
-            "ctc_currency": ctc_currency,
-            "ctc_breakdown": run.get("ctc_breakdown") or {},
-            "start_date": str(run["start_date"]),
-            "work_location": run.get("work_location") or "",
-            "probation_period_months": run.get("probation_period_months") or 0,
-            "reporting_manager_name": run.get("reporting_manager_name") or "",
-            "reporting_manager_email": run.get("reporting_manager_email") or "",
-            "company_name": branding["name"],
-            "company_legal_name": branding["legal_name"],
-            "company_address": branding["registered_address"],
-            "today_date": today,
-            "jurisdiction": branding["jurisdiction"],
-            # Sentinel markers apps/esign's pdf_sign.py searches for to place
-            # each signer's signature — see SIGNATURE_BLOCK_MARKERS.
-            **SIGNATURE_BLOCK_MARKERS,
-        }
+        return filled_docx, pdf_bytes
+
+    async def _warn_if_unfilled(self, *, template_kind: str, filled_docx: bytes) -> None:
+        """Check the RENDERED document for fill-points nobody mapped.
+
+        Detection can't have perfect recall on arbitrary customer documents, so
+        this is the last line of defence: if a generated appointment letter still
+        contains `________` or a bare `Signature:`, some field was missed and HR
+        should hear about it before the candidate does.
+
+        Strictly non-fatal. A document with one unfilled line is still more
+        useful to HR than a failed run, and turning a warning into a hard error
+        would make this check a new way for generation to break.
+        """
+        try:
+            warnings = scan_for_unfilled_signals(extract_text(filled_docx))
+        except Exception as exc:  # noqa: BLE001 — a warning must never fail a run
+            log.warning(
+                "onboarding_v2.unfilled_scan_failed kind=%s err=%s", template_kind, exc
+            )
+            return
+        if not warnings:
+            return
+
+        log.warning(
+            "onboarding_v2.unfilled_fields run=%s kind=%s count=%s",
+            self.onboarding_run_id, template_kind, len(warnings),
+        )
+        await ob_storage.log_onboarding_event(
+            org_id=self.org_id,
+            run_id=self.onboarding_run_id,
+            actor_kind="agent",
+            event_type="template_unfilled_fields",
+            message=(
+                f"The generated {template_kind.replace('_', ' ')} still has "
+                f"{len(warnings)} spot(s) that look unfilled. Check the document "
+                "and add the missing fields in the template mapper."
+            ),
+            metadata={"template_kind": template_kind, "warnings": warnings[:10]},
+        )
+
+    async def _block_template_drift(
+        self, template_kind: str, exc: SlotDriftError
+    ) -> dict[str, Any]:
+        """Park the run because the template changed after its fields were
+        confirmed.
+
+        Distinct from `_block_missing_template`: the template is present and
+        active, but we can no longer vouch for where its values go, so we refuse
+        to write rather than risk splicing a salary into the middle of a clause.
+        Recovery is HR re-confirming in the mapper, which fires
+        `onboarding_v2/template_uploaded` and re-drives the run.
+        """
+        await self._set_status(
+            "blocked_template_drift",
+            extra={
+                "blocked_reason": str(exc),
+                "blocked_template_kind": template_kind,
+            },
+        )
+        await ob_storage.log_onboarding_event(
+            org_id=self.org_id,
+            run_id=self.onboarding_run_id,
+            actor_kind="agent",
+            event_type="blocked_template_drift",
+            message=str(exc),
+            metadata={
+                "template_kind": template_kind,
+                "paragraph_indexes": exc.paragraph_indexes[:10],
+            },
+        )
+        return {"status": "blocked_template_drift", "template_kind": template_kind}
 
     # ── Main dispatcher ────────────────────────────────────────────────────
 
@@ -336,9 +441,11 @@ class OnboardingV2Agent(BaseAgent):
             return await self._step_generate_induction()
         if current == "induction_sent":
             return await self._step_finalise()
-        if current == "blocked_missing_template":
-            # Re-kicked after HR uploads a template — re-attempt the LOI/AL/NDA
-            # step that triggered the block.
+        if current in ("blocked_missing_template", "blocked_template_drift"):
+            # Re-kicked after HR uploads a template, or re-confirms the fields of
+            # one that drifted — either way, re-attempt the step that blocked.
+            # Both states record which template kind stalled, so the retry is
+            # targeted rather than restarting the run.
             missing = (run.get("blocked_template_kind") or "loi").lower()
             if missing == "loi":
                 return await self._step_generate_loi()
@@ -370,12 +477,15 @@ class OnboardingV2Agent(BaseAgent):
         ctx = await self._build_render_context()
 
         try:
-            filled_docx, pdf_bytes = await render_docx_template_to_pdf(
-                template_bytes=docx_bytes,
-                context=ctx,
-                strict=True,
+            filled_docx, pdf_bytes = await self._render_template(
                 template_kind="loi",
+                docx_bytes=docx_bytes,
+                doc_row=doc_row,
+                ctx=ctx,
             )
+        except SlotDriftError as exc:
+            await self.log_step("generate_loi", "blocked", error=str(exc))
+            return await self._block_template_drift("loi", exc)
         except PdfRenderUnavailable as exc:
             # Deployment config issue (Gotenberg not running). Reset to draft
             # so the run is retryable once the sidecar is provisioned.
@@ -627,8 +737,8 @@ class OnboardingV2Agent(BaseAgent):
         # Mint the public-form token the candidate uses to submit BGV refs.
         # 14-day expiry matches the existing referee-token convention so the
         # cron reminder window has room to fire.
-        from uuid import uuid4
         from datetime import timedelta
+        from uuid import uuid4
         refs_token = str(uuid4())
         refs_expires_at = (datetime.now(UTC) + timedelta(days=14)).isoformat()
         refs_form_url = (
@@ -876,12 +986,17 @@ class OnboardingV2Agent(BaseAgent):
 
             docx_bytes, doc_row = fetched
             try:
-                filled_docx, pdf_bytes = await render_docx_template_to_pdf(
-                    template_bytes=docx_bytes,
-                    context=ctx,
-                    strict=True,
+                filled_docx, pdf_bytes = await self._render_template(
                     template_kind=kind,
+                    docx_bytes=docx_bytes,
+                    doc_row=doc_row,
+                    ctx=ctx,
                 )
+            except SlotDriftError as exc:
+                await self.log_step(
+                    "generate_offer_bundle", "blocked", error=f"{kind}: {exc}"
+                )
+                return await self._block_template_drift(kind, exc)
             except TemplateVariableError as exc:
                 await self.log_step(
                     "generate_offer_bundle", "failed",
@@ -1161,12 +1276,15 @@ class OnboardingV2Agent(BaseAgent):
         docx_bytes, doc_row = fetched
 
         try:
-            filled_docx, pdf_bytes = await render_docx_template_to_pdf(
-                template_bytes=docx_bytes,
-                context=ctx,
-                strict=True,
+            filled_docx, pdf_bytes = await self._render_template(
                 template_kind="induction",
+                docx_bytes=docx_bytes,
+                doc_row=doc_row,
+                ctx=ctx,
             )
+        except SlotDriftError as exc:
+            await self.log_step("generate_induction", "blocked", error=str(exc))
+            return await self._block_template_drift("induction", exc)
         except TemplateVariableError as exc:
             await self.log_step(
                 "generate_induction", "failed",

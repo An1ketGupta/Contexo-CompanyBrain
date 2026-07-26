@@ -1,35 +1,34 @@
-"""AI-assisted DOCX template analyzer.
+"""AI-assisted DOCX template analysis — classification and in-place editing.
 
 HR teams almost never upload DOCX templates with Jinja `{{ }}` placeholders
-already in them — they have a Word document with blank spaces (underscores,
-bracketed labels, empty table cells) that they used to fill in by hand. This
-analyzer bridges the gap:
+already in them: they have a Word document with blank spaces (underscores,
+bracketed labels, empty table cells) they used to fill in by hand. Bridging
+that gap is a three-stage job, and this module owns the middle one:
 
-  1. Detect whether a DOCX already has Jinja placeholders (`{{ var }}`).
-     If yes, nothing to do — caller falls through to the existing pipeline.
+  1. **Detect** where values go — `blank_detector.find_all_candidates`.
+     Deterministic, local, no LLM. Also `jinja_validator.classify_template`,
+     which decides whether a document is a genuine hand-authored template.
 
-  2. If not, extract the document text and ask the LLM to identify blank
-     spots and map each one to a known variable from `template_vars.py`.
-     The LLM never touches legal language — it only proposes mappings of
-     the form `(blank_pattern, variable_name)` over an extracted text view.
+  2. **Classify** each detected fill-point against the fixed vocabulary in
+     `template_vars.py` — `classify_candidates` below. One batched LLM call per
+     template (never per generated document), seeing only ~60 chars of context
+     per fill-point and a closed list of variable names. It cannot invent
+     variables and never reproduces or rewrites document text, so there is no
+     verbatim-echo step that could drift.
 
-  3. HR reviews and confirms (in the UI). Confirmed mappings are then
-     applied to the DOCX: each blank pattern is replaced with the
-     corresponding `{{ variable }}` placeholder, preserving all original
-     formatting (runs, fonts, tables, headers). The rewritten DOCX is the
-     new template — every future run uses the standard docxtpl pipeline.
+  3. **Fill** the template — `pdf.slot_renderer`, from the `template_field_slots`
+     rows HR confirmed. Nothing is ever written into the customer's document, so
+     it never has to be valid template-language source.
 
-  4. Before persisting, the rewritten DOCX is dry-rendered with sample
-     data to confirm it produces a valid PDF-ready result.
+Stage 3 used to have a step before it that rewrote the customer's `.docx` to
+contain `{{ variable }}` tags so docxtpl could render it. That step is gone
+(migration 097): a document only reaches docxtpl now if HR hand-authored it with
+valid tags, which is what `validate_rendered` below still guards.
 
-Why this design:
-
-  * The LLM is used ONCE per template (at conversion time), not per run.
-    Every actual document generation stays deterministic and AI-free.
-  * The LLM only sees text + a fixed variable vocabulary. It cannot
-    invent variables or rewrite clauses.
-  * HR confirms mappings before they're applied — they see exactly what
-    the AI proposes and can edit any wrong guesses.
+`extract_editable_blocks` / `apply_text_edits` are orthogonal to all of it: they
+back the flat-text editor HR uses to reword a template in place, and are keyed
+off the same canonical paragraph enumeration (`docx_positions`) as everything
+else.
 """
 from __future__ import annotations
 
@@ -52,37 +51,34 @@ from app.services.pdf import (
     fill_docx_template,
 )
 
-from .template_vars import (
-    PREVIEW_SAMPLE_CONTEXT,
-    TEMPLATE_VARIABLES,
-    get_variable_names,
+from .blank_detector import (
+    BlankCandidate,
+    build_candidate_block,
+    find_all_candidates,
 )
+from .docx_positions import canonical_paragraphs
+from .jinja_validator import classify_template
+from .render_context import sample_render_context
+from .template_vars import TEMPLATE_VARIABLES, get_variable_names
+
+__all__ = [
+    "BlankCandidate",
+    "CandidateClassification",
+    "EditableBlock",
+    "TemplateAnalyzerError",
+    "apply_text_edits",
+    "classify_candidates",
+    "classify_template",
+    "extract_editable_blocks",
+    "extract_text",
+    "find_all_candidates",
+    "validate_rendered",
+]
 
 log = logging.getLogger(__name__)
 
 
 # ── Public types ───────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class BlankCandidate:
-    """A blank fill-spot located deterministically by exact character offset.
-
-    Detection never asks the LLM to reproduce document text — these offsets
-    are the single source of truth for both the classification prompt and the
-    later substitution. So nothing can drift, and two identical-looking blanks
-    (e.g. two `________` signature lines) are always distinguished by
-    `paragraph_index` + `start_offset`, never by their (identical) text.
-    """
-
-    candidate_id: int
-    paragraph_index: int  # index into _canonical_paragraphs()
-    start_offset: int     # char offset into the paragraph's run text
-    end_offset: int
-    matched_text: str     # exact substring — regex-extracted, never LLM-typed
-    context_before: str
-    context_after: str
-    paragraph_kind: str   # "body" | "table" | "header" | "footer"
 
 
 @dataclass(frozen=True)
@@ -95,94 +91,10 @@ class CandidateClassification:
     confidence: str  # "high" | "medium" | "low"
 
 
-@dataclass(frozen=True)
-class ProposedMapping:
-    """A single blank → variable mapping ready to apply.
-
-    Carries the blank's exact position (`paragraph_index` +
-    `start_offset`/`end_offset` into the canonical paragraph enumeration) so
-    the apply step substitutes by position — never by re-finding `blank_text`
-    as a substring, which is what let identical blanks collide before.
-    `blank_text` is retained for HR-readability in the UI and as a drift
-    safety-check at apply time (the text at that offset must still equal it).
-    """
-
-    blank_text: str
-    variable: str
-    context_before: str
-    context_after: str
-    confidence: str  # "high" | "medium" | "low"
-    paragraph_index: int
-    start_offset: int
-    end_offset: int
-
-
-@dataclass(frozen=True)
-class SkippedMapping:
-    """A mapping that couldn't be safely applied, with a machine-readable
-    reason for logging. A partial skip is non-fatal — only an all-skipped
-    apply raises."""
-
-    mapping: ProposedMapping
-    reason: str
-
-
 class TemplateAnalyzerError(RuntimeError):
     """Raised when the analyzer can't produce usable output. The router
     converts this to a 422 with a human-readable detail so HR sees an
     actionable error rather than a 500."""
-
-
-# ── Jinja detection ────────────────────────────────────────────────────────
-
-# Match `{{ anything }}` allowing optional whitespace and basic Jinja
-# operators (`.`, `|`, args) so we don't false-negative on `{{ var | upper }}`.
-_JINJA_PLACEHOLDER_RE = re.compile(r"\{\{\s*[A-Za-z_][\w.\|\s\(\)\'\",-]*\s*\}\}")
-
-# Any existing `{{ ... }}` span. Used both to reject blank candidates that
-# fall inside a placeholder and to keep those spans verbatim during
-# substitution.
-_JINJA_SPAN_RE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
-
-# A blank fill-spot as it appears in a not-yet-templated HR document. Unlike
-# the old marker *validator*, this matches the blank as a SPAN so we get its
-# exact character offsets. Ordered alternation: underscore runs, bracketed
-# labels, angle-bracket labels, dotted leaders / ellipsis, and single-curly
-# `{label}` (the lookarounds exclude `{{ }}` Jinja, handled separately).
-_BLANK_SPAN_RE = re.compile(
-    r"_{3,}"                            # ________
-    r"|\[[^\[\]{}\n]{1,60}\]"           # [CANDIDATE NAME]
-    r"|<[^<>{}\n]{1,60}>"               # <NAME>
-    r"|\.{3,}"                          # dotted leader ......
-    r"|…"                               # unicode ellipsis
-    r"|(?<!\{)\{[^{}\n]{1,60}\}(?!\})"  # {name} but never {{ jinja }}
-)
-
-# How much surrounding text to capture on each side of a blank — enough for
-# the classifier (and HR) to read the label ("Name:", "Date:") without
-# bloating the prompt.
-_CONTEXT_CHARS = 60
-
-
-def _paragraph_run_text(paragraph: Paragraph) -> str:
-    """Concatenate a paragraph's run text — the exact string the apply step
-    slices by offset.
-
-    We deliberately join `paragraph.runs` rather than read `Paragraph.text`:
-    in python-docx 1.x the latter also pulls in hyperlink text, which would
-    make detection-time offsets disagree with the run text rewritten at apply
-    time. Joining runs keeps both sides byte-for-byte identical.
-    """
-    return "".join(r.text or "" for r in paragraph.runs)
-
-
-def has_jinja_placeholders(docx_bytes: bytes) -> bool:
-    """Return True if the DOCX already contains `{{ var }}` placeholders.
-
-    Reads paragraphs *and* table cells — placeholders inside tables are easy
-    to miss with a naive XML grep."""
-    text = extract_text(docx_bytes)
-    return bool(_JINJA_PLACEHOLDER_RE.search(text))
 
 
 # ── Text extraction ────────────────────────────────────────────────────────
@@ -289,58 +201,6 @@ def _build_vocabulary_block() -> str:
     return "\n".join(lines)
 
 
-def find_blank_candidates(docx_bytes: bytes) -> list[BlankCandidate]:
-    """Deterministically locate every blank fill-spot in the document, by
-    exact character offset within each canonical paragraph.
-
-    This replaces the old "let the LLM cite blank_text, then re-find it as a
-    substring" step. Because the offsets come straight from a regex over the
-    document (never re-typed by anything), the apply step can substitute by
-    position — so nothing can drift out of the document, and identical-looking
-    blanks are inherently distinguished by their `(paragraph_index, offset)`.
-
-    Candidates overlapping an existing `{{ ... }}` span are dropped so we
-    never re-template an already-templated field.
-    """
-    doc = Document(io.BytesIO(docx_bytes))
-    candidates: list[BlankCandidate] = []
-    cid = 0
-    for idx, (paragraph, kind) in enumerate(_canonical_paragraphs(doc)):
-        text = _paragraph_run_text(paragraph)
-        if not text:
-            continue
-        jinja_spans = [(m.start(), m.end()) for m in _JINJA_SPAN_RE.finditer(text)]
-        for m in _BLANK_SPAN_RE.finditer(text):
-            start, end = m.start(), m.end()
-            if any(s < end and start < e for s, e in jinja_spans):
-                continue  # inside/overlapping an existing {{ }} — not a blank
-            candidates.append(
-                BlankCandidate(
-                    candidate_id=cid,
-                    paragraph_index=idx,
-                    start_offset=start,
-                    end_offset=end,
-                    matched_text=m.group(0),
-                    context_before=text[max(0, start - _CONTEXT_CHARS):start],
-                    context_after=text[end:end + _CONTEXT_CHARS],
-                    paragraph_kind=kind,
-                )
-            )
-            cid += 1
-    return candidates
-
-
-def _build_candidate_block(candidates: list[BlankCandidate]) -> str:
-    """Render the located candidates for the classification prompt — one line
-    each, with the blank wrapped in ⟦ ⟧ inside its surrounding text."""
-    lines = ["Blank candidates (classify EVERY one, by candidate_id):"]
-    for c in candidates:
-        snippet = f"{c.context_before}⟦{c.matched_text}⟧{c.context_after}"
-        snippet = " ".join(snippet.split())  # collapse newlines/runs of spaces
-        lines.append(f'  #{c.candidate_id} [{c.paragraph_kind}]: "{snippet}"')
-    return "\n".join(lines)
-
-
 async def classify_candidates(
     *,
     candidates: list[BlankCandidate],
@@ -352,8 +212,13 @@ async def classify_candidates(
     This is a constrained classification task: the model only picks a variable
     name per `candidate_id` and never reproduces document text, so there is no
     verbatim-echo step that can drift. Raises TemplateAnalyzerError if the LLM
-    is unreachable or returns unparseable JSON. Candidates the model omits or
-    marks null are dropped by `merge_classifications`.
+    is unreachable or returns unparseable JSON.
+
+    Candidates the model omits or marks null simply get no entry here. They are
+    NOT dropped downstream: `template_slots.build_slot_rows` still persists them
+    with `variable=None` so HR sees the field and picks a value, because a blank
+    the classifier didn't understand is exactly the one that must not go
+    invisible.
     """
     if not candidates:
         return []
@@ -362,7 +227,7 @@ async def classify_candidates(
     user_prompt = (
         f"Template kind: {template_kind}\n\n"
         f"{_build_vocabulary_block()}\n\n"
-        f"{_build_candidate_block(candidates)}\n\n"
+        f"{build_candidate_block(candidates)}\n\n"
         "Return the JSON classifications object now."
     )
 
@@ -428,37 +293,6 @@ async def classify_candidates(
     return result
 
 
-def merge_classifications(
-    candidates: list[BlankCandidate],
-    classifications: list[CandidateClassification],
-) -> list[ProposedMapping]:
-    """Join candidates (position) with classifications (variable) into the
-    final proposal list.
-
-    Candidates the LLM mapped to null — or never classified — are dropped. No
-    dedup is needed: every candidate is already unique by position.
-    """
-    by_id = {c.candidate_id: c for c in classifications}
-    out: list[ProposedMapping] = []
-    for cand in candidates:
-        cls = by_id.get(cand.candidate_id)
-        if cls is None or cls.variable is None:
-            continue
-        out.append(
-            ProposedMapping(
-                blank_text=cand.matched_text,
-                variable=cls.variable,
-                context_before=cand.context_before,
-                context_after=cand.context_after,
-                confidence=cls.confidence,
-                paragraph_index=cand.paragraph_index,
-                start_offset=cand.start_offset,
-                end_offset=cand.end_offset,
-            )
-        )
-    return out
-
-
 def _extract_json_object(text: str) -> dict[str, Any] | None:
     """LLMs occasionally wrap JSON in ``` fences despite being told not to.
     Tolerate both bare-JSON and fenced output. Returns None if nothing
@@ -480,108 +314,6 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
         except json.JSONDecodeError:
             return None
     return parsed if isinstance(parsed, dict) else None
-
-
-# ── Apply mappings to DOCX ─────────────────────────────────────────────────
-
-
-def apply_mappings(
-    *,
-    docx_bytes: bytes,
-    mappings: list[ProposedMapping],
-) -> tuple[bytes, list[SkippedMapping]]:
-    """Rewrite the DOCX, replacing each mapping's blank span with a
-    `{{ variable }}` placeholder — located by exact position, not by
-    re-finding `blank_text` as a substring.
-
-    Substitution happens per canonical paragraph, right-to-left within a
-    paragraph so replacing one span never shifts a not-yet-applied offset.
-    Each span's current text is verified against `blank_text` first; a
-    mismatch (e.g. the paragraph was edited via the block editor since it was
-    analysed) skips ONLY that one mapping instead of corrupting the document.
-    Formatting is preserved the same way as elsewhere in this module — the
-    rewritten text collapses into the paragraph's first run and the rest are
-    blanked.
-
-    Returns the new DOCX bytes and the list of skipped mappings (each with a
-    reason). Raises TemplateAnalyzerError only if EVERY mapping was skipped.
-    """
-    if not mappings:
-        return docx_bytes, []
-
-    doc = Document(io.BytesIO(docx_bytes))
-    canonical = _canonical_paragraphs(doc)
-    skipped: list[SkippedMapping] = []
-
-    by_paragraph: dict[int, list[ProposedMapping]] = {}
-    for m in mappings:
-        by_paragraph.setdefault(m.paragraph_index, []).append(m)
-
-    total_replacements = 0
-    for para_idx, para_mappings in by_paragraph.items():
-        if para_idx < 0 or para_idx >= len(canonical):
-            skipped.extend(
-                SkippedMapping(m, "paragraph_index_out_of_range") for m in para_mappings
-            )
-            continue
-        paragraph, _kind = canonical[para_idx]
-        runs = paragraph.runs
-        full_text = "".join(r.text or "" for r in runs)
-        jinja_spans = [(j.start(), j.end()) for j in _JINJA_SPAN_RE.finditer(full_text)]
-
-        valid: list[ProposedMapping] = []
-        for m in para_mappings:
-            if (
-                not runs
-                or m.start_offset < 0
-                or m.end_offset > len(full_text)
-                or m.start_offset >= m.end_offset
-            ):
-                skipped.append(SkippedMapping(m, "offset_out_of_range"))
-                continue
-            if full_text[m.start_offset:m.end_offset] != m.blank_text:
-                # Text at that span changed since analysis — refuse to guess.
-                skipped.append(SkippedMapping(m, "text_drift"))
-                continue
-            if any(s < m.end_offset and m.start_offset < e for s, e in jinja_spans):
-                skipped.append(SkippedMapping(m, "overlaps_existing_placeholder"))
-                continue
-            valid.append(m)
-
-        # Right-to-left so accepted spans keep their offsets valid as we
-        # rewrite, and drop any span that overlaps one already accepted here.
-        valid.sort(key=lambda m: m.start_offset, reverse=True)
-        new_text = full_text
-        last_start = len(full_text) + 1
-        applied_here = 0
-        for m in valid:
-            if m.end_offset > last_start:
-                skipped.append(SkippedMapping(m, "overlapping_offset"))
-                continue
-            new_text = (
-                new_text[: m.start_offset]
-                + f"{{{{ {m.variable} }}}}"
-                + new_text[m.end_offset :]
-            )
-            last_start = m.start_offset
-            applied_here += 1
-            total_replacements += 1
-
-        if applied_here:
-            runs[0].text = new_text
-            for r in runs[1:]:
-                r.text = ""
-
-    if total_replacements == 0:
-        raise TemplateAnalyzerError(
-            "None of the proposed mappings matched the current document text. "
-            "The document may have changed since it was last analysed — click "
-            "Find blanks again to re-detect them."
-        )
-
-    out = io.BytesIO()
-    doc.save(out)
-    return out.getvalue(), skipped
 
 
 # ── Flat-text editing (paragraph-in-place) ─────────────────────────────────
@@ -609,39 +341,6 @@ class EditableBlock:
     kind: str
 
 
-def _canonical_paragraphs(doc: Any) -> list[tuple[Paragraph, str]]:
-    """Enumerate every paragraph in a stable, document-first order.
-
-    Body paragraphs and table cells are walked in true document order (so a
-    table's cells appear where the table sits), followed by header and footer
-    paragraphs. This ordering is an implementation detail — the only contract
-    is that it is *deterministic* and *identical* between extraction and
-    write-back, so a block's `index` always resolves to the same paragraph.
-    """
-    from docx.oxml.ns import qn
-
-    out: list[tuple[Paragraph, str]] = []
-    body = doc.element.body
-    for child in body.iterchildren():
-        if child.tag == qn("w:p"):
-            out.append((Paragraph(child, doc), "body"))
-        elif child.tag == qn("w:tbl"):
-            # `iter` yields every descendant paragraph (including nested
-            # tables) once, in document order.
-            for p_elem in child.iter(qn("w:p")):
-                out.append((Paragraph(p_elem, doc), "table"))
-
-    for section in doc.sections:
-        if section.header:
-            for p in section.header.paragraphs:
-                out.append((p, "header"))
-        if section.footer:
-            for p in section.footer.paragraphs:
-                out.append((p, "footer"))
-
-    return out
-
-
 def extract_editable_blocks(docx_bytes: bytes) -> list[EditableBlock]:
     """Return the non-empty paragraphs of a DOCX as editable blocks.
 
@@ -651,7 +350,7 @@ def extract_editable_blocks(docx_bytes: bytes) -> list[EditableBlock]:
     """
     doc = Document(io.BytesIO(docx_bytes))
     blocks: list[EditableBlock] = []
-    for idx, (para, kind) in enumerate(_canonical_paragraphs(doc)):
+    for idx, (para, kind) in enumerate(canonical_paragraphs(doc)):
         text = para.text
         if text and text.strip():
             blocks.append(EditableBlock(index=idx, text=text, kind=kind))
@@ -662,9 +361,8 @@ def _set_paragraph_text(paragraph: Paragraph, new_text: str) -> None:
     """Overwrite a paragraph's text, preserving its first run's formatting.
 
     Word splits styled text across runs; we write the whole new string into
-    the first run and blank the rest (same run-collapse trick `apply_mappings`
-    uses). Sub-run formatting on the replaced span collapses to the first
-    run's style — acceptable for paragraph-level editing.
+    the first run and blank the rest. Sub-run formatting on the replaced span
+    collapses to the first run's style — acceptable for paragraph-level editing.
     """
     runs = paragraph.runs
     if not runs:
@@ -686,7 +384,7 @@ def apply_text_edits(*, docx_bytes: bytes, edits: dict[int, str]) -> tuple[bytes
     paragraphs actually changed.
     """
     doc = Document(io.BytesIO(docx_bytes))
-    paras = _canonical_paragraphs(doc)
+    paras = canonical_paragraphs(doc)
     changed = 0
     for idx, new_text in edits.items():
         if idx < 0 or idx >= len(paras):
@@ -706,23 +404,29 @@ def apply_text_edits(*, docx_bytes: bytes, edits: dict[int, str]) -> tuple[bytes
 
 
 async def validate_rendered(docx_bytes: bytes, *, template_kind: str | None = None) -> None:
-    """Dry-render the (presumably rewritten) DOCX with sample context to
-    catch broken templates before we persist them. Raises
-    TemplateAnalyzerError on render failure with the underlying message."""
+    """Dry-render an EDITED docxtpl template with sample context, to catch a
+    broken edit before we persist it.
+
+    Only meaningful for `fill_strategy='jinja'` (and legacy NULL) templates —
+    the ones docxtpl actually parses. Callers must skip it for slots templates,
+    where running the document through Jinja would reject it for containing text
+    that merely LOOKS like a placeholder. Raises TemplateAnalyzerError on render
+    failure with the underlying message.
+    """
     try:
         await fill_docx_template(
             template_bytes=docx_bytes,
-            context=PREVIEW_SAMPLE_CONTEXT,
+            context=sample_render_context(),
             strict=True,
             template_kind=template_kind,
         )
     except TemplateVariableError as exc:
         raise TemplateAnalyzerError(
-            f"After applying mappings, the template still references an unknown "
-            f"variable: '{exc.variable_name}'. Edit the DOCX to remove it or pick "
-            "a different variable in the mapping step."
+            f"This template references a placeholder we don't supply: "
+            f"'{exc.variable_name}'. Edit the wording to remove it, or rename it "
+            "to one of the available variables."
         ) from exc
     except (PdfRenderError, PdfRenderUnavailable) as exc:
         raise TemplateAnalyzerError(
-            f"Couldn't render the rewritten template: {exc}"
+            f"Couldn't render the edited template: {exc}"
         ) from exc

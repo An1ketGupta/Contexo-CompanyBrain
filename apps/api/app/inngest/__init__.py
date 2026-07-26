@@ -6,6 +6,7 @@ from .api_trigger_functions import FUNCTIONS as _API_TRIGGER_FUNCTIONS
 from .approval_functions import FUNCTIONS as _APPROVAL_FUNCTIONS
 from .archive_functions import FUNCTIONS as _ARCHIVE_FUNCTIONS
 from .curator_functions import FUNCTIONS as _CURATOR_FUNCTIONS
+from .customer_support_functions import FUNCTIONS as _CUSTOMER_SUPPORT_FUNCTIONS
 from .duplicate_detection_functions import FUNCTIONS as _DUPLICATE_DETECTION_FUNCTIONS
 from .announcement_functions import FUNCTIONS as _ANNOUNCEMENT_FUNCTIONS
 from .calendar_functions import FUNCTIONS as _CALENDAR_FUNCTIONS
@@ -52,6 +53,7 @@ FUNCTIONS = [
     *_POLICY_FUNCTIONS,
     *_COMPLIANCE_FUNCTIONS,
     *_EMAIL_CLASSIFY_FUNCTIONS,
+    *_CUSTOMER_SUPPORT_FUNCTIONS,
     *_MEETING_FUNCTIONS,
     *_API_TRIGGER_FUNCTIONS,
     *_FEEDBACK_FUNCTIONS,

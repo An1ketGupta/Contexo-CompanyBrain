@@ -52,8 +52,13 @@ TEMPLATE_VARIABLES: list[TemplateVar] = [
     {
         "name": "ctc",
         "label": "CTC (formatted)",
-        "description": "Cost-to-company, pre-formatted with currency (e.g. 'INR 20,00,000.00').",
-        "example": "INR 20,00,000.00",
+        # Thousands-grouped, not lakh-grouped: `render_context` formats this
+        # with Python's `,` separator. The example must match what actually
+        # renders — it previously claimed Indian lakh grouping the code has
+        # never produced, which is exactly the kind of quiet lie a preview is
+        # supposed to catch.
+        "description": "Cost-to-company, pre-formatted with currency (e.g. 'INR 2,000,000.00').",
+        "example": "INR 2,000,000.00",
     },
     {
         "name": "ctc_amount",
@@ -175,13 +180,7 @@ def get_variable_by_name(name: str) -> TemplateVar | None:
     return None
 
 
-# Sample context used for template previews and for the analyzer's
-# dry-run validation. Mirrors what `_build_render_context` produces at runtime
-# but with stable, obviously-fake values so a preview is never mistaken for a
-# real document.
-PREVIEW_SAMPLE_CONTEXT: dict[str, object] = {
-    **{v["name"]: v["example"] for v in TEMPLATE_VARIABLES},
-    "ctc_amount": 2_000_000.0,
-    "probation_period_months": 3,
-    "ctc_breakdown": {"basic": 1_000_000, "hra": 500_000, "special_allowance": 500_000},
-}
+# NOTE: the sample/preview context used to live here as a second hand-written
+# dict, which drifted from what the agent actually renders. It is now derived
+# from the real builder — see `render_context.sample_render_context()`. Import
+# it from there; do not reintroduce a copy in this module.
