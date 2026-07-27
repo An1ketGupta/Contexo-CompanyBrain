@@ -886,7 +886,7 @@ def _export_filename(prefix: str, identifier: str) -> str:
     stamp = re.sub(r"[^0-9]", "", datetime.now(UTC).isoformat(timespec="seconds"))
     # Trim the identifier to avoid producing 200-char filenames on Windows.
     short_id = identifier.replace("-", "")[:8]
-    return f"nirnayaiq-{prefix}-{short_id}-{stamp}.zip"
+    return f"contexo-{prefix}-{short_id}-{stamp}.zip"
 
 
 def _too_many_exports(used: int, limit: int, seconds_until_reset: int) -> HTTPException:

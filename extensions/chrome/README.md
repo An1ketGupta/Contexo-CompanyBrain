@@ -1,6 +1,6 @@
-# Nirnaya IQ — Chrome Extension
+# Contexo — Chrome Extension
 
-Side-panel client for the Nirnaya IQ knowledge base. Built with Manifest V3,
+Side-panel client for the Contexo knowledge base. Built with Manifest V3,
 Chrome's native `sidePanel` API, React 18, and Vite + CRXJS.
 
 ## Architecture (1-minute overview)

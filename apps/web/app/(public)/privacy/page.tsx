@@ -16,7 +16,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Privacy Policy",
   description:
-    "How NirnayaIQ collects, processes, and protects your personal and workspace data.",
+    "How Contexo collects, processes, and protects your personal and workspace data.",
 };
 
 const EFFECTIVE_DATE = "Pending — set once final copy is reviewed.";
@@ -41,7 +41,7 @@ export default function PrivacyPolicyPage() {
       <div className="space-y-10 leading-relaxed text-foreground">
         <Section title="1. Who we are">
           <p>
-            NirnayaIQ (&ldquo;<strong>we</strong>&rdquo;, &ldquo;<strong>us</strong>
+            Contexo (&ldquo;<strong>we</strong>&rdquo;, &ldquo;<strong>us</strong>
             &rdquo;) operates a multi-tenant SaaS work execution platform that
             ingests workspace knowledge bases and assists employees with AI-powered
             outputs. This Privacy Policy explains what personal data we process,

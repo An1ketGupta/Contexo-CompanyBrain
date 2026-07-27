@@ -68,6 +68,51 @@ class JinjaScan:
         return self.strategy == STRATEGY_JINJA
 
 
+def find_unbalanced_braces(docx_bytes: bytes) -> list[str]:
+    """Find `{{` that is never closed, and stray `}}`.
+
+    The nastiest malformed-tag variant, and invisible to `JINJA_SPAN_RE` — which
+    needs a closing `}}` to match at all, so an unclosed tag produces *no* match
+    and the document looks clean.
+
+    It is also the most destructive. Jinja reads the document as one string, so an
+    unclosed `{{` doesn't fail where it sits: it keeps scanning across paragraph
+    boundaries for a `}}` and swallows whatever prose follows, then reports a
+    syntax error naming an innocent word from a completely different sentence.
+    That is precisely the `got 'signing'` failure this module was written for —
+    the culprit was a truncated `{{ juri` several paragraphs earlier.
+    """
+    doc = Document(io.BytesIO(docx_bytes))
+    problems: list[str] = []
+    for paragraph, _kind in canonical_paragraphs(doc):
+        text = paragraph_run_text(paragraph)
+        if "{{" not in text and "}}" not in text:
+            continue
+        # Walk the paragraph, pairing each `{{` with the next `}}`.
+        pos = 0
+        while True:
+            open_at = text.find("{{", pos)
+            if open_at == -1:
+                break
+            close_at = text.find("}}", open_at + 2)
+            next_open = text.find("{{", open_at + 2)
+            if close_at == -1 or (next_open != -1 and next_open < close_at):
+                snippet = text[open_at:open_at + 40].strip()
+                problems.append(
+                    f"'{snippet}' is never closed — add the missing '}}}}'. "
+                    "An unclosed placeholder swallows the text after it and "
+                    "breaks the whole document, not just this line."
+                )
+                pos = open_at + 2
+                continue
+            pos = close_at + 2
+        if text.count("}}") > text.count("{{"):
+            problems.append(
+                f"Stray '}}}}' with no opening '{{{{' near: {text[:60].strip()!r}"
+            )
+    return problems
+
+
 def extract_jinja_tags(docx_bytes: bytes) -> list[str]:
     """Every `{{ ... }}` span in the document, body + tables + headers/footers.
 
@@ -133,10 +178,22 @@ def classify_template(docx_bytes: bytes) -> JinjaScan:
     candidate's document is being generated.
     """
     tags = extract_jinja_tags(docx_bytes)
-    if not tags:
+    unbalanced = find_unbalanced_braces(docx_bytes)
+
+    if not tags and not unbalanced:
         return JinjaScan(strategy=STRATEGY_SLOTS)
 
+    if not tags:
+        # Only broken braces, no usable tags — needs blank detection, and HR
+        # needs to hear about the broken ones.
+        return JinjaScan(
+            strategy=STRATEGY_MIXED_INVALID, tags=[], errors=unbalanced
+        )
+
     errors, referenced = validate_jinja_tags(tags)
+    # An unclosed brace makes the document unparseable no matter how many of the
+    # *other* tags are individually fine, so it must veto the `jinja` verdict.
+    errors = unbalanced + errors
     known = set(get_variable_names())
     unknown = sorted({v for v in referenced if v not in known})
 

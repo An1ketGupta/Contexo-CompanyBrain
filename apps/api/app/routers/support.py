@@ -30,7 +30,7 @@ from app.auth import verify_jwt
 from app.database import get_user_client
 from app.inngest import get_inngest_client
 from app.observability import get_logger
-from app.services.integrations import gmail
+from app.services.integrations import gmail, support_mailbox
 
 log = get_logger(__name__)
 
@@ -164,7 +164,12 @@ async def update_settings(
 @router.get("/settings/senders")
 async def list_connectable_senders(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
     """Org members with a Gmail connection that has send permission —
-    candidates for support_settings.sender_user_id."""
+    candidates for support_settings.sender_user_id.
+
+    This is the fallback sender, used only when the org hasn't connected a
+    support mailbox. Replies then come from a person's own address rather than
+    the address the customer wrote to.
+    """
     org_id, client = await _require_admin(current_user)
     rows = await asyncio.to_thread(
         lambda: client.table("gmail_integrations")
@@ -255,11 +260,13 @@ async def regenerate_draft(
 async def send_reply(
     ticket_id: str, payload: SendReplyRequest, current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
-    """Sends a (possibly rep-edited) reply. v1 only sends through a connected,
-    send-scoped Gmail mailbox (support_settings.sender_user_id) — there is no
-    safe way to send *as* a customer's own domain when they're only using the
-    forward-to-brain inbound address, so those orgs get a clear error here
-    rather than a silently spoofed From header."""
+    """Sends a (possibly rep-edited) reply.
+
+    Prefers the org's support mailbox so the reply comes from the address the
+    customer wrote to; falls back to support_settings.sender_user_id for orgs
+    using the forwarding address instead. With neither, this 409s rather than
+    silently spoofing a From header on a domain we don't control.
+    """
     org_id, client = await _require_admin(current_user)
 
     ticket = await asyncio.to_thread(
@@ -270,25 +277,37 @@ async def send_reply(
     if not ticket or not ticket.data:
         raise HTTPException(status_code=404, detail="Ticket not found.")
 
-    settings = await asyncio.to_thread(
-        lambda: client.table("support_settings")
-        .select("sender_user_id").eq("org_id", org_id).maybe_single().execute()
-    )
-    sender_user_id = (settings.data or {}).get("sender_user_id") if settings and settings.data else None
-    if not sender_user_id:
+    creds = await support_mailbox.get_credentials(org_id=org_id)
+    if creds and not gmail.has_send_scope(creds.get("scopes")):
         raise HTTPException(
             status_code=409,
-            detail="No support mailbox connected. Connect a Gmail account with "
-                   "send permission under Support settings, then try again.",
+            detail="The connected support mailbox no longer has send permission. "
+                   "Reconnect it under Support settings.",
         )
 
-    creds = await gmail.get_user_credentials(org_id=org_id, user_id=sender_user_id)
-    if not creds or not gmail.has_send_scope(creds.get("scopes")):
-        raise HTTPException(
-            status_code=409,
-            detail="Connected support mailbox no longer has send permission. "
-                   "Reconnect Gmail under Support settings.",
+    if not creds:
+        settings = await asyncio.to_thread(
+            lambda: client.table("support_settings")
+            .select("sender_user_id").eq("org_id", org_id).maybe_single().execute()
         )
+        sender_user_id = (
+            (settings.data or {}).get("sender_user_id")
+            if settings and settings.data
+            else None
+        )
+        if not sender_user_id:
+            raise HTTPException(
+                status_code=409,
+                detail="No support mailbox connected. Connect one under Support "
+                       "settings, then try again.",
+            )
+        creds = await gmail.get_user_credentials(org_id=org_id, user_id=sender_user_id)
+        if not creds or not gmail.has_send_scope(creds.get("scopes")):
+            raise HTTPException(
+                status_code=409,
+                detail="The fallback sending mailbox no longer has send permission. "
+                       "Reconnect Gmail under Settings → Integrations.",
+            )
 
     t = ticket.data
     subject = payload.subject or (

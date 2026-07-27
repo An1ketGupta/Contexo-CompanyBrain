@@ -5,7 +5,7 @@ order: 3
 tags: [pdf, docx, xlsx, pptx, txt, md, html, csv, files, formats]
 ---
 
-Nirnaya IQ accepts the following file types:
+Contexo accepts the following file types:
 
 | Format | Extension | Notes |
 |--------|-----------|-------|

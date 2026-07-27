@@ -49,7 +49,7 @@ class SignPrefill(BaseModel):
     """What the /sign/{token} page needs to embed Documenso's signer.
 
     The signing UI is Documenso's, rendered by @documenso/embed-react in an
-    iframe against `documenso_host` with `documenso_token`. NirnayaIQ no longer
+    iframe against `documenso_host` with `documenso_token`. Contexo no longer
     collects the signature itself — hence no preview_url / submit models here.
     """
     envelope_id: str

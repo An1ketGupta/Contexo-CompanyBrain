@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Brain, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
+import { Logo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -128,13 +129,8 @@ export default function LoginPage() {
     <main className="flex min-h-screen items-center justify-center bg-muted p-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
-          <div className="mb-4 flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-primary text-primary-foreground">
-              <Brain className="h-5 w-5" />
-            </span>
-            <span className="text-lg font-extrabold tracking-tight text-foreground">
-              Nirnaya IQ
-            </span>
+          <div className="mb-4 flex items-center">
+            <Logo height={26} />
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight text-foreground">
             Welcome back

@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # App
-    app_name: str = "Nirnaya IQ API"
+    app_name: str = "Contexo API"
     app_version: str = "0.1.0"
     debug: bool = False
     environment: str = "development"
@@ -71,7 +71,7 @@ class Settings(BaseSettings):
 
     # ── Email (Resend + React Email via internal Next.js render route) ──────
     resend_api_key: str = ""
-    email_from: str = "NirnayaIQ <onboarding@resend.dev>"
+    email_from: str = "Contexo <onboarding@resend.dev>"
     # The Next.js app exposes POST /api/internal/email/render. In dev this is
     # http://localhost:3000; in prod, set EMAIL_RENDER_URL to the deployed URL.
     email_render_url: str = "http://localhost:3000/api/internal/email/render"
@@ -143,6 +143,12 @@ class Settings(BaseSettings):
     # rejects the "google_workspace" state with a provider mismatch.
     google_workspace_oauth_redirect_uri: str = (
         "http://localhost:8000/integrations/google-workspace/callback"
+    )
+    # The support mailbox (org-level, gmail.readonly + gmail.send) is a third
+    # distinct flow for the same reason: its callback mints a
+    # "support_mailbox" state that gmail_callback would reject.
+    support_mailbox_oauth_redirect_uri: str = (
+        "http://localhost:8000/integrations/support-mailbox/callback"
     )
 
     # Notion — create an integration at https://notion.so/my-integrations

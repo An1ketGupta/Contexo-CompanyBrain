@@ -5,7 +5,7 @@ order: 7
 tags: [api, keys, developer, http, integration, webhook]
 ---
 
-The Nirnaya IQ API lets you query your knowledge base and ingest documents from any system that can speak HTTP. It's available on Team and Business plans.
+The Contexo API lets you query your knowledge base and ingest documents from any system that can speak HTTP. It's available on Team and Business plans.
 
 ## Get an API key
 

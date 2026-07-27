@@ -24,8 +24,8 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Nirnaya IQ",
-    template: "%s | Nirnaya IQ",
+    default: "Contexo",
+    template: "%s | Contexo",
   },
   description:
     "Your company's AI-powered brain. Centralize all company knowledge and execute any work task with full context.",

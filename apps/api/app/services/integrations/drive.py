@@ -476,7 +476,7 @@ async def list_folders(
 
     Used by the settings UI's folder picker. Returns at most `page_size`
     folders, sorted by Drive's relevance ranking. We include items from shared
-    drives so workspaces with Team Drives aren't filtered out — most NirnayaIQ
+    drives so workspaces with Team Drives aren't filtered out — most Contexo
     customers keep their canonical docs in a shared drive, not My Drive.
     """
     creds = await get_org_credentials(org_id)

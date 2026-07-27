@@ -46,14 +46,14 @@ export function OnboardingWelcomeEmail({
           </Button>
         ) : null}
         <Button href={`${app_url}`} style={secondaryButton}>
-          Sign in to Nirnaya IQ
+          Sign in to Contexo
         </Button>
       </Section>
 
       <Hr style={hr} />
 
       <Text style={muted}>
-        You can talk to Nirnaya IQ anytime — ask anything about company
+        You can talk to Contexo anytime — ask anything about company
         policies, projects, or who to reach out to. Your manager will be in
         touch to walk you through the first week.
       </Text>

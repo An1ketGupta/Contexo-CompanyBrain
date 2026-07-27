@@ -76,6 +76,9 @@ from app.routers import (
     support as support_router,
 )
 from app.routers import (
+    support_mailbox_router,
+)
+from app.routers import (
     scheduled_reports as scheduled_reports_router,
 )
 from app.routers import (
@@ -256,6 +259,7 @@ app.include_router(time_savings_router.router)
 app.include_router(approvals_router.router)
 app.include_router(compliance_router.router)
 app.include_router(support_router.router)
+app.include_router(support_mailbox_router.router)
 app.include_router(notifications_router.router)
 app.include_router(internal_router.router)
 app.include_router(scheduled_reports_router.router)

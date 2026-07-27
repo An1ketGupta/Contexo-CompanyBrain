@@ -217,7 +217,7 @@ async def get_user_token(*, org_id: str, user_id: str) -> str | None:
 async def get_user_email(*, org_id: str, user_id: str) -> str | None:
     """Returns the Google-side email for this connection. Used as the From:
     address on Gmail send paths so we always send-from the authenticated
-    mailbox (not the org's NirnayaIQ login email)."""
+    mailbox (not the org's Contexo login email)."""
     svc = get_service_client()
     row = await asyncio.to_thread(
         lambda: svc.table("integrations")

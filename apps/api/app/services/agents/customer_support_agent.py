@@ -24,11 +24,13 @@ model. Steps:
                               negative sentiment and zero sources always
                               escalate to a human, regardless of mode.
   6. send                     Only reached for autonomous-eligible replies.
-                              Requires a connected, send-scoped Gmail
-                              mailbox (support_settings.sender_user_id) —
-                              orgs without one get a draft-only ticket, no
-                              other channel is used to avoid spoofing a
-                              domain we don't control.
+                              Sends from the org's support mailbox when one is
+                              connected (so the reply comes from the address
+                              the customer wrote to), otherwise from
+                              support_settings.sender_user_id. Orgs with
+                              neither get a draft-only ticket — no other
+                              channel is used, to avoid spoofing a domain we
+                              don't control.
 """
 from __future__ import annotations
 
@@ -40,7 +42,7 @@ from typing import Any
 from app.database import get_service_client
 from app.observability import get_logger
 from app.services.agents.base_agent import BaseAgent
-from app.services.integrations import gmail
+from app.services.integrations import gmail, support_mailbox
 from app.services.integrations import slack as slack_service
 from app.services.llm import Message, get_llm_client
 from app.services.llm.task_chain import execute_task_blocking
@@ -356,15 +358,35 @@ class CustomerSupportAgent(BaseAgent):
     async def _escalate(self, svc: Any, ticket_id: str, *, reason: str) -> None:
         await self._mark_pending_review(svc, ticket_id, notify=None, escalation_reason=reason)
 
+    async def _resolve_sender(self, settings: dict[str, Any]) -> dict[str, Any] | None:
+        """Credentials for the reply's From address.
+
+        The org's support mailbox wins: replying from the address the customer
+        wrote to keeps the thread intact and keeps their response coming back
+        into the polled inbox. `sender_user_id` is the fallback for orgs using
+        the forwarding address instead of a connected mailbox — replies then
+        come from a person, and follow-ups land in that person's inbox.
+        """
+        creds = await support_mailbox.get_credentials(org_id=self.org_id)
+        if creds and gmail.has_send_scope(creds.get("scopes")):
+            return creds
+
+        sender_user_id = settings.get("sender_user_id")
+        if not sender_user_id:
+            return None
+        creds = await gmail.get_user_credentials(
+            org_id=self.org_id, user_id=sender_user_id
+        )
+        if creds and gmail.has_send_scope(creds.get("scopes")):
+            return creds
+        return None
+
     async def _send_draft(
         self, svc: Any, *, ticket_id: str, settings: dict[str, Any],
         draft_message_id: str, body: str,
     ) -> bool:
-        sender_user_id = settings.get("sender_user_id")
-        if not sender_user_id:
-            return False
-        creds = await gmail.get_user_credentials(org_id=self.org_id, user_id=sender_user_id)
-        if not creds or not gmail.has_send_scope(creds.get("scopes")):
+        creds = await self._resolve_sender(settings)
+        if not creds:
             return False
 
         from datetime import UTC, datetime

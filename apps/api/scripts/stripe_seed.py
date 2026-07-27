@@ -62,7 +62,7 @@ class PlanSpec:
 PLANS: tuple[PlanSpec, ...] = (
     PlanSpec(
         plan="starter",
-        product_name="NirnayaIQ — Starter",
+        product_name="Contexo — Starter",
         product_description="For small teams getting started with company-context AI.",
         monthly_cents=6900,    # $69.00/mo
         annual_cents=66500,    # $665.00/yr (~20% off $828.00)
@@ -72,7 +72,7 @@ PLANS: tuple[PlanSpec, ...] = (
     ),
     PlanSpec(
         plan="team",
-        product_name="NirnayaIQ — Team",
+        product_name="Contexo — Team",
         product_description="For growing teams that need shared knowledge + collaboration.",
         monthly_cents=14900,   # $149.00/mo
         annual_cents=144000,   # $1,440.00/yr (~20% off $1,548)
@@ -82,7 +82,7 @@ PLANS: tuple[PlanSpec, ...] = (
     ),
     PlanSpec(
         plan="business",
-        product_name="NirnayaIQ — Business",
+        product_name="Contexo — Business",
         product_description="Unlimited usage, all integrations, priority support.",
         monthly_cents=34900,   # $349.00/mo
         annual_cents=335000,   # $3,350.00/yr (~20% off $4,296)

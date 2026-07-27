@@ -58,7 +58,7 @@ export function ApprovalReminderEmail({
       <Text style={muted}>
         Prefer to open the app?{" "}
         <a href={web_url} style={link}>
-          Review in Nirnaya IQ
+          Review in Contexo
         </a>
         .
       </Text>

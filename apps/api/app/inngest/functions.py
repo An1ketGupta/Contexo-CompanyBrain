@@ -793,24 +793,24 @@ async def recompute_document_health_fn(ctx: inngest.Context) -> dict[str, Any]:
 
 _DEFAULT_AI_INSTRUCTIONS: dict[str, str] = {
     "hr_policies": (
-        "This organization uses Nirnaya IQ primarily for HR / People Ops "
+        "This organization uses Contexo primarily for HR / People Ops "
         "questions. Quote the exact policy when possible, cite the document "
         "it came from, and never speculate about pay, benefits, or legal "
         "matters where the answer isn't in the retrieved context."
     ),
     "sales_enablement": (
-        "This organization uses Nirnaya IQ for sales enablement. Outputs "
+        "This organization uses Contexo for sales enablement. Outputs "
         "should be persuasive, customer-focused, and grounded in the product "
         "positioning, pricing, and objection-handling docs we've uploaded."
     ),
     "customer_support": (
-        "This organization uses Nirnaya IQ for customer support. Replies "
+        "This organization uses Contexo for customer support. Replies "
         "should be empathetic, solution-focused, and reference the support "
         "policies and runbooks we've uploaded. Avoid making promises about "
         "refunds or SLAs that aren't already documented."
     ),
     "engineering": (
-        "This organization uses Nirnaya IQ for engineering. Outputs should "
+        "This organization uses Contexo for engineering. Outputs should "
         "be precise, technical, and reference the runbooks, postmortems, and "
         "architecture docs we've uploaded. Prefer terse, actionable answers."
     ),

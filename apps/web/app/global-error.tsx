@@ -38,9 +38,17 @@ export default function GlobalError({
         }}
       >
         <div style={{ maxWidth: 420, padding: 24, textAlign: "center" }}>
-          <div style={{ fontSize: 12, color: "#737373", letterSpacing: 1 }}>
-            Nirnaya IQ
-          </div>
+          {/* Plain <img> rather than the shared <Logo>: this boundary replaces
+              the root layout, so globals.css is not guaranteed to be applied
+              and any Tailwind-driven theme swap would be a no-op. The sheet is
+              light-locked, so the dark-ink wordmark is always correct. */}
+          <img
+            src="/logo-wordmark.png"
+            alt="Contexo"
+            width={81}
+            height={16}
+            style={{ display: "block", margin: "0 auto", height: 16, width: "auto" }}
+          />
           <h1
             style={{
               fontSize: 22,

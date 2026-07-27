@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Brain, Menu } from "lucide-react";
+import { Menu } from "lucide-react";
+import { Logo } from "@/components/brand/logo";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { SidebarNav } from "./sidebar-nav";
@@ -27,12 +28,9 @@ export function MobileHeader() {
           <Link
             href="/chat"
             onClick={() => setOpen(false)}
-            className="flex h-14 items-center gap-2 border-b border-border px-5"
+            className="flex h-14 items-center border-b border-border px-5"
           >
-            <Brain className="h-5 w-5 text-primary" />
-            <span className="text-sm font-semibold tracking-tight">
-              Nirnaya IQ
-            </span>
+            <Logo height={17} />
           </Link>
           <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto py-2">
             <SidebarNav onNavigate={() => setOpen(false)} />
@@ -46,11 +44,8 @@ export function MobileHeader() {
         </SheetContent>
       </Sheet>
 
-      <Link href="/chat" className="flex items-center gap-2">
-        <Brain className="h-5 w-5 text-primary" />
-        <span className="text-sm font-semibold tracking-tight">
-          Nirnaya IQ
-        </span>
+      <Link href="/chat" className="flex items-center">
+        <Logo height={17} />
       </Link>
 
       <NotificationBell />

@@ -491,7 +491,7 @@ function SlackSetupCard({
       ? "Every requisition you publish drops a one-line announcement into one Slack channel. Pick that channel once — every publish after that posts automatically."
       : variant === "no-channel"
         ? "Choose the Slack channel where new openings should be announced. Set this once; every published requisition posts there."
-        : `NirnayaIQ can no longer post to #${status.channel_name || "the configured channel"}. Re-invite the bot, or pick a different channel.`;
+        : `Contexo can no longer post to #${status.channel_name || "the configured channel"}. Re-invite the bot, or pick a different channel.`;
 
   const cta =
     variant === "channel-broken" ? "Pick a different channel" : "Set up Slack";
@@ -552,7 +552,7 @@ function NotionSetupCard({
       ? "Every requisition you publish creates a child page under one Notion parent. Pick that parent once — every tracker after that nests automatically."
       : variant === "no-parent"
         ? "Choose the Notion page where all hiring trackers should live. You'll set this once; every published requisition will create a child page under it."
-        : `NirnayaIQ can no longer write to "${status.parent_title || "the previous parent"}". Either re-share the page in Notion, or pick a different parent.`;
+        : `Contexo can no longer write to "${status.parent_title || "the previous parent"}". Either re-share the page in Notion, or pick a different parent.`;
 
   const cta =
     variant === "parent-broken" ? "Pick a different parent" : "Set up Notion";

@@ -122,7 +122,7 @@ async def _build_sources_attachment(
     lines: list[str] = []
     lines.append("SOURCE MATERIAL")
     lines.append(
-        "Retrieved from the company knowledge base by NirnayaIQ and used to "
+        "Retrieved from the company knowledge base by Contexo and used to "
         "ground the email you just received."
     )
     lines.append(f"Generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")

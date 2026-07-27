@@ -12,6 +12,7 @@ import {
   XCircle,
 } from "lucide-react";
 
+import { Logo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -123,9 +124,7 @@ export default function MagicLinkApprovalPage() {
     <div className="min-h-screen bg-muted/30 px-4 py-12">
       <div className="mx-auto max-w-xl rounded-lg border bg-card p-8 shadow-sm">
         <div className="mb-6 border-b pb-4">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Nirnaya IQ
-          </p>
+          <Logo height={15} />
           <h1 className="mt-1 text-xl font-semibold tracking-tight">
             {resolved
               ? resolved === "approved"

@@ -410,7 +410,7 @@ def _maybe_inject_error(force_status: str | None) -> None:
 
 
 app = FastAPI(
-    title="NirnayaIQ Mock ATS",
+    title="Contexo Mock ATS",
     description=(
         "Stand-in for Greenhouse Harvest, Lever Postings, Ashby Public API. "
         "Dev/CI use only — see module docstring for setup."

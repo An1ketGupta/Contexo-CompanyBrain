@@ -94,8 +94,8 @@ export default function SignDocumentPage() {
   }
 
   return (
-    <section className="mx-auto max-w-3xl px-4 py-12">
-      <div className="mb-8 flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-4">
+    <section className="mx-auto max-w-5xl px-4 py-8">
+      <div className="mb-5 flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-4">
         <ShieldCheck className="h-5 w-5 shrink-0 text-foreground" />
         <p className="text-xs text-muted-foreground">
           You&apos;re signing as{" "}
@@ -111,9 +111,15 @@ export default function SignDocumentPage() {
       {/* Documenso's signer, embedded on our domain. `host` targets the
           self-hosted instance; `token` is this recipient's signing token from
           the esign adapter's prefill. Completion is finalised server-side via
-          the Documenso webhook — this callback only advances the UI. */}
-      <div className="mt-6 overflow-hidden rounded-md border border-border">
+          the Documenso webhook — this callback only advances the UI.
+
+          The embed forwards className straight to its <iframe> and sets no
+          dimensions of its own, so without an explicit size it collapses to
+          the 300x150 browser default. Height is the viewport minus this
+          page's chrome, floored so short windows still show a usable page. */}
+      <div className="mt-5 overflow-hidden rounded-md border border-border bg-background">
         <EmbedSignDocument
+          className="block h-[calc(100dvh-16rem)] min-h-[560px] w-full border-0"
           host={prefill.documenso_host}
           token={prefill.documenso_token}
           onDocumentCompleted={() => setCompleted(true)}

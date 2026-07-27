@@ -5,7 +5,7 @@ order: 9
 tags: [dark mode, light mode, theme, settings, appearance, system]
 ---
 
-Nirnaya IQ supports light, dark, and system themes. Your choice is stored per-device — switching themes on your laptop won't affect what you see on your phone.
+Contexo supports light, dark, and system themes. Your choice is stored per-device — switching themes on your laptop won't affect what you see on your phone.
 
 ## Change the theme
 
@@ -24,7 +24,7 @@ The very first paint shows the default theme before the saved choice loads. We m
 
 ## Reduce motion
 
-Dark mode is purely visual — it doesn't affect animations. If you also want to reduce motion (transitions, slides), set **Reduce Motion** in your operating system; Nirnaya IQ respects the system setting and disables non-essential animations automatically.
+Dark mode is purely visual — it doesn't affect animations. If you also want to reduce motion (transitions, slides), set **Reduce Motion** in your operating system; Contexo respects the system setting and disables non-essential animations automatically.
 
 ## High-contrast / accessibility
 

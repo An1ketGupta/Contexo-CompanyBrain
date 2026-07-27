@@ -1,4 +1,4 @@
-"""Client for apps/esign — NirnayaIQ's signing service.
+"""Client for apps/esign — Contexo's signing service.
 
 apps/esign is now a thin *adapter* in front of self-hosted **Documenso**
 (migration 090; it previously did in-house PyMuPDF stamping, migration 082).

@@ -1,4 +1,4 @@
-# NirnayaIQ — CLAUDE.md
+# Contexo — CLAUDE.md
 
 ## What This Is
 

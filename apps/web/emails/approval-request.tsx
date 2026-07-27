@@ -66,7 +66,7 @@ export function ApprovalRequestEmail({
 
       <Text style={muted}>
         Approve & Reject use a one-click signed link that expires in 7 days.
-        Prefer to open Nirnaya IQ?{" "}
+        Prefer to open Contexo?{" "}
         <a href={web_url} style={link}>
           View in app
         </a>

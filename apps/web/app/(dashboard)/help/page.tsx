@@ -39,7 +39,7 @@ export default function HelpCenterPage() {
         <p className="text-[13px] font-bold text-brand">HELP CENTER</p>
         <h1 className="mt-1 text-3xl font-extrabold tracking-tight">How can we help?</h1>
         <p className="mx-auto mt-1 max-w-[64ch] text-[15px] leading-relaxed text-muted-foreground">
-          Answers to common questions about Nirnaya IQ.
+          Answers to common questions about Contexo.
         </p>
       </header>
 

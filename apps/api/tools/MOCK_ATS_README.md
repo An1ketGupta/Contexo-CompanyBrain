@@ -68,7 +68,7 @@ A clean run prints:
 ## End-to-end demo (full product loop against mock)
 
 1. Mock running on `:8001`, env vars set, FastAPI restarted
-2. In NirnayaIQ web UI: **Settings → Integrations → Greenhouse (or Lever / Ashby) → Connect**
+2. In Contexo web UI: **Settings → Integrations → Greenhouse (or Lever / Ashby) → Connect**
 3. Paste **any non-empty string** as the API key (mock accepts everything — it's not a security boundary)
 4. Backend calls the mock's `test_connection` endpoint → 200 → credential stored → mapping cache warmed
 5. **Recruiting → New requisition** → fill role / location / department / seniority → generate

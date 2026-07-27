@@ -429,7 +429,7 @@ function EmptyState() {
       <p className="mt-3 text-sm font-medium">No meeting summaries yet</p>
       <p className="mt-1 text-xs text-muted-foreground">
         Upload a Zoom <code>.vtt</code>, Teams transcript JSON, or Google Meet{" "}
-        <code>.txt</code> transcript and Nirnaya IQ will extract attendees,
+        <code>.txt</code> transcript and Contexo will extract attendees,
         decisions, and action items automatically.
       </p>
       <div className="mt-4 flex justify-center">

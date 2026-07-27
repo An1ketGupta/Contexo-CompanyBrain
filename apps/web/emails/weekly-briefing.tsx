@@ -44,7 +44,7 @@ export function WeeklyBriefingEmail({
 
       <Section style={{ margin: "24px 0 12px 0" }}>
         <Button href={briefing_url} style={button}>
-          Open in NirnayaIQ
+          Open in Contexo
         </Button>
       </Section>
 

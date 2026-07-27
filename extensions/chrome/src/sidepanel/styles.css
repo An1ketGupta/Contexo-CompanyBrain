@@ -55,18 +55,17 @@ body,
   gap: 8px;
 }
 
-.cb-logo-dot {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--cb-indigo);
-  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15);
+/* Served from public/ at the extension root, so the path is absolute. The
+   side panel is light-only, so the dark-ink wordmark is the only variant
+   the extension needs to ship. */
+.cb-logo {
+  display: block;
+  height: 18px;
+  width: auto;
 }
 
-.cb-brand-text,
 .cb-brand h1 {
-  font-size: 13px;
-  font-weight: 600;
+  display: flex;
   margin: 0;
 }
 

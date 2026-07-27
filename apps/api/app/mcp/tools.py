@@ -96,7 +96,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "name": "list_agents",
         "description": (
-            "List available NirnayaIQ background agents that can be triggered "
+            "List available Contexo background agents that can be triggered "
             "via the run_agent tool. Returns each agent's type, description, "
             "and input schema."
         ),
@@ -105,7 +105,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "name": "run_agent",
         "description": (
-            "Trigger a NirnayaIQ background agent. Returns the agent_run_id; "
+            "Trigger a Contexo background agent. Returns the agent_run_id; "
             "the caller polls the company's web UI to inspect the result, or "
             "the agent posts its output to the configured channel."
         ),

@@ -6,4 +6,6 @@ import uvicorn
 ESIGN_DEV_PORT = 8002
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", reload=True, port=ESIGN_DEV_PORT)
+    # Watch only the app package. Left to its default the reloader watches the
+    # whole cwd — including .venv — and silently stops noticing edits.
+    uvicorn.run("app.main:app", reload=True, reload_dirs=["app"], port=ESIGN_DEV_PORT)

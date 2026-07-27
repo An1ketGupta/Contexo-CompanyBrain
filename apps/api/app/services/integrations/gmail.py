@@ -1,4 +1,4 @@
-"""Gmail Send integration (per-user OAuth).
+"""Gmail Send integration (per-user OAuth) + shared Gmail API helpers.
 
 This module mirrors the shape of `drive.py` (raw httpx — no
 google-api-python-client / google-auth) so the FastAPI image stays light and
@@ -8,11 +8,17 @@ Per-user, not per-org: a Gmail Send call writes from a specific mailbox. The
 authenticated user's mailbox is the only correct sender, so each user authorizes
 separately. Drive remains per-org because Drive ingest is org-level knowledge.
 
+The inbox-reading helpers at the bottom are mailbox-agnostic — they take an
+access token, not a user id — because the caller that needs them is
+`support_mailbox.py`, a separate org-level OAuth flow. Keeping every Gmail
+REST call in one file means one place to audit what we do with mail.
+
 Surface area:
     * build_auth_url() / exchange_code() / store_credentials() / disconnect()
     * get_user_credentials() — fetch + refresh if needed
     * send_email() — Gmail REST users.messages.send
-    * has_send_scope() — read-side scope check for the re-auth banner
+    * has_send_scope() / has_read_scope() — scope checks for the re-auth banner
+    * list_new_inbox_messages() — History-API delta read of any mailbox
 """
 from __future__ import annotations
 
@@ -32,13 +38,21 @@ import markdown as md
 
 from app.config import get_settings
 from app.database import get_service_client
+from app.services.integrations.email_forward import first_address, strip_html
 
 log = logging.getLogger(__name__)
 
 # `openid` + `email` so we can resolve the user's gmail address at install
 # time without a second call. `drive.readonly` is intentionally NOT requested
 # here — Drive owns that scope through its own flow.
+#
+# This per-user flow stays send-only. Reading an inbox is the support
+# mailbox's job (`support_mailbox.py`), which is org-level and connected by an
+# admin — no reason to ask every teammate for read access to their personal
+# mail. `GMAIL_READONLY_SCOPE` lives here because the Gmail API helpers below
+# are shared by both flows.
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 _SCOPES = [
     GMAIL_SEND_SCOPE,
     "openid",
@@ -246,6 +260,10 @@ def has_send_scope(scopes: list[str] | None) -> bool:
     return bool(scopes) and GMAIL_SEND_SCOPE in scopes
 
 
+def has_read_scope(scopes: list[str] | None) -> bool:
+    return bool(scopes) and GMAIL_READONLY_SCOPE in scopes
+
+
 # ── Send ────────────────────────────────────────────────────────────────────
 
 def _build_mime(
@@ -380,3 +398,254 @@ async def send_email(
         "message_id": payload.get("id"),
         "thread_id": payload.get("threadId"),
     }
+
+
+# ── Support-inbox polling ───────────────────────────────────────────────────
+#
+# The org's connected mailbox doubles as the customer support inbox. We read it
+# with the History API rather than listing messages by date: history gives a
+# durable cursor, so a poll tick costs one request when nothing has arrived and
+# we never re-ingest mail we've already turned into tickets.
+
+_GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+
+# Labels that disqualify a message from becoming a ticket. Our own outbound
+# replies (SENT) and half-written drafts must never open a ticket, and we
+# don't triage what Gmail already filed as junk.
+_EXCLUDED_LABELS = frozenset({"SENT", "DRAFT", "SPAM", "TRASH"})
+
+# Per-tick ceiling on messages handled per mailbox. A larger burst isn't
+# dropped — the cursor advances only past what we processed, so the remainder
+# lands on the next tick.
+_MAX_MESSAGES_PER_POLL = 25
+
+# Ceiling on history pages walked per tick, so a mailbox that accumulated a
+# huge backlog while the poller was down can't spin one org's poll forever.
+_MAX_HISTORY_PAGES = 5
+
+# Same cap the forwarding transport applies (`email_forward._MAX_BODY_CHARS`) —
+# the chunker handles overflow but token spend is real.
+_MAX_INBOX_BODY_CHARS = 60_000
+
+
+class GmailNotFound(RuntimeError):
+    """Gmail returned 404 — an expired history cursor, or a message deleted
+    between the history read and the fetch. Callers distinguish by context."""
+
+
+async def _gmail_get(
+    *, access_token: str, path: str, params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        resp = await client.get(
+            f"{_GMAIL_API_BASE}{path}",
+            params=params,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    if resp.status_code == 401:
+        raise PermissionError("gmail_read_unauthorized")
+    if resp.status_code == 403:
+        raise PermissionError("gmail_read_forbidden")
+    if resp.status_code == 404:
+        raise GmailNotFound(f"gmail 404 on {path}")
+    if resp.status_code >= 400:
+        raise RuntimeError(f"gmail {path} failed: {resp.status_code} {resp.text[:200]}")
+    return resp.json()
+
+
+async def _fetch_current_history_id(*, access_token: str) -> str | None:
+    profile = await _gmail_get(access_token=access_token, path="/profile")
+    history_id = profile.get("historyId")
+    return str(history_id) if history_id else None
+
+
+def _header(headers: list[dict[str, Any]] | None, name: str) -> str:
+    wanted = name.lower()
+    for header in headers or []:
+        if (header.get("name") or "").lower() == wanted:
+            return header.get("value") or ""
+    return ""
+
+
+def _decode_b64url(data: str) -> str:
+    """Gmail returns base64url without padding."""
+    if not data:
+        return ""
+    padded = data + "=" * (-len(data) % 4)
+    try:
+        return base64.urlsafe_b64decode(padded.encode("ascii")).decode(
+            "utf-8", errors="replace"
+        )
+    except (ValueError, TypeError):
+        return ""
+
+
+def _extract_body(payload: dict[str, Any]) -> str:
+    """Depth-first walk of the MIME tree for the message body. text/plain wins;
+    text/html is the fallback with tags stripped. Parts carrying a filename are
+    attachments, not body."""
+    plain: list[str] = []
+    html: list[str] = []
+
+    def walk(part: dict[str, Any]) -> None:
+        if part.get("filename"):
+            return
+        mime = (part.get("mimeType") or "").lower()
+        data = (part.get("body") or {}).get("data") or ""
+        if data and mime == "text/plain":
+            plain.append(_decode_b64url(data))
+        elif data and mime == "text/html":
+            html.append(_decode_b64url(data))
+        for sub in part.get("parts") or []:
+            walk(sub)
+
+    walk(payload or {})
+    if plain:
+        return "\n".join(plain)
+    return strip_html("\n".join(html))
+
+
+async def _collect_added_message_ids(
+    *, access_token: str, start_history_id: str,
+) -> list[tuple[str, str]]:
+    """Walk history pages for messages added to INBOX since the cursor.
+
+    Returns (message_id, history_record_id) pairs in arrival order, deduped.
+    Carrying each record's own id is what lets a partially-processed batch
+    resume exactly where it stopped.
+    """
+    collected: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    page_token: str | None = None
+
+    for _ in range(_MAX_HISTORY_PAGES):
+        params: dict[str, Any] = {
+            "startHistoryId": start_history_id,
+            "historyTypes": "messageAdded",
+            "labelId": "INBOX",
+            "maxResults": 100,
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        payload = await _gmail_get(
+            access_token=access_token, path="/history", params=params
+        )
+        for record in payload.get("history") or []:
+            record_id = str(record.get("id") or start_history_id)
+            for added in record.get("messagesAdded") or []:
+                message = added.get("message") or {}
+                message_id = message.get("id")
+                if not message_id or message_id in seen:
+                    continue
+                if _EXCLUDED_LABELS & set(message.get("labelIds") or []):
+                    continue
+                seen.add(message_id)
+                collected.append((message_id, record_id))
+        page_token = payload.get("nextPageToken")
+        if not page_token:
+            break
+
+    return collected
+
+
+async def _fetch_message_envelope(
+    *, access_token: str, message_id: str,
+) -> dict[str, Any] | None:
+    """Fetch one message and reduce it to the envelope shape the classifier
+    takes. Returns None when the message isn't ticketable material."""
+    payload = await _gmail_get(
+        access_token=access_token,
+        path=f"/messages/{message_id}",
+        params={"format": "full"},
+    )
+    if _EXCLUDED_LABELS & set(payload.get("labelIds") or []):
+        return None
+
+    mime_payload = payload.get("payload") or {}
+    headers = mime_payload.get("headers") or []
+    from_raw = _header(headers, "From")
+    body = _extract_body(mime_payload).strip()[:_MAX_INBOX_BODY_CHARS]
+
+    return {
+        "message_id": message_id,
+        "from_email": first_address(from_raw),
+        "from_raw": from_raw,
+        "subject": _header(headers, "Subject").strip()[:200],
+        "body": body,
+    }
+
+
+def _is_ticketable(envelope: dict[str, Any], *, mailbox_email: str) -> bool:
+    if not (envelope.get("body") or "").strip():
+        return False
+    from_email = envelope.get("from_email") or ""
+    if not from_email:
+        return False
+    # A reply we sent ourselves (or self-addressed test mail) must not open a
+    # ticket about itself.
+    return from_email != (mailbox_email or "").strip().lower()
+
+
+async def list_new_inbox_messages(
+    *,
+    access_token: str,
+    mailbox_email: str,
+    since_history_id: str | None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Delta-read one mailbox's INBOX.
+
+    Returns (envelopes, next_history_id). The cursor advances only past
+    messages in the returned batch, so anything beyond the per-tick cap is
+    picked up next time rather than skipped.
+
+    `since_history_id=None` bootstraps: record where the mailbox is now and
+    return nothing, so connecting an inbox doesn't convert its entire back
+    catalogue into support tickets.
+    """
+    if not since_history_id:
+        current = await _fetch_current_history_id(access_token=access_token)
+        log.info(
+            "gmail_inbox_bootstrap mailbox=%s history_id=%s", mailbox_email, current
+        )
+        return [], current
+
+    try:
+        pending = await _collect_added_message_ids(
+            access_token=access_token, start_history_id=since_history_id
+        )
+    except GmailNotFound:
+        # Cursor older than Gmail's history retention (~7 days) — the poller
+        # was off, or the mailbox sat idle. Re-bootstrap rather than
+        # crash-looping; we forfeit the gap instead of replaying everything.
+        current = await _fetch_current_history_id(access_token=access_token)
+        log.warning(
+            "gmail_inbox_history_expired mailbox=%s stale=%s reset_to=%s",
+            mailbox_email, since_history_id, current,
+        )
+        return [], current
+
+    envelopes: list[dict[str, Any]] = []
+    cursor = since_history_id
+
+    for message_id, record_history_id in pending[:_MAX_MESSAGES_PER_POLL]:
+        try:
+            envelope = await _fetch_message_envelope(
+                access_token=access_token, message_id=message_id
+            )
+        except GmailNotFound:
+            envelope = None  # Deleted between the history read and the fetch.
+        except Exception as exc:
+            # Leave the cursor at the last message we did handle so this one is
+            # retried next tick instead of silently skipped.
+            log.warning(
+                "gmail_inbox_message_fetch_failed id=%s err=%s", message_id, exc
+            )
+            break
+        if envelope and _is_ticketable(envelope, mailbox_email=mailbox_email):
+            envelopes.append(envelope)
+        cursor = record_history_id
+
+    return envelopes, cursor
+
+
+    return envelopes, cursor

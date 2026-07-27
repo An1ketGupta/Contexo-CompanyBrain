@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import useSWR from "swr";
 import { useCommandPalette } from "./command-palette-context";
+import { Logo } from "@/components/brand/logo";
 import { useCurrentUser } from "@/hooks/use-user";
 import { useShortcutsPanel } from "@/components/ui/shortcuts-panel-context";
 import { networkError, parseApiError } from "@/lib/errors";
@@ -341,7 +342,9 @@ export function CommandPalette() {
                   close
                 </span>
               </div>
-              <span className="hidden sm:inline">Nirnaya IQ</span>
+              <span className="hidden sm:flex">
+                <Logo height={12} className="opacity-70" />
+              </span>
             </div>
           </Command>
         </DialogPrimitive.Content>

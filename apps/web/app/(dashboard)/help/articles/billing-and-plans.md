@@ -5,7 +5,7 @@ order: 8
 tags: [billing, plans, quota, upgrade, pricing, payment, invoice]
 ---
 
-Nirnaya IQ has three plans. You can see your current plan and usage on **Settings → Billing**.
+Contexo has three plans. You can see your current plan and usage on **Settings → Billing**.
 
 ## Plans
 

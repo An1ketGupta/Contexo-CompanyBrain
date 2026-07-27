@@ -507,7 +507,7 @@ class PolicyPropagationAgent(BaseAgent):
             )
         return (
             f":scroll: *New policy — {doc_name}* (v{version_number})\n\n"
-            f"This document has been added to Nirnaya IQ and requires "
+            f"This document has been added to Contexo and requires "
             f"acknowledgement. <{link}|Open document>."
         )
 

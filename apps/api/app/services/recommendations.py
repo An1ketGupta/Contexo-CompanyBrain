@@ -4,7 +4,7 @@ What it does
 ────────────
 Maps each org's `primary_use_case` (collected at enrichment, see migration
 025 + `routers/organizations.py::enrich`) to a curated checklist of
-documents the team will most likely want in Nirnaya IQ. The checklist
+documents the team will most likely want in Contexo. The checklist
 is rendered on the Documents page until enough items are checked off.
 
 Why use_case first (not industry)

@@ -131,7 +131,7 @@ export function EnrichmentModal() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail ?? body.message ?? "Save failed.");
       }
-      toast.success("Thanks! Nirnaya IQ is now tuned for your team.");
+      toast.success("Thanks! Contexo is now tuned for your team.");
       await refresh();
       setOpen(false);
     } catch (err) {
@@ -154,7 +154,7 @@ export function EnrichmentModal() {
         <DialogHeader>
           <DialogTitle>Tell us about your organization</DialogTitle>
           <DialogDescription>
-            Takes 30 seconds. We&apos;ll tune Nirnaya IQ for the way your team
+            Takes 30 seconds. We&apos;ll tune Contexo for the way your team
             uses it.
           </DialogDescription>
         </DialogHeader>

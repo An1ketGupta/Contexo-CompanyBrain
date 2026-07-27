@@ -26,6 +26,17 @@ interface Sender {
   email_address: string;
 }
 
+interface SupportMailbox {
+  available: boolean;
+  connected: boolean;
+  email_address: string | null;
+  has_read_scope: boolean;
+  has_send_scope: boolean;
+  polling_active?: boolean;
+  connected_at?: string | null;
+  last_polled_at?: string | null;
+}
+
 const MODES: {
   value: SupportSettings["mode"];
   label: string;
@@ -51,6 +62,17 @@ const MODES: {
   },
 ];
 
+const OAUTH_ERRORS: Record<string, string> = {
+  support_mailbox_read_scope_not_granted:
+    "Inbox read permission wasn't granted, so the agent can't see incoming mail. Reconnect and allow all requested permissions.",
+  support_mailbox_send_scope_not_granted:
+    "Send permission wasn't granted, so replies can't go out from this address. Reconnect and allow all requested permissions.",
+  support_mailbox_oauth_access_denied: "You declined the Google consent screen.",
+  support_mailbox_oauth_missing_code: "Google didn't return an authorization code. Try again.",
+  support_mailbox_oauth_failed: "Google rejected the authorization. Try again.",
+  support_mailbox_store_failed: "Could not save the connection. Try again.",
+};
+
 const fetcher = async (url: string) => {
   const res = await fetch(url, { cache: "no-store" });
   if (res.status === 403) throw new Error("Admin access required.");
@@ -69,13 +91,35 @@ export default function SupportSettingsPage() {
     fetcher,
     { revalidateOnFocus: false },
   );
+  const { data: mailbox, mutate: mutateMailbox } = useSWR<SupportMailbox>(
+    "/api/integrations/support-mailbox/status",
+    fetcher,
+    { revalidateOnFocus: false },
+  );
 
   const [form, setForm] = useState<SupportSettings | null>(null);
   const [saving, setSaving] = useState(false);
+  const [polling, setPolling] = useState(false);
 
   useEffect(() => {
     if (data && !form) setForm(data);
   }, [data, form]);
+
+  // The OAuth callback bounces back here with ?connected= or ?error=. Report it
+  // and strip the param so a refresh doesn't re-toast.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("connected");
+    const err = params.get("error");
+    if (!connected && !err) return;
+    if (connected === "support_mailbox") {
+      toast.success("Support inbox connected.");
+      void mutateMailbox();
+    } else if (err) {
+      toast.error(OAUTH_ERRORS[err] ?? `Could not connect the support inbox (${err}).`);
+    }
+    window.history.replaceState({}, "", window.location.pathname);
+  }, [mutateMailbox]);
 
   const save = async (patch: Partial<SupportSettings>) => {
     if (!form) return;
@@ -144,7 +188,7 @@ export default function SupportSettingsPage() {
           <div>
             <div className="text-sm font-bold">Enable the support agent</div>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              When off, inbound support email is classified but no tickets or
+              When off, the support inbox isn&apos;t polled and no tickets or
               drafts are created.
             </p>
           </div>
@@ -216,11 +260,133 @@ export default function SupportSettingsPage() {
 
       <section className="rounded-2xl border border-border bg-card p-4">
         <div className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
-          Sending mailbox
+          Support inbox
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          Replies go out from a connected Gmail account with send permission.
-          Without one, drafts are review-and-copy only.
+          Connect the mailbox your customers actually email — support@yourcompany.com.
+          It&apos;s polled for new mail, and replies go back out from the same
+          address so threads hold together. Use a dedicated support account, not
+          a personal one: everything that lands in this inbox is read by the
+          agent.
+        </p>
+
+        {mailbox && !mailbox.available ? (
+          <p className="mt-2 rounded-xl border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
+            Google OAuth isn&apos;t configured on this deploy. Ask your operator
+            to set GOOGLE_CLIENT_ID.
+          </p>
+        ) : mailbox?.connected ? (
+          <div className="mt-2 space-y-2">
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted px-3 py-2">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-bold">
+                  {mailbox.email_address}
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  {mailbox.last_polled_at
+                    ? `Last checked ${new Date(mailbox.last_polled_at).toLocaleString()}`
+                    : "Not polled yet"}
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  disabled={polling}
+                  onClick={async () => {
+                    setPolling(true);
+                    try {
+                      const res = await fetch(
+                        "/api/integrations/support-mailbox/poll",
+                        { method: "POST" },
+                      );
+                      const body = await res.json().catch(() => ({}));
+                      if (!res.ok) {
+                        throw new Error(body.detail ?? `Poll failed (${res.status})`);
+                      }
+                      if (body.status === "ok") {
+                        toast.success(
+                          body.queued > 0
+                            ? `Queued ${body.queued} new email${body.queued === 1 ? "" : "s"}.`
+                            : "Checked — no new mail.",
+                        );
+                      } else {
+                        toast.error(`Skipped: ${body.reason ?? "unknown"}`);
+                      }
+                      await mutateMailbox();
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Poll failed.");
+                    } finally {
+                      setPolling(false);
+                    }
+                  }}
+                  className="rounded-md border border-input px-2 py-1 text-xs font-medium hover:bg-card disabled:opacity-50"
+                >
+                  {polling ? "Checking…" : "Check now"}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (
+                      !confirm(
+                        "Disconnect the support inbox? New customer email will stop being picked up.",
+                      )
+                    )
+                      return;
+                    const res = await fetch("/api/integrations/support-mailbox", {
+                      method: "DELETE",
+                    });
+                    if (!res.ok) return toast.error("Disconnect failed.");
+                    toast.success("Disconnected.");
+                    await mutateMailbox();
+                  }}
+                  className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                >
+                  Disconnect
+                </button>
+              </div>
+            </div>
+
+            {(!mailbox.has_read_scope || !mailbox.has_send_scope) && (
+              <p className="rounded-xl border border-amber/30 bg-amber-tint px-3 py-2 text-xs text-amber-ink">
+                This connection is missing{" "}
+                {!mailbox.has_read_scope ? "inbox read" : "send"} permission, so
+                it can&apos;t{" "}
+                {!mailbox.has_read_scope ? "pick up new mail" : "send replies"}.
+                Reconnect and allow all requested permissions.
+              </p>
+            )}
+
+            {!mailbox.polling_active && mailbox.has_read_scope && (
+              <p className="rounded-xl border border-border bg-muted px-3 py-2 text-[11px] text-muted-foreground">
+                Polling starts from the moment you connected — email that arrived
+                before that won&apos;t appear in the queue.
+              </p>
+            )}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={async () => {
+              const res = await fetch("/api/integrations/support-mailbox/connect");
+              if (!res.ok) return toast.error("Could not start Google OAuth.");
+              const { auth_url } = await res.json();
+              window.location.href = auth_url;
+            }}
+            className="mt-2 rounded-md bg-foreground px-3 py-1.5 text-xs font-bold text-background hover:opacity-90"
+          >
+            Connect support inbox
+          </button>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-4">
+        <div className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+          Fallback sender
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {mailbox?.connected
+            ? "Not in use — replies go out from the support inbox above. This only applies if that inbox is disconnected."
+            : "Without a support inbox, replies go out from a teammate's own Gmail. The customer sees their address, and follow-ups land in that person's inbox rather than the queue."}
         </p>
         {senders.length === 0 ? (
           <p className="mt-2 rounded-xl border border-amber/30 bg-amber-tint px-3 py-2 text-xs text-amber-ink">

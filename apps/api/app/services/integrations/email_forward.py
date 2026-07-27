@@ -7,7 +7,13 @@ finds the matching org, and fans the envelope out to the classifier
 Inngest function which decides between three downstream paths:
 
   knowledge        → existing chunk+embed pipeline as a doc
-  support / sales / internal → drop (no ticket/agent pipeline consumes these)
+  support          → customer support agent (support/ticket-inbound)
+  sales / internal → drop (no pipeline consumes these)
+
+This synthetic address is one of two inbound transports. The other is the
+Gmail inbox poller (`gmail.poll_all_support_inboxes`), which reads the org's
+real support mailbox. Both converge on `fire_classify_event` below, so the
+classifier and agent are transport-agnostic.
 
 Format-agnostic on purpose: as long as the body delivered has at minimum
 `to`, `from`, `subject`, `text` (or `html`), we can classify and route it.
@@ -116,18 +122,18 @@ def parse_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     Either `text` or `html` is acceptable for the body; HTML gets a naive
     tag strip.
     """
-    to = _first_address(payload.get("to") or payload.get("recipient") or "")
+    to = first_address(payload.get("to") or payload.get("recipient") or "")
     from_raw_value = payload.get("from") or payload.get("sender") or ""
     from_raw = from_raw_value[0] if isinstance(from_raw_value, list) and from_raw_value else from_raw_value
     if not isinstance(from_raw, str):
         from_raw = ""
-    from_ = _first_address(from_raw_value)
+    from_ = first_address(from_raw_value)
     subject = (payload.get("subject") or "").strip()[:200]
 
     body_text = (payload.get("text") or "").strip()
     if not body_text:
         body_html = payload.get("html") or payload.get("body-html") or ""
-        body_text = _strip_html(body_html)
+        body_text = strip_html(body_html)
 
     body_text = _WS_RE.sub(" ", body_text).strip()[:_MAX_BODY_CHARS]
     return {
@@ -137,6 +143,43 @@ def parse_envelope(payload: dict[str, Any]) -> dict[str, Any]:
         "subject": subject,
         "body": body_text,
     }
+
+
+async def fire_classify_event(
+    *,
+    org_id: str,
+    from_email: str,
+    from_raw: str | None,
+    subject: str,
+    body: str,
+) -> None:
+    """Queue one inbound email for classification.
+
+    Shared by both inbound transports: the Resend webhook below (which has to
+    resolve the org from the `to` address first) and the Gmail inbox poller in
+    `gmail.py` (which already knows the org). The idempotency key matches the
+    dedupe sig used in the classifier, so the same email arriving twice —
+    including via both transports — won't reroute twice.
+    """
+    sig = hashlib.sha256(f"{subject}\n{body[:256]}".encode()).hexdigest()[:24]
+
+    import inngest
+
+    from app.inngest.client import get_inngest_client
+    client = get_inngest_client()
+    await client.send(
+        inngest.Event(
+            name="support/classify-inbound",
+            data={
+                "org_id": org_id,
+                "from_email": from_email,
+                "from_raw": from_raw,
+                "subject": subject,
+                "body": body,
+            },
+            id=f"classify-{org_id}-{sig}",
+        )
+    )
 
 
 async def ingest_email(envelope: dict[str, Any]) -> dict[str, Any]:
@@ -159,28 +202,12 @@ async def ingest_email(envelope: dict[str, Any]) -> dict[str, Any]:
     if not body.strip():
         return {"status": "ignored", "reason": "empty_body"}
 
-    subject = envelope.get("subject") or "Forwarded email"
-    from_ = envelope.get("from_") or "unknown sender"
-    # Idempotency key matches the dedupe sig used in the classifier —
-    # same forwarded email won't reroute twice.
-    sig = hashlib.sha256(f"{subject}\n{body[:256]}".encode()).hexdigest()[:24]
-
-    import inngest
-
-    from app.inngest.client import get_inngest_client
-    client = get_inngest_client()
-    await client.send(
-        inngest.Event(
-            name="support/classify-inbound",
-            data={
-                "org_id": org["id"],
-                "from_email": from_,
-                "from_raw": envelope.get("from_raw"),
-                "subject": subject,
-                "body": body,
-            },
-            id=f"classify-{org['id']}-{sig}",
-        )
+    await fire_classify_event(
+        org_id=org["id"],
+        from_email=envelope.get("from_") or "unknown sender",
+        from_raw=envelope.get("from_raw"),
+        subject=envelope.get("subject") or "Forwarded email",
+        body=body,
     )
     return {"status": "queued", "org_id": org["id"]}
 
@@ -197,9 +224,10 @@ async def _find_org_by_inbound(to_address: str) -> dict[str, Any] | None:
     return result.data if result else None
 
 
-def _first_address(value: Any) -> str:
+def first_address(value: Any) -> str:
     """Extract a bare email from "Name <addr@x.y>" or just "addr@x.y", or
-    the first element of a list of either."""
+    the first element of a list of either. Public because the Gmail inbox
+    parser needs the same From-header handling."""
     if isinstance(value, list):
         if not value:
             return ""
@@ -213,7 +241,9 @@ def _first_address(value: Any) -> str:
     return s.lower()
 
 
-def _strip_html(html: str) -> str:
+def strip_html(html: str) -> str:
+    """Naive tag strip. Public because the Gmail inbox parser reuses it for
+    text/html-only messages."""
     if not html:
         return ""
     return _HTML_TAG_RE.sub(" ", html)

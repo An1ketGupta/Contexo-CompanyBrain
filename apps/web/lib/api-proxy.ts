@@ -22,7 +22,8 @@ export const API_URL = process.env.API_URL ?? "http://localhost:8000";
 
 // apps/esign — the in-house signing service. Separate deploy target
 // (Render), so it gets its own base URL rather than living under API_URL.
-export const ESIGN_API_URL = process.env.ESIGN_API_URL ?? "http://localhost:8001";
+// 8002, not 8001 — apps/api owns 8000 and the mock ATS owns 8001 locally.
+export const ESIGN_API_URL = process.env.ESIGN_API_URL ?? "http://localhost:8002";
 
 export async function getAccessToken(): Promise<string | null> {
   const supabase = await createClient();

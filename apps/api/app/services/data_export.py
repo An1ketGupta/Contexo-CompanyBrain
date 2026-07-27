@@ -180,7 +180,7 @@ async def _safe_select(
 
 def _readme(*, scope: str, generated_at: str, notes: list[str]) -> bytes:
     body = [
-        "NirnayaIQ — Data Export",
+        "Contexo — Data Export",
         "=======================",
         "",
         f"Scope:        {scope}",

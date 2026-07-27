@@ -47,7 +47,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/mcp", tags=["mcp"])
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_INFO = {"name": "NirnayaIQ", "version": "1.0"}
+SERVER_INFO = {"name": "Contexo", "version": "1.0"}
 
 
 # ── Auth ───────────────────────────────────────────────────────────────────
@@ -178,7 +178,7 @@ async def _handle_message(
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": SERVER_INFO,
                 "instructions": (
-                    "NirnayaIQ exposes the organisation's knowledge base as a "
+                    "Contexo exposes the organisation's knowledge base as a "
                     "set of tools. Call `search_company_knowledge` for any "
                     "question that might be answered by internal documents."
                 ),

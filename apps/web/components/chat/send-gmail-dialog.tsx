@@ -225,7 +225,7 @@ export function SendGmailDialog({
               </span>
               <span className="text-muted-foreground">
                 Sends a <code className="font-mono text-[10px]">Sources_used.txt</code> file
-                with the full retrieved context (the chunks NirnayaIQ used to draft this email).
+                with the full retrieved context (the chunks Contexo used to draft this email).
               </span>
             </span>
           </label>

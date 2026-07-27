@@ -1,4 +1,4 @@
-# NirnayaIQ
+# Contexo
 
 > A multi-tenant SaaS **work execution platform** powered by your company's knowledge base.
 > Not a Q&A chatbot — an AI co-pilot that drafts emails, writes policies, posts to Slack, and prepares your team for meetings with full company context.
@@ -7,7 +7,7 @@
 
 ## Table of Contents
 
-1. [What Is NirnayaIQ?](#what-is-nirnayaiq)
+1. [What Is Contexo?](#what-is-contexo)
 2. [Key Features](#key-features)
 3. [Tech Stack](#tech-stack)
 4. [Architecture Principles](#architecture-principles)
@@ -27,9 +27,9 @@
 
 ---
 
-## What Is NirnayaIQ?
+## What Is Contexo?
 
-**NirnayaIQ** is a SaaS platform where companies upload their entire knowledge base — PDFs, SOPs, handbooks, brand guides, product docs, culture decks, meeting transcripts — and their employees use it to **execute real work**:
+**Contexo** is a SaaS platform where companies upload their entire knowledge base — PDFs, SOPs, handbooks, brand guides, product docs, culture decks, meeting transcripts — and their employees use it to **execute real work**:
 
 - Drafting emails with the right tone and product context
 - Writing job descriptions that match company culture
@@ -37,7 +37,7 @@
 - Answering policy and HR questions
 - Prepping for meetings with relevant prior context
 
-Unlike pure RAG chatbots, NirnayaIQ is built around the idea that the AI should always have **full company context**, surface its **sources** transparently, route work through **compliance/approval workflows**, and offload long-running tasks to **autonomous background agents**.
+Unlike pure RAG chatbots, Contexo is built around the idea that the AI should always have **full company context**, surface its **sources** transparently, route work through **compliance/approval workflows**, and offload long-running tasks to **autonomous background agents**.
 
 The platform is multi-tenant (per-organization), enforces tenant isolation via Postgres Row-Level Security, and integrates with the tools teams already use (Google Drive, Notion, Slack, Gmail, inbound email).
 
@@ -637,4 +637,4 @@ External docs you'll touch often:
 
 ---
 
-© NirnayaIQ — multi-tenant SaaS work execution platform.
+© Contexo — multi-tenant SaaS work execution platform.

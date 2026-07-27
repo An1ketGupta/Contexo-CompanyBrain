@@ -102,7 +102,7 @@ export default function AnalyticsPage() {
             Usage analytics
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            How your team is using Nirnaya IQ — and what they're getting back.
+            How your team is using Contexo — and what they're getting back.
           </p>
         </div>
         <div className="flex shrink-0 gap-1 rounded-xl bg-muted p-1">
@@ -362,7 +362,7 @@ function TimeSavedSection({
         </p>
       ) : timeSavings.total_minutes_this_month === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">
-          No measurable time saved yet — keep using Nirnaya IQ and this will fill in.
+          No measurable time saved yet — keep using Contexo and this will fill in.
         </p>
       ) : (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-3">

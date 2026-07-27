@@ -59,7 +59,7 @@ export function ApprovalResolvedEmail({
 
       <Section style={{ margin: "24px 0" }}>
         <Button href={web_url} style={button}>
-          View in Nirnaya IQ
+          View in Contexo
         </Button>
       </Section>
 

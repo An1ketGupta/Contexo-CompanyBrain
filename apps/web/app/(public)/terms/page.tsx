@@ -9,7 +9,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
-  description: "Terms governing your use of the NirnayaIQ platform.",
+  description: "Terms governing your use of the Contexo platform.",
 };
 
 const EFFECTIVE_DATE = "Pending — set once final copy is reviewed.";
@@ -34,7 +34,7 @@ export default function TermsPage() {
       <div className="space-y-10 leading-relaxed text-foreground">
         <Section title="1. Agreement">
           <p>
-            These Terms of Service govern your use of the NirnayaIQ platform.
+            These Terms of Service govern your use of the Contexo platform.
             By creating an account or accessing a workspace, you agree to be
             bound by them. If you are using the service on behalf of an
             organisation, you confirm you have authority to bind that
@@ -44,7 +44,7 @@ export default function TermsPage() {
 
         <Section title="2. The service">
           <p>
-            NirnayaIQ is a multi-tenant SaaS platform that ingests workspace
+            Contexo is a multi-tenant SaaS platform that ingests workspace
             content, indexes it for retrieval, and provides AI-assisted
             outputs grounded in that content. The service includes a web
             application, a FastAPI backend, background agents, a Chrome
@@ -142,7 +142,7 @@ export default function TermsPage() {
         <Section title="9. Governing law">
           <p>
             These terms are governed by the laws of the jurisdiction in which
-            NirnayaIQ is registered (to be confirmed in the final version).
+            Contexo is registered (to be confirmed in the final version).
             Disputes will be resolved in the courts of that jurisdiction.
           </p>
         </Section>

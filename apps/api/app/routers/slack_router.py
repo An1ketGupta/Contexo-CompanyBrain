@@ -534,7 +534,7 @@ async def _answer_in_background(
     if not integ or not integ.data:
         await _post_to_response_url(
             response_url,
-            {"response_type": "ephemeral", "text": "Nirnaya IQ isn't connected to this Slack workspace."},
+            {"response_type": "ephemeral", "text": "Contexo isn't connected to this Slack workspace."},
         )
         return
 
@@ -657,7 +657,7 @@ async def slack_interactions(
     if payload_type == "view_submission":
         org_id = await _resolve_org_from_team(team_id)
         if not org_id:
-            return {"response_action": "errors", "errors": {"to_email_block": "Nirnaya IQ isn't connected to this Slack workspace."}}
+            return {"response_action": "errors", "errors": {"to_email_block": "Contexo isn't connected to this Slack workspace."}}
         view = payload.get("view") or {}
         callback_id = view.get("callback_id") or ""
         if callback_id.startswith("email_send_modal:"):
@@ -689,7 +689,7 @@ async def slack_interactions(
         return {
             "response_type": "ephemeral",
             "replace_original": False,
-            "text": "Nirnaya IQ isn't connected to this Slack workspace.",
+            "text": "Contexo isn't connected to this Slack workspace.",
         }
 
     # Route by action_id prefix. Each handler runs in the background so we
@@ -722,7 +722,7 @@ async def slack_interactions(
         background_tasks.add_task(
             _stub_acknowledge,
             response_url=response_url,
-            text="✏️ Inline editing from Slack is coming soon — for now, open Nirnaya IQ to refine and resend.",
+            text="✏️ Inline editing from Slack is coming soon — for now, open Contexo to refine and resend.",
         )
     elif action_id.startswith("approve_request_") or action_id.startswith("reject_request_"):
         # Day 6 approval buttons. Recover approval id from the suffix and
@@ -1142,7 +1142,7 @@ async def _send_slack_draft_email(
     if not slack_user_email:
         await _dm_user_about_send(
             org_id=org_id, slack_user_id=slack_user_id,
-            text=":warning: Couldn't match your Slack account to a Nirnaya IQ user. Connect Gmail from the web app first.",
+            text=":warning: Couldn't match your Slack account to a Contexo user. Connect Gmail from the web app first.",
         )
         return
 
@@ -1163,7 +1163,7 @@ async def _send_slack_draft_email(
     if not internal_user_id:
         await _dm_user_about_send(
             org_id=org_id, slack_user_id=slack_user_id,
-            text=":warning: Your Slack email isn't on Nirnaya IQ yet — sign in to the web app first.",
+            text=":warning: Your Slack email isn't on Contexo yet — sign in to the web app first.",
         )
         return
 
@@ -1180,7 +1180,7 @@ async def _send_slack_draft_email(
     if not gmail_row or not gmail_row.data:
         await _dm_user_about_send(
             org_id=org_id, slack_user_id=slack_user_id,
-            text=":warning: Connect Gmail in Nirnaya IQ settings first, then try again.",
+            text=":warning: Connect Gmail in Contexo settings first, then try again.",
         )
         return
     if not gmail_service.has_send_scope(gmail_row.data.get("scopes") or []):

@@ -82,7 +82,7 @@ export function WeeklyDigestEmail(props: WeeklyDigestEmailProps) {
       preview={`${org_name} — ${heroValue} saved this week`}
       heading={`${org_name} — weekly report`}
     >
-      <Text style={p}>Here&apos;s how Nirnaya IQ worked for your team this week.</Text>
+      <Text style={p}>Here&apos;s how Contexo worked for your team this week.</Text>
 
       {/* Hero — time saved */}
       <Section style={hero}>
@@ -129,7 +129,7 @@ export function WeeklyDigestEmail(props: WeeklyDigestEmailProps) {
       {/* Knowledge gaps callout */}
       {top_gap_topics.length > 0 && (
         <Section style={callout}>
-          <Text style={calloutHeading}>Topics your team asked but Nirnaya IQ couldn&apos;t answer</Text>
+          <Text style={calloutHeading}>Topics your team asked but Contexo couldn&apos;t answer</Text>
           {top_gap_topics.map((t) => (
             <Text key={t.topic} style={listItem}>
               • <strong>{t.topic}</strong> — asked {t.count}×
@@ -173,7 +173,7 @@ export function WeeklyDigestEmail(props: WeeklyDigestEmailProps) {
       {/* Top intents */}
       {top_intents.length > 0 && (
         <Text style={muted}>
-          What they used Nirnaya IQ for:{" "}
+          What they used Contexo for:{" "}
           {top_intents
             .map((t) => `${t.intent} (${t.count})`)
             .join(" · ")}

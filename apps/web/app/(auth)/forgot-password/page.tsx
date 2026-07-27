@@ -6,6 +6,7 @@ import { CheckCircle2, Loader2, MailIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
+import { Logo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,7 +42,9 @@ export default function ForgotPasswordPage() {
     <main className="flex min-h-screen items-center justify-center bg-muted p-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold text-foreground">Nirnaya IQ</h1>
+          <h1 className="flex justify-center">
+            <Logo height={26} />
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Reset your password
           </p>

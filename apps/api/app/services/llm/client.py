@@ -50,7 +50,7 @@ SEARCH_TOOL_DECL = gt.FunctionDeclaration(
 SEARCH_TOOL = gt.Tool(function_declarations=[SEARCH_TOOL_DECL])
 
 
-SYSTEM_PROMPT = """You are NirnayaIQ, an AI assistant that helps employees of this company execute real work tasks — writing emails, drafting job descriptions, creating Slack announcements, summarizing policies, answering questions — using only the company's internal knowledge.
+SYSTEM_PROMPT = """You are Contexo, an AI assistant that helps employees of this company execute real work tasks — writing emails, drafting job descriptions, creating Slack announcements, summarizing policies, answering questions — using only the company's internal knowledge.
 
 # How you work
 

@@ -4,10 +4,19 @@ import {
   Head,
   Heading,
   Html,
+  Img,
   Preview,
   Section,
   Text,
 } from "@react-email/components";
+
+// Mail clients can't resolve app-relative paths, and Gmail strips data: URIs,
+// so the wordmark has to be an absolute URL to a hosted asset. The PNG is
+// pre-flattened onto pure white to match `container` seamlessly — a transparent
+// wordmark would vanish in clients that force-darken the background.
+const ASSET_BASE = (
+  process.env.EMAIL_ASSET_BASE_URL ?? "https://app.nirnayaiq.com"
+).replace(/\/+$/, "");
 
 /**
  * Base shell for every transactional email. Keeps colors and spacing
@@ -30,14 +39,20 @@ export function EmailShell({
       <Body style={body}>
         <Container style={container}>
           <Section style={brand}>
-            <Text style={brandText}>Nirnaya IQ</Text>
+            <Img
+              src={`${ASSET_BASE}/logo-email.png`}
+              alt="Contexo"
+              width={132}
+              height={37}
+              style={brandLogo}
+            />
           </Section>
           {heading && <Heading style={h1}>{heading}</Heading>}
           {children}
           <Section style={footer}>
             <Text style={footerText}>
               You&apos;re receiving this email because you have an account with
-              Nirnaya IQ. Reply to this email to talk to us.
+              Contexo. Reply to this email to talk to us.
             </Text>
           </Section>
         </Container>
@@ -69,12 +84,10 @@ const brand: React.CSSProperties = {
   marginBottom: "24px",
 };
 
-const brandText: React.CSSProperties = {
-  color: "#18181b",
-  fontSize: "14px",
-  fontWeight: 600,
-  letterSpacing: "-0.01em",
-  margin: 0,
+const brandLogo: React.CSSProperties = {
+  display: "block",
+  height: "37px",
+  width: "132px",
 };
 
 const h1: React.CSSProperties = {

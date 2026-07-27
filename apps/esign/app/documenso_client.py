@@ -10,10 +10,11 @@ version differs. The adapter fails safe — any error here raises and apps/api
 falls back to the print/scan flow.
 
 Signing flow this client drives:
-    create (upload PDF + recipients)  → envelopeId + recipient ids + item id
+    create (upload PDF + recipients)  → envelopeId (and nothing else)
+    GET envelope/{id}                 → recipient ids + envelope item id
     field/create-many (SIGNATURE @ %) → fields bound to recipients
-    distribute (distributionMethod=NONE) → makes it signable, no Documenso email
-    recipient/{id} → per-recipient signing token for the embed
+    distribute (meta.distributionMethod=NONE) → signable, no Documenso email;
+                                        response carries each signing token
 """
 from __future__ import annotations
 
@@ -147,20 +148,20 @@ async def _request(
 
 
 def _match_recipient_id(recipients: list[dict], *, email: str) -> int:
-    """Find the created recipient's id by email (case-insensitive). Documenso
-    returns the recipients array on create; ids are needed to bind fields."""
+    """Find a recipient's id by email (case-insensitive). Ids are needed to
+    bind signature fields to the right signer."""
     want = email.strip().lower()
     for r in recipients:
         if str(r.get("email", "")).strip().lower() == want:
             rid = r.get("id") or r.get("recipientId")
             if rid is not None:
                 return int(rid)
-    raise DocumensoError(f"Documenso create response missing recipient id for {email}")
+    raise DocumensoError(f"Documenso envelope has no recipient for {email}")
 
 
-def _parse_create(payload: dict) -> tuple[str, str, list[dict]]:
-    """Pull (envelopeId, envelopeItemId, recipients[]) out of the create
-    response, tolerating a couple of shapes the v2 API has used."""
+def _parse_create(payload: dict) -> str:
+    """The create response is just `{"id": "envelope_..."}` — recipients and
+    envelope items have to be read back with GET /envelope/{id}."""
     envelope_id = (
         payload.get("id")
         or payload.get("envelopeId")
@@ -168,21 +169,23 @@ def _parse_create(payload: dict) -> tuple[str, str, list[dict]]:
     )
     if not envelope_id:
         raise DocumensoError("Documenso create response missing envelope id")
+    return str(envelope_id)
 
-    # The uploaded PDF becomes an "envelope item"; its id binds fields to a
-    # specific document within the envelope.
-    items = (
-        payload.get("envelopeItems")
-        or payload.get("items")
-        or payload.get("documents")
-        or []
-    )
-    envelope_item_id = ""
-    if items:
-        envelope_item_id = str(items[0].get("id") or items[0].get("envelopeItemId") or "")
 
-    recipients = payload.get("recipients") or []
-    return str(envelope_id), envelope_item_id, recipients
+async def _get_envelope(envelope_id: str, *, cfg: dict[str, str]) -> dict:
+    detail = await _request("GET", f"/api/v2/envelope/{envelope_id}", cfg=cfg)
+    if not isinstance(detail, dict):
+        raise DocumensoError(f"Documenso envelope {envelope_id}: unexpected response shape")
+    return detail
+
+
+def _first_item_id(envelope: dict) -> str:
+    """The uploaded PDF becomes an "envelope item"; its id binds fields to a
+    specific document within the envelope, and is what /download takes."""
+    items = envelope.get("envelopeItems") or envelope.get("items") or []
+    if not items:
+        return ""
+    return str(items[0].get("id") or items[0].get("envelopeItemId") or "")
 
 
 async def create_and_distribute(
@@ -217,7 +220,13 @@ async def create_and_distribute(
         data={"payload": json.dumps(create_payload)},
         files={"files": (pdf_filename, pdf_bytes, "application/pdf")},
     )
-    envelope_id, envelope_item_id, created_recipients = _parse_create(created)
+    envelope_id = _parse_create(created)
+
+    # Create returns only the envelope id, so read the envelope back for the
+    # recipient ids and the envelope item id the fields must be bound to.
+    envelope = await _get_envelope(envelope_id, cfg=cfg)
+    envelope_item_id = _first_item_id(envelope)
+    created_recipients = envelope.get("recipients") or []
 
     # Map our roles to Documenso recipient ids via email.
     role_to_recipient_id: dict[str, int] = {}
@@ -251,20 +260,33 @@ async def create_and_distribute(
         )
 
     # 3) Distribute → moves the envelope to a signable state. distributionMethod
-    #    NONE suppresses Documenso's own signer emails: NirnayaIQ sends the
-    #    "your turn to sign" email itself with the embedded /sign/{token} link.
-    await _request(
+    #    NONE (nested under `meta`) suppresses Documenso's own signer emails:
+    #    Contexo sends the "your turn to sign" email itself with the embedded
+    #    /sign/{token} link. Every SIGNER must already own at least one field
+    #    or this 400s — field_placement guarantees a fallback box per role.
+    distributed = await _request(
         "POST", "/api/v2/envelope/distribute",
         cfg=cfg,
-        json_body={"envelopeId": envelope_id, "distributionMethod": "NONE"},
+        json_body={"envelopeId": envelope_id, "meta": {"distributionMethod": "NONE"}},
     )
 
-    # 4) Fetch each recipient's signing token for the embed.
+    # 4) Signing tokens for the embed. Distribute echoes them back; the
+    #    envelope read-back is the fallback if that shape ever changes.
+    tokens_by_id: dict[int, str] = {}
+    distributed_recipients = distributed.get("recipients") if isinstance(distributed, dict) else None
+    for source in (distributed_recipients or [], created_recipients):
+        for rec in source:
+            rid_raw, token = rec.get("id"), rec.get("token") or rec.get("signingToken")
+            if rid_raw is not None and token:
+                tokens_by_id.setdefault(int(rid_raw), str(token))
+
     results: list[RecipientResult] = []
     for r in recipients:
         rid = role_to_recipient_id[r.role]
-        detail = await _request("GET", f"/api/v2/envelope/recipient/{rid}", cfg=cfg)
-        token = detail.get("token") or detail.get("signingToken")
+        token = tokens_by_id.get(rid)
+        if not token:
+            detail = await _request("GET", f"/api/v2/envelope/recipient/{rid}", cfg=cfg)
+            token = detail.get("token") or detail.get("signingToken")
         if not token:
             raise DocumensoError(f"Documenso recipient {rid} has no signing token")
         results.append(
@@ -278,27 +300,44 @@ async def create_and_distribute(
 
 
 async def cancel_envelope(envelope_id: str) -> None:
-    """Void an envelope in Documenso (best-effort; caller logs failures)."""
+    """Void an envelope in Documenso (best-effort; caller logs failures).
+
+    `cancel` voids and keeps the envelope + its audit trail, unlike `delete`
+    which removes it outright. Only PENDING envelopes can be cancelled — a
+    never-distributed draft has to be deleted instead.
+    """
     cfg = _require_configured()
+    envelope = await _get_envelope(envelope_id, cfg=cfg)
+    if str(envelope.get("status", "")).upper() == "DRAFT":
+        await _request(
+            "POST", "/api/v2/envelope/delete", cfg=cfg, json_body={"envelopeId": envelope_id}
+        )
+        return
     await _request(
-        "POST", "/api/v2/envelope/delete",
+        "POST", "/api/v2/envelope/cancel",
         cfg=cfg,
-        json_body={"envelopeId": envelope_id},
+        json_body={"envelopeId": envelope_id, "reason": "Voided in Contexo"},
     )
 
 
 async def download_signed_pdf(envelope_id: str) -> bytes:
     """Fetch the final PAdES-sealed PDF for a completed envelope.
 
-    ⚠️ Verify the exact download route against the running instance — v2 has
-    used a redirect-to-storage pattern. We follow redirects and return raw
-    bytes; the webhook receiver stores them at onboarding_documents'
-    signed_pdf_path so the rest of the pipeline is unchanged.
+    v2 downloads per *envelope item*, not per envelope, so read the envelope
+    back for its item id first. `version=signed` is the completed document
+    with signatures and audit trail. Returns raw bytes; the webhook receiver
+    stores them at onboarding_documents' signed_pdf_path so the rest of the
+    pipeline is unchanged.
     """
     cfg = _require_configured()
-    url = f"{cfg['base_url']}/api/v2/envelope/{envelope_id}/download"
+    envelope = await _get_envelope(envelope_id, cfg=cfg)
+    item_id = _first_item_id(envelope)
+    if not item_id:
+        raise DocumensoError(f"Documenso envelope {envelope_id} has no envelope item to download")
+
+    url = f"{cfg['base_url']}/api/v2/envelope/item/{item_id}/download"
     async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
-        resp = await client.get(url, headers=_headers(cfg))
+        resp = await client.get(url, headers=_headers(cfg), params={"version": "signed"})
     if resp.status_code >= 400:
         raise DocumensoError(
             f"Documenso download {envelope_id} -> {resp.status_code}: {(resp.text or '')[:300]}"

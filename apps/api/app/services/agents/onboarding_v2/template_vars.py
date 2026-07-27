@@ -106,13 +106,13 @@ TEMPLATE_VARIABLES: list[TemplateVar] = [
         "name": "company_name",
         "label": "Company name",
         "description": "Short / display name of the hiring company.",
-        "example": "NirnayaIQ",
+        "example": "Contexo",
     },
     {
         "name": "company_legal_name",
         "label": "Company legal name",
         "description": "Registered legal entity name (for contract preambles).",
-        "example": "NirnayaIQ Technologies Pvt. Ltd.",
+        "example": "Contexo Technologies Pvt. Ltd.",
     },
     {
         "name": "company_address",

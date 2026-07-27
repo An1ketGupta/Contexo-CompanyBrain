@@ -63,6 +63,27 @@ async def meet_transcript_poll_sync(ctx: inngest.Context) -> dict[str, Any]:
     return result
 
 
+# ── Support mailbox: poll every 2 minutes ───────────────────────────────────
+#
+# Tighter than the knowledge-ingest polls above: this is the customer support
+# agent's inbound path, and a customer waiting on a reply notices minutes.
+
+@_inngest_client.create_function(
+    fn_id="support-mailbox-poll-sync",
+    trigger=inngest.TriggerCron(cron="*/2 * * * *"),
+    concurrency=[inngest.Concurrency(limit=1)],
+)
+async def support_mailbox_poll_sync(ctx: inngest.Context) -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.google_client_id or not settings.google_client_secret:
+        return {"status": "skipped", "reason": "google_oauth_not_configured"}
+
+    from app.services.integrations.support_mailbox import poll_all_support_inboxes
+
+    result = await ctx.step.run("support-mailbox-poll-all", poll_all_support_inboxes)
+    return result
+
+
 # ── Notion: poll every 10 minutes ────────────────────────────────────────────
 
 @_inngest_client.create_function(
@@ -209,6 +230,7 @@ async def process_binary_external(ctx: inngest.Context) -> dict[str, Any]:
 FUNCTIONS = [
     drive_poll_sync,
     meet_transcript_poll_sync,
+    support_mailbox_poll_sync,
     notion_poll_sync,
     process_text_document,
     onedrive_poll_sync,

@@ -5,7 +5,7 @@ order: 4
 tags: [search, ai, embeddings, rag, vector, hybrid, retrieval, citations]
 ---
 
-When you ask Nirnaya IQ a question, it doesn't pre-read everything you've uploaded. Instead, the model **decides what to look up** and we run a focused search across your documents for each lookup.
+When you ask Contexo a question, it doesn't pre-read everything you've uploaded. Instead, the model **decides what to look up** and we run a focused search across your documents for each lookup.
 
 ## Three stages
 

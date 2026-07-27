@@ -273,7 +273,7 @@ function McpSection() {
         <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">
 {`{
   "mcpServers": {
-    "nirnayaiq": {
+    "contexo": {
       "url": "${apiUrl}/mcp",
       "headers": {
         "Authorization": "Bearer cb_live_…"
@@ -293,7 +293,7 @@ function McpSection() {
 {`# Cursor mcp.json
 {
   "mcpServers": {
-    "nirnayaiq": {
+    "contexo": {
       "url": "${apiUrl}/mcp",
       "headers": { "Authorization": "Bearer cb_live_…" }
     }
@@ -400,7 +400,7 @@ import os
 INTERNAL_SECRET = os.environ["INTERNAL_EMAIL_SECRET"]  # set during integration
 
 def verify_callback(body_bytes: bytes, headers: dict) -> bool:
-    """Returns True when the request was sent by Nirnaya IQ.
+    """Returns True when the request was sent by Contexo.
 
     The signature is HMAC-SHA256 over the raw body, with the secret derived
     from your API key id (echoed in X-NirnayaIQ-Api-Key-Id) + your
@@ -466,7 +466,7 @@ while (true) {
 const INTERNAL_SECRET = process.env.INTERNAL_EMAIL_SECRET!;
 
 /**
- * Verifies an inbound callback from Nirnaya IQ.
+ * Verifies an inbound callback from Contexo.
  *
  * The signature is HMAC-SHA256 over the raw request body, with the secret
  * derived from your API key id (echoed in X-NirnayaIQ-Api-Key-Id) +
@@ -480,8 +480,8 @@ export function verifyCallback(
   bodyBytes: Buffer,
   headers: Record<string, string | undefined>,
 ): boolean {
-  const sigHeader = headers["x-nirnayaiq-signature"] ?? "";
-  const keyId = headers["x-nirnayaiq-api-key-id"] ?? "";
+  const sigHeader = headers["x-contexo-signature"] ?? "";
+  const keyId = headers["x-contexo-api-key-id"] ?? "";
   if (!sigHeader.startsWith("sha256=") || !keyId) return false;
 
   const received = sigHeader.slice("sha256=".length);

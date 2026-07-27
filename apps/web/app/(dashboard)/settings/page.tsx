@@ -2042,7 +2042,7 @@ function DataExportCard({ isAdmin }: { isAdmin: boolean }) {
       const blob = await res.blob();
       const disposition = res.headers.get("content-disposition") ?? "";
       const match = /filename="?([^";]+)"?/.exec(disposition);
-      const filename = match?.[1] ?? `nirnayaiq-${kind}-export.zip`;
+      const filename = match?.[1] ?? `contexo-${kind}-export.zip`;
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

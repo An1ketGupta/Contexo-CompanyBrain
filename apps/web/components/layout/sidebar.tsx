@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Brain } from "lucide-react";
+import { Logo } from "@/components/brand/logo";
 import { SidebarNav } from "./sidebar-nav";
 import { UserMenu } from "./user-menu";
 import { QuotaMeter } from "./quota-meter";
@@ -15,13 +15,8 @@ export function Sidebar() {
   return (
     <aside className="hidden h-dvh w-60 shrink-0 flex-col border-r border-border bg-background md:flex">
       <div className="flex h-14 items-center justify-between border-b border-border px-3">
-        <Link href="/chat" className="flex items-center gap-2 px-2">
-          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Brain className="h-3.5 w-3.5" />
-          </span>
-          <span className="text-md font-extrabold tracking-tight">
-            Nirnaya IQ
-          </span>
+        <Link href="/chat" className="flex items-center px-2">
+          <Logo height={17} />
         </Link>
         <NotificationBell />
       </div>

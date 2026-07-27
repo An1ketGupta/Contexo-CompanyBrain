@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # App
-    app_name: str = "NirnayaIQ E-Sign"
+    app_name: str = "Contexo E-Sign"
     app_version: str = "0.1.0"
     debug: bool = False
     environment: str = "development"
