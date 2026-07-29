@@ -25,27 +25,20 @@ from app.database import get_service_client, get_user_client
 from app.errors import NoOrganization
 from app.inngest.client import get_inngest_client
 from app.models.onboarding_v2 import (
+    BlockingFieldsResponse,
     HrReferencesOverrideRequest,
-    ImportTemplateFromDriveRequest,
     LoiApproveDraftResponse,
     LoiReplaceDraftResponse,
     OnboardingRunDetailRead,
     OnboardingRunRead,
+    RunFieldValuesRequest,
+    RunFieldValuesResponse,
     SourcesResponse,
     StartOnboardingRequest,
-    TagTemplateRequest,
-    TemplateAnalyzeResponse,
-    TemplateBlocksResponse,
-    TemplateEditTextRequest,
-    TemplateEditTextResponse,
-    TemplateFieldSlot,
-    TemplateRenderPreviewResponse,
-    TemplateSlotCreateRequest,
-    TemplateSlotDecisionRequest,
-    TemplateSlotsResponse,
-    TemplateTextBlock,
 )
 from app.services.agents.onboarding_v2 import storage as ob_storage
+from app.services.documents import schema as doc_schema
+from app.services.documents.constants import STATUS_CONFIRMED
 
 log = logging.getLogger(__name__)
 
@@ -410,7 +403,7 @@ async def get_run(
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Onboarding run not found.")
 
-    def _fetch_related() -> tuple[list, list, list]:
+    def _fetch_related() -> tuple[list, list, list, dict[str, list]]:
         refs = (
             client.table("onboarding_bgv_references")
             .select("*")
@@ -433,9 +426,20 @@ async def get_run(
             .limit(200)
             .execute()
         )
-        return refs.data or [], docs.data or [], events.data or []
+        # Fetch per-signer statuses from signing envelopes. Keyed by our own
+        # envelope_id so documents can be matched via esign_envelope_id.
+        env_res = (
+            client.table("onboarding_signing_envelopes")
+            .select("envelope_id, signers, status")
+            .eq("run_id", run_id)
+            .execute()
+        )
+        signers_by_env: dict[str, list] = {}
+        for e in (env_res.data or []):
+            signers_by_env[e["envelope_id"]] = e.get("signers") or []
+        return refs.data or [], docs.data or [], events.data or [], signers_by_env
 
-    refs, docs, events = await asyncio.to_thread(_fetch_related)
+    refs, docs, events, signers_by_env = await asyncio.to_thread(_fetch_related)
 
     # Re-mint signed URLs at request time so the page never serves a stale
     # link. Storage-stored signed_url is treated as a hint, not source of
@@ -491,6 +495,15 @@ async def get_run(
             "esign_status": d.get("esign_status"),
             "esign_signing_url": d.get("esign_signing_url"),
             "esign_completed_at": d.get("esign_completed_at"),
+            "esign_signers": [
+                {
+                    "role": s.get("role", ""),
+                    "name": s.get("name", ""),
+                    "status": s.get("status", "pending"),
+                    "completed_at": s.get("completed_at"),
+                }
+                for s in signers_by_env.get(d.get("esign_envelope_id") or "", [])
+            ],
             "created_at": d["created_at"],
             "updated_at": d["updated_at"],
         }
@@ -1287,7 +1300,42 @@ async def get_loi_signing_url(
             status.HTTP_409_CONFLICT,
             "You've already signed this LOI.",
         )
-    if not hr_signer.get("public_token"):
+
+    # Self-heal: if the Documenso webhook was missed, reconcile signer
+    # statuses before handing HR a potentially stale signing link.
+    from app.services.integrations.inhouse_sign import (
+        InhouseSignError,
+        reconcile_envelope,
+    )
+
+    try:
+        recon = await reconcile_envelope(env.data["envelope_id"])
+        if recon.get("changed"):
+            # Re-read envelope: reconciliation may have advanced the state.
+            env = await asyncio.to_thread(
+                lambda: svc.table("onboarding_signing_envelopes")
+                .select("envelope_id, signers, status")
+                .eq("envelope_id", env.data["envelope_id"])
+                .maybe_single()
+                .execute()
+            )
+            hr_signer = next(
+                (
+                    s for s in (env.data.get("signers") or [])
+                    if isinstance(s, dict) and s.get("role") == "hr"
+                ),
+                None,
+            )
+            if hr_signer and (hr_signer.get("status") or "").lower() == "completed":
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "You've already signed this LOI. "
+                    "The page will refresh shortly.",
+                )
+    except InhouseSignError:
+        pass  # best-effort; fall through to return the URL
+
+    if not hr_signer or not hr_signer.get("public_token"):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "This envelope predates the in-house signer and has no link — void and resend.",
@@ -1740,1351 +1788,189 @@ async def resume_run(
     return {"status": "ok"}
 
 
-# ── Templates ───────────────────────────────────────────────────────────────
-
-
-@router.get("/templates/status")
-async def template_status(
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Return whether the org has each of the required KB templates tagged.
-    Renders the "you're missing X" cards on the onboarding list page."""
-    _, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-    res = await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .select("id, name, template_kind, template_status, created_at")
-        .eq("org_id", org_id)
-        .in_("template_kind", ["loi", "appointment_letter", "nda", "induction"])
-        .order("created_at", desc=True)
-        .execute()
-    )
-    # Prefer the `active` template per kind (the one the agent actually uses);
-    # fall back to the most recent draft so the UI can nudge HR to finish
-    # setup rather than showing the slot as empty.
-    by_kind: dict[str, dict[str, Any]] = {}
-    for r in res.data or []:
-        kind = r["template_kind"]
-        existing = by_kind.get(kind)
-        if existing is None:
-            by_kind[kind] = r
-        elif (
-            existing.get("template_status") != "active"
-            and r.get("template_status") == "active"
-        ):
-            by_kind[kind] = r
-    return {
-        "loi": by_kind.get("loi"),
-        "appointment_letter": by_kind.get("appointment_letter"),
-        "nda": by_kind.get("nda"),
-        "induction": by_kind.get("induction"),
-    }
-
-
-# Preview sample data comes from `render_context.sample_render_context()` — the
-# same builder the agent uses for real runs. This file used to carry its own
-# hand-written copy, which had silently fallen out of sync: it omitted the
-# signature-block variables entirely, so previewing a template that positioned a
-# signature failed under StrictUndefined even though a real render would work.
-
-
-@router.post("/templates/{document_id}/preview")
-async def preview_template(
-    document_id: str,
-    raw: bool = False,
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Render the template to PDF for HR review.
-
-    - `raw=false` (default): fill with synthetic sample candidate data so HR
-      can see the final layout.
-    - `raw=true`: convert the DOCX as-is — placeholders remain visible,
-      useful right after uploading a template to verify which spots will
-      be filled per candidate.
-
-    Returns a freshly-minted signed URL (1h TTL) to the rendered PDF.
-    Storage path is `onboarding/_previews/<doc_id>[.raw].pdf` — overwritten on
-    every preview call, never associated with a real run.
-    """
-    _, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    doc = await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .select("id, name, file_path, current_version_id, template_kind, fill_strategy")
-        .eq("id", document_id)
-        .eq("org_id", org_id)
-        .maybe_single()
-        .execute()
-    )
-    if not doc or not doc.data:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Template not found.")
-    if not doc.data.get("template_kind"):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Tag this document with a template_kind before previewing.",
-        )
-
-    # Resolve the real storage path: prefer the current document_versions row,
-    # fall back to the legacy documents.file_path column.
-    storage_path: str | None = None
-    current_version_id = doc.data.get("current_version_id")
-    if current_version_id:
-        version = await asyncio.to_thread(
-            lambda: svc.table("document_versions")
-            .select("file_path")
-            .eq("id", current_version_id)
-            .maybe_single()
-            .execute()
-        )
-        if version and version.data:
-            storage_path = version.data.get("file_path")
-    if not storage_path:
-        storage_path = doc.data.get("file_path")
-    if not storage_path:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Template has no storage path — re-upload the DOCX.",
-        )
-
-    def _download() -> bytes:
-        return svc.storage.from_(ob_storage.STORAGE_BUCKET).download(storage_path)
-
-    try:
-        docx_bytes = await asyncio.to_thread(_download)
-    except Exception as exc:  # noqa: BLE001 — give HR a clear error
-        log.exception(
-            "template_preview.storage_download_failed doc=%s path=%s",
-            document_id, storage_path,
-        )
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "Couldn't download the template from storage. "
-            "The upload may still be in progress — try again in a few seconds.",
-        ) from exc
-    if not docx_bytes or not docx_bytes.startswith(b"PK"):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "The stored file isn't a valid DOCX. Re-upload the template.",
-        )
-
-    from app.services.agents.onboarding_v2.render_context import sample_render_context
-    from app.services.pdf import (
-        TemplateVariableError,
-        convert_docx_to_pdf,
-        render_docx_template_to_pdf,
-    )
-
-    try:
-        if raw:
-            pdf_bytes = await convert_docx_to_pdf(docx_bytes)
-        elif doc.data.get("fill_strategy") == "slots":
-            # A slots template has no placeholders to substitute — running it
-            # through docxtpl would render an unfilled document and quietly
-            # mislead HR. Fill from the confirmed slots instead.
-            from app.services.agents.onboarding_v2 import template_slots as ob_slots
-            from app.services.pdf.slot_renderer import render_docx_slots_to_pdf
-
-            slots = await ob_slots.list_slots(
-                document_id=document_id, confirmed_only=True
-            )
-            _filled_docx, pdf_bytes = await render_docx_slots_to_pdf(
-                docx_bytes=docx_bytes,
-                slots=slots,
-                context=sample_render_context(),
-                template_kind=doc.data.get("template_kind"),
-            )
-        else:
-            _filled_docx, pdf_bytes = await render_docx_template_to_pdf(
-                template_bytes=docx_bytes,
-                context=sample_render_context(),
-                strict=True,
-                template_kind=doc.data.get("template_kind"),
-            )
-    except TemplateVariableError as exc:
-        # Surface the exact missing variable so HR can fix the DOCX.
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "error": "template_variable_undefined",
-                "variable": exc.variable_name,
-                "message": str(exc),
-            },
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001 — never 500 the preview
-        log.exception(
-            "template_preview.render_failed doc=%s kind=%s raw=%s",
-            document_id, doc.data.get("template_kind"), raw,
-        )
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Couldn't render the preview ({type(exc).__name__}). "
-            "Check the DOCX for unbalanced {{ }} or unsupported formatting.",
-        ) from exc
-
-    preview_suffix = ".raw" if raw else ""
-    preview_path = (
-        f"orgs/{org_id}/onboarding/_previews/{document_id}{preview_suffix}.pdf"
-    )
-
-    def _upload() -> None:
-        svc.storage.from_(ob_storage.STORAGE_BUCKET).upload(
-            path=preview_path,
-            file=pdf_bytes,
-            file_options={"content-type": "application/pdf", "upsert": "true"},
-        )
-
-    await asyncio.to_thread(_upload)
-    signed_url = await ob_storage.mint_signed_url(preview_path)
-    return {
-        "status": "ok",
-        "template_kind": doc.data.get("template_kind"),
-        "preview_url": signed_url,
-        "file_bytes": len(pdf_bytes),
-    }
-
-
-@router.post("/templates")
-async def tag_template(
-    body: TagTemplateRequest,
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Tag a KB document as a template of a given kind. Fires the resume
-    event so any blocked run picks it up."""
-    _, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    # Verify the document exists and belongs to this org.
-    doc = await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .select("id, name, file_type")
-        .eq("id", str(body.document_id))
-        .eq("org_id", org_id)
-        .maybe_single()
-        .execute()
-    )
-    if not doc or not doc.data:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found.")
-    # Soft warn but allow non-DOCX (admin may upload DOCX later as a version).
-    if doc.data.get("file_type") and "officedocument.wordprocessing" not in (
-        doc.data["file_type"] or ""
-    ):
-        log.warning(
-            "onboarding_v2.template_non_docx doc=%s file_type=%s",
-            doc.data["id"],
-            doc.data.get("file_type"),
-        )
-
-    # New templates land as `draft` so HR's analyze-edit-preview-save loop
-    # doesn't expose half-finished edits to in-flight runs. Promotion to
-    # `active` happens via POST /templates/{id}/save.
-    await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .update(
-            {
-                "template_kind": body.template_kind,
-                "template_status": "draft",
-            }
-        )
-        .eq("id", str(body.document_id))
-        .eq("org_id", org_id)
-        .execute()
-    )
-    return {"status": "ok", "template_kind": body.template_kind}
-
-
-# ── Import from Google Drive ────────────────────────────────────────────────
-
-
-@router.post("/templates/import-from-drive")
-async def import_template_from_drive(
-    body: ImportTemplateFromDriveRequest,
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Pull a Google Doc or .docx file from the org's connected Drive and
-    register it as the template for `template_kind`.
-
-    Three steps: (1) download/export DOCX bytes from Drive, (2) upload them
-    to Supabase Storage at the same per-org prefix the direct-upload flow
-    uses, (3) insert a `documents` row tagged with `template_kind` and mark
-    status=ready (we skip chunk/embed — templates are rendered by the agent,
-    never searched). Finally we fan-out `template_uploaded` so any run parked
-    in `blocked_missing_template` resumes.
-    """
-    import uuid as _uuid
-
-    from app.services.integrations import drive as drive_svc
-
-    user_id, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    # Refuse unsupported mimes BEFORE we touch Drive — saves a round-trip and
-    # gives HR a clean error if they somehow get a PDF id through the picker
-    # (defence in depth — the picker also restricts mime types).
-    if body.mime_type not in (drive_svc.GOOGLE_DOC_MIME, drive_svc.DOCX_MIME):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Templates must be Google Docs or .docx files.",
-        )
-
-    # 1. Pull bytes from Drive (export Google Doc → DOCX, or raw .docx download).
-    try:
-        docx_bytes = await drive_svc.download_template_as_docx(
-            org_id=org_id,
-            file_id=body.file_id,
-            mime_type=body.mime_type,
-        )
-    except PermissionError as exc:
-        # drive_not_connected or drive_auth_failed
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"Google Drive is not connected or authorisation failed ({exc}). "
-            "Reconnect Drive from Settings → Integrations.",
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        log.exception(
-            "onboarding_v2.drive_template_download_failed file_id=%s", body.file_id
-        )
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "Couldn't download that file from Google Drive — please retry.",
-        ) from exc
-
-    if not docx_bytes or len(docx_bytes) < 200:
-        # docxtpl needs a real .docx (a zip) — refuse empty / truncated bodies.
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "The downloaded file looks empty or corrupted.",
-        )
-    if len(docx_bytes) > 25 * 1024 * 1024:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            "Template is too large (>25MB). Trim and retry.",
-        )
-
-    # 2. Sanity-check this is actually a DOCX. Real .docx files start with
-    # `PK\x03\x04` (zip magic). A wrong-mime / wrong-export catches here
-    # before it confuses docxtpl later. Cheap and fail-fast.
-    if not docx_bytes.startswith(b"PK"):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "Imported file is not a valid DOCX. Re-export from Google Drive.",
-        )
-
-    # 3. Upload to Storage. We mirror the direct-upload path:
-    #    orgs/{org_id}/docs/{doc_id}/{safe_name}.docx
-    # so it's indistinguishable from a browser-uploaded template at every
-    # downstream layer (storage GC, signed URLs, the agent fetch helper).
-    doc_id = str(_uuid.uuid4())
-    base_name = (body.file_name or "Template").strip().replace("/", "_").replace("..", "_")
-    if not base_name.lower().endswith(".docx"):
-        base_name = f"{base_name}.docx"
-    storage_path = f"orgs/{org_id}/docs/{doc_id}/{base_name}"
-
-    def _upload() -> None:
-        svc.storage.from_(ob_storage.STORAGE_BUCKET).upload(
-            path=storage_path,
-            file=docx_bytes,
-            file_options={
-                "content-type": (
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                ),
-                "upsert": "true",
-            },
-        )
-
-    try:
-        await asyncio.to_thread(_upload)
-    except Exception as exc:  # noqa: BLE001
-        log.exception(
-            "onboarding_v2.drive_template_storage_upload_failed doc=%s", doc_id
-        )
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            "Failed to save the imported template to storage.",
-        ) from exc
-
-    # 4. Insert the documents row tagged as a template. We mark status=ready
-    # (skipping the chunk/embed pipeline) because templates are rendered by
-    # the onboarding agent — they never participate in chat search. Marked
-    # template_status='draft' so the agent doesn't pick it up until HR has
-    # reviewed the preview and clicked Save.
-    def _insert_doc() -> None:
-        svc.table("documents").insert(
-            {
-                "id": doc_id,
-                "org_id": org_id,
-                "name": base_name,
-                "file_path": storage_path,
-                "file_type": "docx",
-                "file_size_bytes": len(docx_bytes),
-                "status": "ready",
-                "created_by": user_id,
-                "template_kind": body.template_kind,
-                "template_status": "draft",
-                "source": "google_drive",
-                "external_id": body.file_id,
-            }
-        ).execute()
-
-    try:
-        await asyncio.to_thread(_insert_doc)
-    except Exception as exc:  # noqa: BLE001
-        log.exception(
-            "onboarding_v2.drive_template_doc_insert_failed doc=%s", doc_id
-        )
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            "Failed to register the imported template.",
-        ) from exc
-
-    # Note: we deliberately don't fire template_uploaded here — the template
-    # is in draft state until HR reviews + saves it. The save endpoint emits
-    # the fan-out event so blocked runs only pick up a finalised template.
-    return {
-        "status": "ok",
-        "document_id": doc_id,
-        "template_kind": body.template_kind,
-        "name": base_name,
-        "file_bytes": len(docx_bytes),
-    }
-
-
-# ── AI-assisted template conversion ─────────────────────────────────────────
-
-
-_TEMPLATE_TEXT_PREVIEW_CHARS = 1500
-
-
-async def _set_fill_strategy(
-    *, document_id: str, org_id: str, svc: Any, strategy: str
-) -> None:
-    """Record how this specific template gets filled.
-
-    Written on every analyze. Until it is set, `documents.fill_strategy` is NULL
-    and the agent uses the docxtpl renderer — which is what keeps templates
-    baked by the pre-097 pipeline (real `{{ }}` tags in their stored .docx)
-    working untouched.
-    """
-    await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .update({"fill_strategy": strategy})
-        .eq("id", document_id)
-        .eq("org_id", org_id)
-        .execute()
-    )
-
-
-def _slot_to_model(row: dict[str, Any]) -> TemplateFieldSlot:
-    """DB row → API shape, clamped to the model's field limits so an
-    over-long context snippet can't fail response validation."""
-    return TemplateFieldSlot(
-        id=str(row["id"]),
-        action=row.get("action") or "replace_span",
-        status=row.get("status") or "proposed",
-        source=row.get("source") or "ai",
-        variable=row.get("variable"),
-        confidence=row.get("confidence") or "medium",
-        blank_text=(row.get("blank_text") or "")[:500],
-        context_before=(row.get("context_before") or "")[:200],
-        context_after=(row.get("context_after") or "")[:200],
-        paragraph_index=row.get("paragraph_index") or 0,
-        paragraph_kind=row.get("paragraph_kind") or "body",
-        start_offset=row.get("start_offset") or 0,
-        end_offset=row.get("end_offset") or 0,
-    )
-
-
-async def _load_template_docx(
-    *, document_id: str, org_id: str, svc: Any
-) -> tuple[bytes, dict[str, Any], str]:
-    """Resolve a template document's current storage path and download it.
-
-    Returns (docx_bytes, document_row, storage_path). Raises HTTPException on
-    common error states (not found, untagged, missing storage path) so each
-    caller doesn't repeat the same plumbing.
-    """
-    doc = await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .select(
-            "id, name, file_path, current_version_id, template_kind, file_type, "
-            "fill_strategy"
-        )
-        .eq("id", document_id)
-        .eq("org_id", org_id)
-        .maybe_single()
-        .execute()
-    )
-    if not doc or not doc.data:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Template not found.")
-    if not doc.data.get("template_kind"):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Tag this document with a template_kind first.",
-        )
-
-    storage_path: str | None = None
-    current_version_id = doc.data.get("current_version_id")
-    if current_version_id:
-        version = await asyncio.to_thread(
-            lambda: svc.table("document_versions")
-            .select("file_path")
-            .eq("id", current_version_id)
-            .maybe_single()
-            .execute()
-        )
-        if version and version.data:
-            storage_path = version.data.get("file_path")
-    if not storage_path:
-        storage_path = doc.data.get("file_path")
-    if not storage_path:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Template has no storage path — re-upload the DOCX.",
-        )
-
-    def _download() -> bytes:
-        return svc.storage.from_(ob_storage.STORAGE_BUCKET).download(storage_path)
-
-    try:
-        docx_bytes = await asyncio.to_thread(_download)
-    except Exception as exc:  # noqa: BLE001 — surface a meaningful error
-        log.exception(
-            "template_load.storage_download_failed doc=%s path=%s",
-            document_id, storage_path,
-        )
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "Couldn't download the template from storage. "
-            "The upload may still be in progress — try again in a few seconds.",
-        ) from exc
-    if not docx_bytes or not docx_bytes.startswith(b"PK"):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "The stored file isn't a valid DOCX. Re-upload the template.",
-        )
-    return docx_bytes, doc.data, storage_path
-
-
-@router.post("/templates/{document_id}/analyze", response_model=TemplateAnalyzeResponse)
-async def analyze_template(
-    document_id: str,
-    current_user: dict = Depends(verify_jwt),
-) -> TemplateAnalyzeResponse:
-    """Work out how a tagged template should be filled, and find its fields.
-
-    Two outcomes, decided here and recorded on `documents.fill_strategy`:
-
-      * The document's `{{ }}` tags all parse → `jinja`. It's a real
-        hand-authored template; docxtpl renders it and there is nothing to map.
-
-      * Anything else → `slots`. Fill-points are detected, classified, and
-        persisted as `template_field_slots` rows for HR to confirm. Nothing is
-        written into the customer's document.
-
-    That second branch covers the case that used to be the worst failure: tags
-    exist but at least one is malformed (e.g. `{{ Signing Date }}`). It used to
-    sail through as "already templated" and then die inside docxtpl with an
-    opaque parser error. Now the malformed span becomes an ordinary reviewable
-    fill-point and `jinja_errors` explains it at analyze time — a tag that
-    cannot parse is never trusted as a placeholder.
-
-    Safe to call repeatedly. Re-running never overwrites a decision HR has
-    already made on a fill-point (see `upsert_proposed_slots`), so "Find fields
-    again" is a non-destructive button.
-    """
-    _, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    from app.services.agents.onboarding_v2 import template_slots as ob_slots
-    from app.services.agents.onboarding_v2.blank_detector import find_all_candidates
-    from app.services.agents.onboarding_v2.jinja_validator import (
-        STRATEGY_JINJA,
-        STRATEGY_SLOTS,
-        classify_template,
-    )
-    from app.services.agents.onboarding_v2.template_analyzer import (
-        TemplateAnalyzerError,
-        classify_candidates,
-        extract_text,
-    )
-    from app.services.agents.onboarding_v2.template_vars import TEMPLATE_VARIABLES
-
-    docx_bytes, doc_row, _ = await _load_template_docx(
-        document_id=document_id, org_id=org_id, svc=svc
-    )
-
-    template_kind = doc_row.get("template_kind") or "loi"
-
-    try:
-        scan = classify_template(docx_bytes)
-        text = extract_text(docx_bytes)
-    except Exception as exc:  # noqa: BLE001 — surface as 422 to HR
-        log.warning("template_analyze.extract_failed doc=%s err=%s", document_id, exc)
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Couldn't read this DOCX. It may be corrupted or password-protected. ({exc})",
-        ) from exc
-
-    available_variables = [
-        {"name": v["name"], "label": v["label"], "description": v["description"]}
-        for v in TEMPLATE_VARIABLES
-    ]
-    # A document whose tags all parse is a genuine template — honour it and skip
-    # detection entirely.
-    if scan.strategy == STRATEGY_JINJA:
-        await _set_fill_strategy(
-            document_id=document_id, org_id=org_id, svc=svc, strategy=STRATEGY_JINJA
-        )
-        warning = None
-        if scan.unknown_variables:
-            warning = (
-                "This template uses placeholder(s) we don't supply: "
-                + ", ".join(f"{{{{ {v} }}}}" for v in scan.unknown_variables[:5])
-                + ". Generation will fail until they're removed or renamed."
-            )
-        return TemplateAnalyzeResponse(
-            document_id=document_id,
-            template_kind=template_kind,
-            has_placeholders=True,
-            fill_strategy=STRATEGY_JINJA,
-            text_preview=text[:_TEMPLATE_TEXT_PREVIEW_CHARS],
-            available_variables=available_variables,
-            warning=warning,
-            unknown_variables=scan.unknown_variables,
-        )
-
-    # Everything else needs its fill-points found — including a document with
-    # malformed tags, since handing docxtpl something it cannot parse is never
-    # the right answer.
-    warning: str | None = None
-    candidates: list[Any] = []
-    classifications: list[Any] = []
-    try:
-        candidates = find_all_candidates(docx_bytes)
-        if candidates:
-            classifications = await classify_candidates(
-                candidates=candidates, template_kind=template_kind
-            )
-    except TemplateAnalyzerError as exc:
-        log.warning("template_analyze.llm_failed doc=%s err=%s", document_id, exc)
-        classifications = []
-        warning = str(exc)
-    except Exception as exc:  # noqa: BLE001 — never 500 here, soft-fail with a warning
-        log.exception("template_analyze.llm_unexpected doc=%s", document_id)
-        classifications = []
-        warning = (
-            "AI analyzer hit an unexpected error and was skipped. "
-            "The fields it found are still listed below — pick a value for each "
-            f"one by hand. ({type(exc).__name__})"
-        )
-
-    # Persist the proposals so HR's review survives a page refresh, and so the
-    # renderer reads mappings from the DB rather than from the document.
-    # Unclassified candidates are kept (variable=None) rather than dropped: HR
-    # still needs to see the field and pick a value, otherwise a blank the
-    # classifier didn't understand becomes an invisible gap again.
-    rows = ob_slots.build_slot_rows(
-        org_id=org_id,
-        document_id=document_id,
-        document_version_id=doc_row.get("current_version_id"),
-        docx_bytes=docx_bytes,
-        candidates=candidates,
-        variables_by_candidate={c.candidate_id: c.variable for c in classifications},
-        confidence_by_candidate={c.candidate_id: c.confidence for c in classifications},
-    )
-    await ob_slots.upsert_proposed_slots(
-        org_id=org_id, document_id=document_id, rows=rows
-    )
-    await _set_fill_strategy(
-        document_id=document_id, org_id=org_id, svc=svc, strategy=STRATEGY_SLOTS
-    )
-    slots = await ob_slots.list_slots(document_id=document_id)
-
-    if scan.errors and not warning:
-        warning = (
-            f"{len(scan.errors)} placeholder(s) in this document aren't valid "
-            "template syntax, so they're treated as ordinary blanks to map. "
-            "See the details below."
-        )
-
-    return TemplateAnalyzeResponse(
-        document_id=document_id,
-        template_kind=template_kind,
-        has_placeholders=bool(scan.tags),
-        fill_strategy=STRATEGY_SLOTS,
-        slots=[_slot_to_model(s) for s in slots],
-        text_preview=text[:_TEMPLATE_TEXT_PREVIEW_CHARS],
-        available_variables=available_variables,
-        warning=warning,
-        jinja_errors=scan.errors,
-        unknown_variables=scan.unknown_variables,
-    )
-
-
-# ── Slots review: confirm each fill-point, then preview ─────────────────────
+# ── Blocked on a missing value ──────────────────────────────────────────────
 #
-# HR decides on every fill-point individually and nothing is written into the
-# customer's document at any point — the mapping lives in
-# `template_field_slots`, and the renderer reads it from there.
+# A run blocks when a required template field has no value — "Company Address
+# is required but has no value." Every other block (no template, no confirmed
+# fields, template drift) is fixed in the template library, but this one is a
+# missing piece of data, and the fix is HR typing it. These two endpoints back
+# the form that lets them, rather than sending them off to populate whichever
+# table the field happens to map to.
 
 
-@router.get(
-    "/templates/{document_id}/slots",
-    response_model=TemplateSlotsResponse,
-)
-async def get_template_slots(
-    document_id: str,
-    current_user: dict = Depends(verify_jwt),
-) -> TemplateSlotsResponse:
-    """The template's current fill-points and their review state.
-
-    Read-only, so HR can reload mid-review without re-running detection (and
-    without re-paying for the classifier call)."""
-    _, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    from app.services.agents.onboarding_v2 import template_slots as ob_slots
-    from app.services.agents.onboarding_v2.template_vars import TEMPLATE_VARIABLES
-
-    doc = await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .select("id, template_kind, fill_strategy")
-        .eq("id", document_id)
+def _fetch_run(svc, run_id: str, org_id: str) -> dict[str, Any]:
+    res = (
+        svc.table("onboarding_runs")
+        .select("id, status, blocked_template_kind, field_values")
+        .eq("id", run_id)
         .eq("org_id", org_id)
         .maybe_single()
         .execute()
     )
-    if not doc or not doc.data:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Template not found.")
-
-    slots = await ob_slots.list_slots(document_id=document_id)
-    return TemplateSlotsResponse(
-        document_id=document_id,
-        template_kind=doc.data.get("template_kind") or "loi",
-        fill_strategy=doc.data.get("fill_strategy"),
-        slots=[_slot_to_model(s) for s in slots],
-        available_variables=[
-            {"name": v["name"], "label": v["label"], "description": v["description"]}
-            for v in TEMPLATE_VARIABLES
-        ],
-        pending_count=sum(1 for s in slots if s.get("status") == "proposed"),
-    )
+    if not res or not res.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found.")
+    return res.data
 
 
-@router.patch("/templates/{document_id}/slots/{slot_id}")
-async def decide_template_slot(
-    document_id: str,
-    slot_id: str,
-    body: TemplateSlotDecisionRequest,
+@router.get("/runs/{run_id}/blocking-fields", response_model=BlockingFieldsResponse)
+async def get_blocking_fields(
+    run_id: str,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
-    """Confirm or reject one proposed fill-point.
+    """The fields HR must supply before this run's document can be generated.
 
-    This is the human-in-the-loop step the old flow was missing: it auto-applied
-    every AI proposal and only showed HR a read-only list afterwards. Now nothing
-    reaches a generated document until a person has approved that specific field.
-
-    A rejected slot is kept (not deleted) so re-running detection doesn't keep
-    re-proposing a mapping HR has already turned down.
+    Read off the last generation attempt's `validation_report` rather than
+    re-derived here: that report is what actually blocked the run, so answering
+    it is guaranteed to unblock it. If the newest attempt did not fail
+    validation — no template at all, or a later attempt succeeded — there is
+    nothing to type and the list comes back empty.
     """
-    user_id, org_id, _ = _require_user(current_user)
+    _user_id, org_id, _ = _require_user(current_user)
     svc = get_service_client()
 
-    from app.services.agents.onboarding_v2 import template_slots as ob_slots
-    from app.services.agents.onboarding_v2.template_vars import get_variable_names
+    run = await asyncio.to_thread(lambda: _fetch_run(svc, run_id, org_id))
+    entered = run.get("field_values") or {}
 
-    if body.status == "confirmed":
-        if not body.variable:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Pick a value for this field before confirming it.",
-            )
-        if body.variable not in set(get_variable_names()):
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                f"Unknown value '{body.variable}'.",
-            )
-
-    updated = await ob_slots.set_slot_status(
-        slot_id=slot_id,
-        org_id=org_id,
-        status=body.status,
-        variable=body.variable,
-        user_id=user_id,
-    )
-    if not updated:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Field not found.")
-
-    # Re-opening the mapper means the template is being iterated on again — keep
-    # it out of the agent's reach until HR explicitly saves.
-    await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .update({"template_status": "draft"})
-        .eq("id", document_id)
+    latest = await asyncio.to_thread(
+        lambda: svc.table("generated_documents")
+        .select("id, status, version_id, validation_report, context_snapshot, doc_templates(name)")
         .eq("org_id", org_id)
+        .eq("onboarding_run_id", run_id)
+        .order("created_at", desc=True)
+        .limit(1)
         .execute()
     )
+    row = (latest.data or [None])[0]
+    kind = run.get("blocked_template_kind")
+    if not row or row.get("status") != "validation_failed":
+        return {"document_kind": kind, "fields": []}
 
-    pending = await ob_slots.count_pending(document_id=document_id)
-    return {
-        "status": "ok",
-        "slot": _slot_to_model(updated).model_dump(),
-        "pending_count": pending,
-    }
+    report = row.get("validation_report") or {}
+    context = (row.get("context_snapshot") or {}).get("values") or {}
 
-
-@router.post("/templates/{document_id}/slots")
-async def create_template_slot(
-    document_id: str,
-    body: TemplateSlotCreateRequest,
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Add a fill-point HR found that detection missed.
-
-    No set of heuristics will locate every blank in every customer's document, so
-    this is the recall safety net — without it, an undetectable blank becomes a
-    permanently silent gap in generated contracts. Inserted already-confirmed:
-    HR pointing at the spot *is* the confirmation.
-    """
-    user_id, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    from app.services.agents.onboarding_v2 import template_slots as ob_slots
-    from app.services.agents.onboarding_v2.template_vars import get_variable_names
-
-    if body.variable not in set(get_variable_names()):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, f"Unknown value '{body.variable}'."
-        )
-
-    docx_bytes, doc_row, _ = await _load_template_docx(
-        document_id=document_id, org_id=org_id, svc=svc
-    )
-
-    try:
-        row = await ob_slots.insert_manual_slot(
+    variables = {
+        v["internal_name"]: v
+        for v in await doc_schema.list_variables(
             org_id=org_id,
-            document_id=document_id,
-            document_version_id=doc_row.get("current_version_id"),
-            docx_bytes=docx_bytes,
-            paragraph_index=body.paragraph_index,
-            start_offset=body.start_offset,
-            end_offset=body.end_offset,
-            action=body.action,
-            variable=body.variable,
-            user_id=user_id,
+            version_id=row["version_id"],
+            statuses=(STATUS_CONFIRMED,),
         )
-    except ValueError as exc:
-        # The UI's position doesn't exist in the current bytes — usually a stale
-        # tab. Better to say so than to store an anchor pointing at nothing.
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"That position isn't in this document any more — reload and try again. ({exc})",
-        ) from exc
+    }
 
-    await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .update({"template_status": "draft"})
-        .eq("id", document_id)
-        .eq("org_id", org_id)
-        .execute()
-    )
-    return {"status": "ok", "slot": _slot_to_model(row).model_dump()}
-
-
-@router.post(
-    "/templates/{document_id}/render-preview",
-    response_model=TemplateRenderPreviewResponse,
-)
-async def render_template_preview(
-    document_id: str,
-    current_user: dict = Depends(verify_jwt),
-) -> TemplateRenderPreviewResponse:
-    """Render the confirmed fill-points against sample data.
-
-    Does NOT modify the stored template — it fills a throwaway copy. The stored
-    `.docx` stays exactly as HR uploaded it, for the whole life of the template.
-
-    Also runs the post-render scan and reports anything in the OUTPUT that still
-    looks unfilled, which is how a fill-point no heuristic could see gets caught
-    before a candidate ever sees the document.
-    """
-    _, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    from app.services.agents.onboarding_v2 import template_slots as ob_slots
-    from app.services.agents.onboarding_v2.blank_detector import (
-        scan_for_unfilled_signals,
-    )
-    from app.services.agents.onboarding_v2.render_context import sample_render_context
-    from app.services.agents.onboarding_v2.template_analyzer import extract_text
-    from app.services.pdf import PdfRenderError, PdfRenderUnavailable
-    from app.services.pdf.slot_renderer import SlotDriftError, render_docx_slots_to_pdf
-
-    docx_bytes, doc_row, _ = await _load_template_docx(
-        document_id=document_id, org_id=org_id, svc=svc
-    )
-    template_kind = doc_row.get("template_kind") or "loi"
-
-    all_slots = await ob_slots.list_slots(document_id=document_id)
-    confirmed = [s for s in all_slots if s.get("status") == "confirmed"]
-    pending = sum(1 for s in all_slots if s.get("status") == "proposed")
-
-    context = sample_render_context()
-    try:
-        filled_docx, pdf_bytes = await render_docx_slots_to_pdf(
-            docx_bytes=docx_bytes,
-            slots=confirmed,
-            context=context,
-            template_kind=template_kind,
-        )
-    except SlotDriftError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    except PdfRenderUnavailable as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-    except PdfRenderError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-
-    warnings: list[str] = []
-    try:
-        warnings = scan_for_unfilled_signals(extract_text(filled_docx))
-    except Exception as exc:  # noqa: BLE001 — a warning must never fail the preview
-        log.info("template_preview.unfilled_scan_skipped doc=%s err=%s", document_id, exc)
-
-    preview_url: str | None = None
-    preview_error: str | None = None
-    try:
-        preview_path = f"orgs/{org_id}/onboarding/_previews/{document_id}.pdf"
-
-        def _upload() -> None:
-            svc.storage.from_(ob_storage.STORAGE_BUCKET).upload(
-                path=preview_path,
-                file=pdf_bytes,
-                file_options={"content-type": "application/pdf", "upsert": "true"},
+    fields: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for issue in report.get("errors") or []:
+        name = issue.get("variable")
+        # A slot-level error (an unmapped position, an unknown variable) names
+        # a template problem, not a value HR can type. Those still belong in
+        # `blocked_reason`, which the UI shows above this form.
+        if not name or name in seen or name not in variables:
+            continue
+        seen.add(name)
+        variable = variables[name]
+        prefill = entered.get(name)
+        if prefill in (None, ""):
+            # Only for a value that failed a *format* check: a missing one has
+            # nothing useful to show, and defaults would look like real input.
+            prefill = (
+                context.get(name)
+                if issue.get("code") != "missing_required"
+                else ""
             )
-
-        await asyncio.to_thread(_upload)
-        preview_url = await ob_storage.mint_signed_url(preview_path)
-    except Exception as exc:  # noqa: BLE001 — the render worked; only hosting failed
-        log.warning("template_preview.upload_failed doc=%s err=%s", document_id, exc)
-        preview_error = "Preview rendered but couldn't be stored. Try again."
-
-    return TemplateRenderPreviewResponse(
-        document_id=document_id,
-        template_kind=template_kind,
-        preview_url=preview_url,
-        filled_count=len(confirmed),
-        pending_count=pending,
-        unfilled_warnings=warnings[:20],
-        preview_error=preview_error,
-    )
-
-
-# ── Flat-text review: edit the template as text, preview on demand ──────────
-
-
-@router.get(
-    "/templates/{document_id}/blocks",
-    response_model=TemplateBlocksResponse,
-)
-async def get_template_blocks(
-    document_id: str,
-    current_user: dict = Depends(verify_jwt),
-) -> TemplateBlocksResponse:
-    """Return the current DOCX as an ordered list of editable text blocks.
-
-    HR reviews and edits these lines directly (placeholders stay visible),
-    then persists via POST /templates/{id}/edit-text. Read-only — safe to call
-    repeatedly."""
-    _, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    from app.services.agents.onboarding_v2.template_analyzer import (
-        extract_editable_blocks,
-    )
-
-    docx_bytes, doc_row, _ = await _load_template_docx(
-        document_id=document_id, org_id=org_id, svc=svc
-    )
-    template_kind = doc_row.get("template_kind") or "loi"
-
-    try:
-        blocks = extract_editable_blocks(docx_bytes)
-    except Exception as exc:  # noqa: BLE001 — surface as 422 to HR
-        log.warning("template_blocks.extract_failed doc=%s err=%s", document_id, exc)
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Couldn't read this DOCX. It may be corrupted or password-protected. ({exc})",
-        ) from exc
-
-    return TemplateBlocksResponse(
-        document_id=document_id,
-        template_kind=template_kind,
-        blocks=[
-            TemplateTextBlock(index=b.index, text=b.text, kind=b.kind) for b in blocks
-        ],
-    )
-
-
-@router.post(
-    "/templates/{document_id}/edit-text",
-    response_model=TemplateEditTextResponse,
-)
-async def edit_template_text(
-    document_id: str,
-    body: TemplateEditTextRequest,
-    current_user: dict = Depends(verify_jwt),
-) -> TemplateEditTextResponse:
-    """Write HR's edited text blocks back into the template DOCX in place.
-
-    Each block's `index` locates the paragraph; its `text` overwrites that
-    paragraph's runs, preserving fonts/tables/headers and existing
-    `{{ placeholders }}`. Before persisting we dry-render with sample data so a
-    broken edit (unbalanced braces, unknown variable) is rejected with a clear
-    message rather than silently poisoning the template. Forces the template
-    back to `draft` — HR still has to Save to promote it. Returns a fresh raw
-    preview URL (placeholders visible)."""
-    _, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    from app.services.agents.onboarding_v2.template_analyzer import (
-        TemplateAnalyzerError,
-        apply_text_edits,
-        validate_rendered,
-    )
-
-    docx_bytes, doc_row, storage_path = await _load_template_docx(
-        document_id=document_id, org_id=org_id, svc=svc
-    )
-    template_kind = doc_row.get("template_kind") or "loi"
-
-    edits = {b.index: b.text for b in body.edits}
-    try:
-        new_docx, changed = apply_text_edits(docx_bytes=docx_bytes, edits=edits)
-    except Exception as exc:  # noqa: BLE001 — surface as 422 to HR
-        log.warning("template_edit_text.apply_failed doc=%s err=%s", document_id, exc)
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Couldn't apply your edits to the document. ({exc})",
-        ) from exc
-
-    # Guard: a broken edit (unbalanced {{ }}, unknown variable) must not reach
-    # a run. Dry-render with sample data; on failure, reject WITHOUT persisting
-    # so the good version stays intact and HR sees exactly what to fix.
-    #
-    # Skipped for slots templates, which are never parsed as Jinja: dry-rendering
-    # one through docxtpl would reject a document for containing text that only
-    # LOOKS like a placeholder — the exact false failure this pipeline removed.
-    # Their equivalent guard is the per-field drift check at save time.
-    if doc_row.get("fill_strategy") != "slots":
-        try:
-            await validate_rendered(new_docx, template_kind=template_kind)
-        except TemplateAnalyzerError as exc:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-
-    def _upload() -> None:
-        svc.storage.from_(ob_storage.STORAGE_BUCKET).upload(
-            path=storage_path,
-            file=new_docx,
-            file_options={
-                "content-type": (
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                ),
-                "upsert": "true",
-            },
-        )
-
-    await asyncio.to_thread(_upload)
-
-    await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .update({"template_status": "draft", "file_size_bytes": len(new_docx)})
-        .eq("id", document_id)
-        .eq("org_id", org_id)
-        .execute()
-    )
-
-    # Raw preview — DOCX as-is, placeholders visible, no sample data. Matches
-    # the "show the template as-is" review preview. Best-effort: validation
-    # already passed the strict render, so this should essentially always work.
-    preview_url: str | None = None
-    preview_error: str | None = None
-    try:
-        from app.services.pdf import convert_docx_to_pdf
-
-        pdf_bytes = await convert_docx_to_pdf(new_docx)
-        preview_path = f"orgs/{org_id}/onboarding/_previews/{document_id}.raw.pdf"
-
-        def _preview_upload() -> None:
-            svc.storage.from_(ob_storage.STORAGE_BUCKET).upload(
-                path=preview_path,
-                file=pdf_bytes,
-                file_options={"content-type": "application/pdf", "upsert": "true"},
-            )
-
-        await asyncio.to_thread(_preview_upload)
-        preview_url = await ob_storage.mint_signed_url(preview_path)
-    except Exception as exc:  # noqa: BLE001 — preview is best-effort
-        preview_error = (
-            f"Saved your edits, but couldn't render a preview."
-        )
-        log.info("template_edit_text.preview_failed doc=%s err=%s", document_id, exc)
-
-    log.info(
-        "template_edit_text.success org=%s doc=%s kind=%s changed=%d",
-        org_id, document_id, template_kind, changed,
-    )
-
-    return TemplateEditTextResponse(
-        document_id=document_id,
-        template_kind=template_kind,
-        changed_count=changed,
-        preview_url=preview_url,
-        preview_error=preview_error,
-    )
-
-
-# ── Template draft/save: edit loop + final promotion ───────────────────────
-
-
-@router.post("/templates/{document_id}/replace")
-async def replace_template_docx(
-    document_id: str,
-    file: UploadFile = File(...),
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Overwrite a template's .docx bytes with an HR-edited version.
-
-    Used after HR downloads the .docx, tweaks it in Word, and re-uploads.
-    The template is forced back into `draft` status so the agent doesn't
-    serve a half-edited version — HR has to click Save (POST .../save) to
-    promote it again. Returns a fresh preview signed URL."""
-    _user_id, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    body = await file.read()
-    if not body or not body.startswith(b"PK"):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Upload must be a .docx file (PK zip header missing).",
-        )
-    if len(body) > 25 * 1024 * 1024:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, ".docx too large (>25MB)."
-        )
-
-    _docx_bytes, doc_row, storage_path = await _load_template_docx(
-        document_id=document_id, org_id=org_id, svc=svc
-    )
-
-    def _upload() -> None:
-        svc.storage.from_(ob_storage.STORAGE_BUCKET).upload(
-            path=storage_path,
-            file=body,
-            file_options={
-                "content-type": (
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                ),
-                "upsert": "true",
-            },
-        )
-
-    await asyncio.to_thread(_upload)
-
-    # A wholesale file swap makes every stored anchor meaningless — the paragraph
-    # at index 41 is now a different paragraph. Drop the slots and reset
-    # fill_strategy so HR re-analyzes, rather than leaving anchors that would
-    # either drift-block every run or, worse, resolve to the wrong paragraph.
-    if doc_row.get("fill_strategy") == "slots":
-        from app.services.agents.onboarding_v2 import template_slots as ob_slots
-
-        await ob_slots.delete_slots_for_document(document_id=document_id)
-
-    await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .update(
-            {
-                "template_status": "draft",
-                "file_size_bytes": len(body),
-                "fill_strategy": None,
-            }
-        )
-        .eq("id", document_id)
-        .eq("org_id", org_id)
-        .execute()
-    )
-
-    # Render a fresh preview from the new bytes — best-effort. A straight
-    # conversion, not a filled render: the slots were just dropped and the
-    # strategy reset, so there is nothing mapped to fill with. Pushing the
-    # bytes through docxtpl here would only reintroduce the old failure —
-    # rejecting HR's document for containing text that merely looks like a
-    # placeholder, at the exact moment they're being told to re-analyze it.
-    template_kind = doc_row.get("template_kind") or "loi"
-    preview_url: str | None = None
-    preview_error: str | None = None
-    try:
-        from app.services.pdf import convert_docx_to_pdf
-
-        pdf_bytes = await convert_docx_to_pdf(body)
-        preview_path = f"orgs/{org_id}/onboarding/_previews/{document_id}.raw.pdf"
-
-        def _preview_upload() -> None:
-            svc.storage.from_(ob_storage.STORAGE_BUCKET).upload(
-                path=preview_path,
-                file=pdf_bytes,
-                file_options={"content-type": "application/pdf", "upsert": "true"},
-            )
-
-        await asyncio.to_thread(_preview_upload)
-        preview_url = await ob_storage.mint_signed_url(preview_path)
-    except Exception as exc:  # noqa: BLE001 — preview is best-effort
-        preview_error = (
-            f"Uploaded your .docx, but couldn't render a preview of it "
-            f"({type(exc).__name__})."
-        )
-        log.info(
-            "template_replace.preview_render_failed doc=%s err=%s",
-            document_id, exc,
-        )
+        fields.append({
+            "internal_name": name,
+            "label": variable.get("display_name") or name.replace("_", " ").title(),
+            "data_type": variable.get("data_type") or "text",
+            "description": variable.get("description"),
+            "example_value": variable.get("example_value"),
+            "code": issue.get("code") or "missing_required",
+            "message": issue.get("message") or "",
+            "value": str(prefill or ""),
+        })
 
     return {
-        "status": "ok",
-        "template_kind": template_kind,
-        "preview_url": preview_url,
-        "preview_error": preview_error,
-        "file_bytes": len(body),
+        "document_kind": kind,
+        "template_name": (row.get("doc_templates") or {}).get("name"),
+        "generated_document_id": row.get("id"),
+        "fields": fields,
     }
 
 
-@router.post("/templates/{document_id}/save")
-async def save_template(
-    document_id: str,
+@router.post("/runs/{run_id}/field-values", response_model=RunFieldValuesResponse)
+async def save_field_values(
+    run_id: str,
+    body: RunFieldValuesRequest,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
-    """Promote a draft template to `active`. After this:
-      * the OnboardingV2Agent will pick it up (fetch_template_docx filters
-        by template_status='active');
-      * a fan-out `template_uploaded` event resumes any run parked on
-        `blocked_missing_template` (or `blocked_template_drift`) for this kind.
+    """Store HR's answers on the run and re-drive the agent.
 
-    For slots templates this is also the gate that makes review mandatory: a
-    template with fields nobody has looked at yet cannot go live, and neither can
-    one whose confirmed fields no longer match the document text.
+    Saving and resuming are one action on purpose: HR filled the form to
+    unblock the run, and a saved value that sits there until someone
+    remembers to press Re-run is the same stuck run with extra steps.
     """
-    _user_id, org_id, _ = _require_user(current_user)
+    user_id, org_id, _ = _require_user(current_user)
     svc = get_service_client()
 
-    doc = await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .select("id, template_kind, template_status, fill_strategy")
-        .eq("id", document_id)
-        .eq("org_id", org_id)
-        .maybe_single()
-        .execute()
-    )
-    if not doc or not doc.data:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Template not found.")
-    if not doc.data.get("template_kind"):
+    run = await asyncio.to_thread(lambda: _fetch_run(svc, run_id, org_id))
+    if run.get("status") in ("completed", "cancelled"):
         raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Tag this document with a template_kind first.",
+            status.HTTP_409_CONFLICT,
+            "This run is closed — its documents can no longer be regenerated.",
         )
 
-    template_kind = doc.data["template_kind"]
+    merged = dict(run.get("field_values") or {})
+    for name, value in body.values.items():
+        cleaned = value.strip()
+        if cleaned:
+            merged[name] = cleaned
+        else:
+            merged.pop(name, None)
 
-    if doc.data.get("fill_strategy") == "slots":
-        from app.services.agents.onboarding_v2 import template_slots as ob_slots
-
-        pending = await ob_slots.count_pending(document_id=document_id)
-        if pending:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                f"{pending} field(s) still need review. Confirm or dismiss each one "
-                "before saving — an unreviewed field won't be filled in.",
-            )
-
-        # Catch drift here rather than letting a run discover it: a template
-        # edited after its fields were confirmed must be re-confirmed, not
-        # promoted to active and then blocked on first use.
-        confirmed = await ob_slots.list_slots(
-            document_id=document_id, confirmed_only=True
-        )
-        if confirmed:
-            docx_bytes, _doc_row, _path = await _load_template_docx(
-                document_id=document_id, org_id=org_id, svc=svc
-            )
-            _ok, drifted = ob_slots.check_drift(
-                docx_bytes=docx_bytes, slots=confirmed
-            )
-            if drifted:
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    f"{len(drifted)} field(s) point at text that has since changed. "
-                    "Run 'Find fields' again and re-confirm them before saving.",
-                )
     await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .update({"template_status": "active"})
-        .eq("id", document_id)
+        lambda: svc.table("onboarding_runs")
+        .update({"field_values": merged})
+        .eq("id", run_id)
         .eq("org_id", org_id)
         .execute()
     )
 
-    # Mark any older active template of the same kind as `archived` — we
-    # keep only one active template per kind per org so the agent's
-    # most-recent-active lookup is deterministic.
-    await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .update({"template_status": "archived"})
-        .eq("org_id", org_id)
-        .eq("template_kind", template_kind)
-        .eq("template_status", "active")
-        .neq("id", document_id)
-        .execute()
+    # The values themselves stay out of the event: a filled field can be a
+    # salary or a home address, and the timeline is read by anyone with access
+    # to the run. The field names are enough to explain what changed.
+    await ob_storage.log_onboarding_event(
+        org_id=org_id,
+        run_id=run_id,
+        actor_kind="hr",
+        event_type="fields_filled",
+        message=(
+            "HR supplied "
+            + ", ".join(sorted(body.values.keys())[:6])
+            + " for the blocked document."
+        ),
+        actor_user_id=user_id,
+        metadata={"fields": sorted(body.values.keys())},
     )
 
     inngest_client = get_inngest_client()
     await inngest_client.send(
         inngest.Event(
-            name="onboarding_v2/template_uploaded",
-            data={"org_id": org_id, "template_kind": template_kind},
+            name="onboarding_v2/resume",
+            data={"onboarding_run_id": run_id, "org_id": org_id},
         )
     )
-    return {"status": "ok", "template_kind": template_kind, "saved": True}
+    return {"status": "ok", "saved": len(merged), "resumed": True}
 
 
-@router.get("/templates/{document_id}/docx-url")
-async def get_template_docx_url(
-    document_id: str,
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Return a fresh short-lived signed URL pointing to the template's
-    current .docx bytes. The UI uses this to expose a Download button so HR
-    can grab the file, edit it in Word, and re-upload via /replace."""
-    _user_id, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    _docx_bytes, doc_row, storage_path = await _load_template_docx(
-        document_id=document_id, org_id=org_id, svc=svc
-    )
-    signed = await ob_storage.mint_signed_url(storage_path)
-    if not signed:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "Couldn't mint a download URL. Try again.",
-        )
-    return {
-        "status": "ok",
-        "docx_url": signed,
-        "template_kind": doc_row.get("template_kind"),
-        "name": doc_row.get("name"),
-    }
+# ── Templates ───────────────────────────────────────────────────────────────
+#
+# The template library, field detection, and the slots review loop used to
+# live here. They now live in `routers/document_templates.py`, backed by
+# `services/documents` and the tables added in migration 099 — templates are
+# a first-class entity with versions and typed fields rather than a
+# `documents` row wearing a `template_kind` column.
+#
+# The agent reaches templates through `services/documents/generation`, so
+# nothing in this router needs to know about them any more.
 
 
 @router.get("/runs/{run_id}/loi/docx-url")

@@ -32,7 +32,9 @@ from app.models import (
     EnvelopeStatus,
     SignerOut,
 )
-from app.storage import download_pdf, expires_at_iso
+from app.storage import download_pdf, expires_at_iso, upload_pdf
+from app.inngest_events import send_event
+from app.routers.webhooks import _DONE_STATUSES, _source_event
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +43,31 @@ router = APIRouter(
 )
 
 PUBLIC_TOKEN_TTL_DAYS = 14
+
+# The envelope title is what the *signer* reads above the document in the
+# embedded viewer, so it has to be a sentence a candidate understands rather
+# than our internal kind slugs. Keep in sync with apps/web's
+# lib/onboarding-documents.ts.
+DOCUMENT_KIND_LABELS = {
+    "loi": "Letter of Intent",
+    "appointment_letter": "Appointment Letter",
+    "nda": "NDA",
+    "induction": "Induction Document",
+    "offer_bundle": "Offer Bundle",
+}
+
+
+def _envelope_title(kinds: list[str], signer_name: str) -> str:
+    """e.g. "Letter of Intent — Aniket Gupta".
+
+    The run_id used to be the suffix; it made the title unreadable for the one
+    person who actually sees it, and traceability doesn't depend on it —
+    `onboarding_signing_envelopes` maps documenso_envelope_id → run_id.
+    """
+    labels = [
+        DOCUMENT_KIND_LABELS.get(k, k.replace("_", " ").title()) for k in kinds
+    ]
+    return f"{' & '.join(labels) or 'Document'} — {signer_name}"
 
 
 @router.post("", response_model=CreateEnvelopeResponse, status_code=status.HTTP_201_CREATED)
@@ -72,7 +99,7 @@ async def create_envelope(body: CreateEnvelopeRequest) -> CreateEnvelopeResponse
         extract_fields_and_clean, pdf_bytes, roles=roles
     )
 
-    title = f"{', '.join(body.document_kinds) or 'Document'} — {body.run_id[:8]}"
+    title = _envelope_title(body.document_kinds, sorted_signers[0].name)
     try:
         result = await documenso.create_and_distribute(
             title=title,
@@ -216,3 +243,159 @@ async def void_envelope(envelope_id: str) -> dict[str, str]:
         .execute()
     )
     return {"status": "voided"}
+
+
+@router.post("/{envelope_id}/reconcile")
+async def reconcile_envelope(envelope_id: str) -> dict[str, Any]:
+    svc = get_service_client()
+    env_res = await asyncio.to_thread(
+        lambda: svc.table("onboarding_signing_envelopes")
+        .select("*")
+        .eq("envelope_id", envelope_id)
+        .eq("provider", "documenso")
+        .maybe_single()
+        .execute()
+    )
+    env = env_res.data if env_res else None
+    if not env:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Envelope not found.")
+
+    if env.get("status") in ("completed", "voided", "declined", "expired"):
+        return {"status": "no_op", "envelope_status": env.get("status")}
+
+    documenso_envelope_id = env.get("documenso_envelope_id")
+    if not documenso_envelope_id:
+        return {"status": "no_op", "envelope_status": env.get("status")}
+
+    try:
+        detail = await documenso._get_envelope(str(documenso_envelope_id), cfg=documenso._require_configured())
+    except (documenso.DocumensoError, documenso.DocumensoUnavailable) as exc:
+        log.warning("esign.documenso_reconcile_fetch_failed envelope=%s err=%s", envelope_id, exc)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Documenso fetch failed: {exc}") from exc
+
+    done_emails = {
+        str(r.get("email", "")).strip().lower()
+        for r in (detail.get("recipients") or [])
+        if str(r.get("signingStatus") or r.get("status") or "").upper() in _DONE_STATUSES
+    }
+
+    signers: list[dict[str, Any]] = env.get("signers") or []
+    now_iso = datetime.now(UTC).isoformat()
+    changed = False
+    for s in signers:
+        if s.get("status") != "completed" and s.get("email", "").strip().lower() in done_emails:
+            s["status"] = "completed"
+            s["completed_at"] = now_iso
+            changed = True
+
+    documenso_status = str(detail.get("status") or "").upper()
+    all_done = documenso_status in ("COMPLETED",) or all(
+        s.get("status") == "completed" for s in signers
+    )
+
+    if not all_done:
+        if changed:
+            await asyncio.to_thread(
+                lambda: svc.table("onboarding_signing_envelopes")
+                .update({"signers": signers})
+                .eq("envelope_id", envelope_id)
+                .execute()
+            )
+            pending = [s for s in signers if s.get("status") != "completed"]
+            if pending:
+                nxt = min(pending, key=lambda s: s.get("routing_order", 1))
+                settings = get_settings()
+                await send_event(
+                    "esign/signer_turn",
+                    {
+                        "org_id": env["org_id"],
+                        "run_id": env["run_id"],
+                        "envelope_id": env["envelope_id"],
+                        "document_kinds": env.get("document_kinds") or [],
+                        "signer_email": nxt["email"],
+                        "signer_name": nxt["name"],
+                        "signer_role": nxt["role"],
+                        "signing_url": f"{settings.app_url.rstrip('/')}/sign/{nxt['public_token']}",
+                    },
+                )
+        return {
+            "status": "reconciled",
+            "changed": changed,
+            "signers": signers,
+            "envelope_status": env.get("status", "sent")
+        }
+
+    source_meta = _source_event(env.get("events") or [])
+    prefix = source_meta["pdf_path"].rsplit(".pdf", 1)[0]
+    final_path = f"{prefix}_signed.pdf"
+
+    try:
+        sealed = await documenso.download_signed_pdf(str(documenso_envelope_id))
+        await upload_pdf(final_path, sealed)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("esign.documenso_reconcile_seal_fetch_failed envelope=%s err=%s", documenso_envelope_id, exc)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Signed PDF not ready yet; retry.",
+        ) from exc
+
+    new_events = (env.get("events") or []) + [
+        {"at": now_iso, "event": "envelope_completed", "pdf_path": final_path}
+    ]
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_signing_envelopes")
+        .update(
+            {
+                "signers": signers,
+                "events": new_events,
+                "status": "completed",
+                "completed_at": now_iso,
+                "signed_pdf_path": final_path,
+            }
+        )
+        .eq("envelope_id", envelope_id)
+        .execute()
+    )
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_documents")
+        .update(
+            {
+                "sign_status": "signed_by_candidate",
+                "esign_status": "completed",
+                "esign_completed_at": now_iso,
+                "signed_pdf_path": final_path,
+            }
+        )
+        .eq("run_id", env["run_id"])
+        .in_("kind", env.get("document_kinds") or [])
+        .execute()
+    )
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_events")
+        .insert(
+            {
+                "org_id": env["org_id"],
+                "run_id": env["run_id"],
+                "actor_kind": "candidate",
+                "event_type": "esign_envelope_completed",
+                "message": f"All signers completed via Documenso (Reconciled). Sealed document at {final_path}.",
+                "metadata": {
+                    "envelope_id": env["envelope_id"],
+                    "documenso_envelope_id": documenso_envelope_id,
+                },
+            }
+        )
+        .execute()
+    )
+
+    await send_event(
+        source_meta["completion_event"],
+        {"onboarding_run_id": env["run_id"], "org_id": env["org_id"]},
+    )
+    
+    return {
+        "status": "reconciled",
+        "changed": changed,
+        "signers": signers,
+        "envelope_status": "completed"
+    }

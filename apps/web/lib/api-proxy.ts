@@ -109,6 +109,56 @@ export async function proxyJson(
 }
 
 /**
+ * Forward a multipart/form-data request (file uploads) to FastAPI.
+ *
+ * Deliberately does NOT set Content-Type: the boundary is part of that header
+ * and only `fetch` knows it for the FormData it is about to serialize. Setting
+ * it by hand produces a body FastAPI cannot parse.
+ */
+export async function proxyMultipart(
+  request: NextRequest,
+  path: string,
+  options: { method?: "POST" | "PATCH" | "PUT" } = {},
+): Promise<NextResponse> {
+  const requestId = coerceRequestId(request.headers.get(REQUEST_ID_HEADER));
+
+  const token = await getAccessToken();
+  if (!token) return unauthorized(requestId);
+
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return NextResponse.json(
+      {
+        code: "bad_request",
+        message: "Invalid upload. Attach a file and try again.",
+        request_id: requestId,
+      },
+      { status: 400, headers: { [REQUEST_ID_HEADER]: requestId } },
+    );
+  }
+
+  const upstream = await fetch(`${API_URL}${path}`, {
+    method: options.method ?? "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      [REQUEST_ID_HEADER]: requestId,
+    },
+    body: form,
+    cache: "no-store",
+  });
+
+  const outboundRequestId =
+    upstream.headers.get(REQUEST_ID_HEADER) ?? requestId;
+  const data = await upstream.json().catch(() => ({}));
+  return NextResponse.json(data, {
+    status: upstream.status,
+    headers: { [REQUEST_ID_HEADER]: outboundRequestId },
+  });
+}
+
+/**
  * Convenience for the very common shape: read JSON body off the inbound
  * request and POST it upstream. Returns the standard error envelope on bad
  * input rather than letting `request.json()` throw.

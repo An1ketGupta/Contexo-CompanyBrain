@@ -1,39 +1,31 @@
-"""PDF generation adapters — HTML→PDF (WeasyPrint) and DOCX-template→PDF
-(docxtpl + Gotenberg).
+"""PDF generation adapters — HTML→PDF (WeasyPrint) and DOCX→PDF (Gotenberg).
 
-Two distinct rendering paths because the Onboarding v2 agent has two distinct
-content shapes:
+  1. **HTML→PDF (WeasyPrint)** — semantic HTML through a fixed Jinja layout,
+     with @page rules for headers/footers/page numbers and Unicode (₹,
+     Devanagari) via system fonts in the Docker image.
 
-  1. **HTML→PDF (WeasyPrint)** — used for the LLM-synthesized induction
-     document and for any in-product template the team wants to ship with
-     full brand control. We send semantic HTML through a fixed Jinja layout
-     and WeasyPrint handles @page rules (headers/footers/page numbers) and
-     Unicode (₹, Devanagari) via system fonts in the Docker image.
+  2. **DOCX→PDF (Gotenberg)** — converts an already-filled `.docx`. The
+     sidecar keeps a ~1GB LibreOffice install out of the FastAPI image.
 
-  2. **DOCX-template→PDF (docxtpl + Gotenberg)** — used for customer-uploaded
-     LOI / Appointment Letter / NDA templates. HR teams maintain these in
-     Word with their lawyer's exact clause wording; we fill the placeholders
-     with docxtpl (preserves 100% of the original formatting), then convert
-     to PDF via the Gotenberg sidecar (LibreOffice route). The sidecar keeps
-     a ~1GB LibreOffice install out of the FastAPI image.
+Note what is NOT here any more: the docxtpl path that rendered a customer's
+`.docx` as Jinja source. It required the customer's document to be *valid
+template source*, so a single hand-typed `{{ Signing Date }}` failed the whole
+render with a parser error HR could not act on. Filling a document is now
+positional splicing in `services/documents/generation`, which has no syntax to
+get wrong; this module only converts the result.
 
-Both paths return raw PDF bytes — the caller is responsible for uploading to
-Supabase Storage and persisting the row. We deliberately don't wire storage
-in here so unit tests can render without a network round-trip.
+Both paths return raw PDF bytes — the caller uploads and persists. Storage is
+deliberately not wired in here so unit tests can render without a network
+round-trip.
 
 Failure modes:
-    * `PdfRenderUnavailable` — the system/sidecar isn't configured. The agent
-      surfaces this as a blocked_missing_template-style error so HR sees
-      "PDF service unavailable" instead of a generic 500.
-    * `PdfRenderError` — render attempt failed (bad template syntax, malformed
-      HTML, Gotenberg upstream error). The agent logs + retries via Inngest.
+    * `PdfRenderUnavailable` — the system/sidecar isn't configured.
+    * `PdfRenderError` — the render attempt failed.
 """
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
-from typing import Any
 
 import httpx
 
@@ -52,24 +44,6 @@ class PdfRenderUnavailable(RuntimeError):
     For WeasyPrint this means the wheel isn't importable; for Gotenberg this
     means GOTENBERG_URL isn't set. The agent treats this as a blocked-state
     so the operator can fix the deployment before retrying."""
-
-
-class TemplateVariableError(PdfRenderError):
-    """The customer's template references a placeholder that isn't in the
-    render context (typo, stale template). We surface the missing name so HR
-    knows exactly which `{{ ... }}` to fix in their DOCX."""
-
-    def __init__(self, variable_name: str, *, template_kind: str | None = None):
-        self.variable_name = variable_name
-        self.template_kind = template_kind
-        detail = (
-            f"Template references undefined variable: '{variable_name}'."
-            " Either remove the placeholder from your DOCX template or supply"
-            " the value when triggering onboarding."
-        )
-        if template_kind:
-            detail = f"[{template_kind}] " + detail
-        super().__init__(detail)
 
 
 # ── HTML → PDF (WeasyPrint) ────────────────────────────────────────────────
@@ -111,69 +85,7 @@ async def render_html_to_pdf(
     return await asyncio.to_thread(_render)
 
 
-# ── DOCX-template → PDF (docxtpl + Gotenberg) ──────────────────────────────
-
-async def fill_docx_template(
-    *,
-    template_bytes: bytes,
-    context: dict[str, Any],
-    strict: bool = True,
-    template_kind: str | None = None,
-) -> bytes:
-    """Render a customer-uploaded .docx template with Jinja2-style
-    {{ placeholders }} via docxtpl. Returns the filled .docx bytes.
-
-    Kept separate from the PDF conversion so callers can store the filled
-    .docx alongside the PDF (handy for later edits + an audit trail of
-    exactly what got sent).
-
-    `strict=True` (default) uses Jinja2 StrictUndefined so missing variables
-    raise instead of silently leaving `{{ unknown_var }}` in the output —
-    a misspelled placeholder must never reach a legally-binding PDF.
-
-    `template_kind` is purely informational and only used to enrich the
-    TemplateVariableError surfaced to HR.
-    """
-    try:
-        from docxtpl import DocxTemplate  # type: ignore[import-not-found]
-        from jinja2 import Environment, StrictUndefined
-        from jinja2.exceptions import UndefinedError
-    except ImportError as exc:
-        raise PdfRenderUnavailable(
-            "docxtpl not installed. Add `docxtpl` to pyproject.toml."
-        ) from exc
-
-    def _fill() -> bytes:
-        try:
-            tpl = DocxTemplate(io.BytesIO(template_bytes))
-            if strict:
-                # Pass a Jinja env with StrictUndefined so a typo in the
-                # customer's DOCX raises rather than rendering silently.
-                env = Environment(undefined=StrictUndefined)
-                tpl.render(context, jinja_env=env)
-            else:
-                tpl.render(context)
-            out = io.BytesIO()
-            tpl.save(out)
-            return out.getvalue()
-        except UndefinedError as exc:
-            # Message looks like: "'unknown_var' is undefined"
-            msg = str(exc)
-            # Heuristic extraction of the variable name. Jinja always wraps
-            # the name in single quotes; fall back to the full message if
-            # the format ever changes.
-            name = "<unknown>"
-            if "'" in msg:
-                try:
-                    name = msg.split("'", 2)[1]
-                except IndexError:
-                    pass
-            raise TemplateVariableError(name, template_kind=template_kind) from exc
-        except Exception as exc:  # noqa: BLE001
-            raise PdfRenderError(f"docxtpl fill failed: {exc}") from exc
-
-    return await asyncio.to_thread(_fill)
-
+# ── DOCX → PDF (Gotenberg) ─────────────────────────────────────────────────
 
 async def convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
     """Convert a .docx to PDF via the Gotenberg sidecar's LibreOffice route.
@@ -218,26 +130,3 @@ async def convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
         raise PdfRenderError("Gotenberg returned non-PDF payload.")
     return pdf
 
-
-async def render_docx_template_to_pdf(
-    *,
-    template_bytes: bytes,
-    context: dict[str, Any],
-    strict: bool = True,
-    template_kind: str | None = None,
-) -> tuple[bytes, bytes]:
-    """End-to-end render: fill the .docx template with `context`, then
-    convert to PDF via Gotenberg.
-
-    Returns (filled_docx_bytes, pdf_bytes). The caller can store both; we
-    keep the .docx around because it's the only artifact that's editable if
-    HR wants to tweak wording before sending.
-    """
-    filled_docx = await fill_docx_template(
-        template_bytes=template_bytes,
-        context=context,
-        strict=strict,
-        template_kind=template_kind,
-    )
-    pdf_bytes = await convert_docx_to_pdf(filled_docx)
-    return filled_docx, pdf_bytes

@@ -17,6 +17,18 @@ services:
       NEXT_PUBLIC_WEBAPP_URL: ${NEXT_PUBLIC_WEBAPP_URL}
       NEXT_PRIVATE_INTERNAL_WEBAPP_URL: ${NEXT_PRIVATE_INTERNAL_WEBAPP_URL:-http://localhost:3000}
 
+      # ── Webhook egress ──────────────────────────────────────────────────
+      # Documenso refuses to deliver a webhook whose host resolves to a
+      # private/loopback address ("Webhook URL resolves to a private or
+      # loopback address", responseCode 0 in the WebhookCall table). Locally
+      # the only route from this container back to apps/esign IS a private
+      # address, so every completion event is dropped and envelopes sit at
+      # 'sent' forever. This allowlists that one hostname.
+      #
+      # Local dev only — leave EMPTY in production, where the adapter is
+      # reached over a public hostname and this is real SSRF defence.
+      NEXT_PRIVATE_WEBHOOK_SSRF_BYPASS_HOSTS: ${NEXT_PRIVATE_WEBHOOK_SSRF_BYPASS_HOSTS:-}
+
       # ── Database ────────────────────────────────────────────────────────
       NEXT_PRIVATE_DATABASE_URL: ${NEXT_PRIVATE_DATABASE_URL}
       NEXT_PRIVATE_DIRECT_DATABASE_URL: ${NEXT_PRIVATE_DIRECT_DATABASE_URL:-${NEXT_PRIVATE_DATABASE_URL}}

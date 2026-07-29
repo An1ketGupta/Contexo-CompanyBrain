@@ -5,7 +5,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class BgvReferenceInput(BaseModel):
@@ -58,6 +58,14 @@ class BgvReferenceRead(BaseModel):
     response_role_description: str | None = None
 
 
+class EsignSignerRead(BaseModel):
+    """Per-signer status within a signing envelope."""
+    role: str
+    name: str
+    status: str  # "pending" | "completed"
+    completed_at: datetime | None = None
+
+
 class OnboardingDocumentRead(BaseModel):
     id: str
     kind: str
@@ -78,6 +86,9 @@ class OnboardingDocumentRead(BaseModel):
     esign_status: str | None = None
     esign_signing_url: str | None = None
     esign_completed_at: datetime | None = None
+    # Per-signer statuses from the signing envelope — lets the UI show
+    # individual progress (e.g. "HR signed ✓ / Candidate pending").
+    esign_signers: list[EsignSignerRead] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -202,6 +213,65 @@ class CandidateReferenceItem(BaseModel):
 
 class CandidateReferencesSubmit(BaseModel):
     references: list[CandidateReferenceItem] = Field(..., min_length=1, max_length=4)
+
+
+class BlockingFieldRead(BaseModel):
+    """One template field HR has to answer before the run can continue.
+
+    Derived from the validation report of the last failed generation, enriched
+    from `doc_template_variables` so the form can label and type the input
+    rather than showing a raw `internal_name`.
+    """
+
+    internal_name: str
+    label: str
+    data_type: str = "text"
+    description: str | None = None
+    example_value: str | None = None
+    code: str
+    message: str
+    # Prefilled with what HR typed before, or with the value that failed a
+    # format check — correcting a wrong date beats retyping it from scratch.
+    value: str = ""
+
+
+class BlockingFieldsResponse(BaseModel):
+    """Empty `fields` means the block is not something a value can fix (no
+    template uploaded, no fields confirmed) and the UI should keep pointing at
+    the template library instead."""
+
+    document_kind: str | None = None
+    template_name: str | None = None
+    generated_document_id: str | None = None
+    fields: list[BlockingFieldRead] = Field(default_factory=list)
+
+
+class RunFieldValuesRequest(BaseModel):
+    """HR's answers, keyed by `doc_template_variables.internal_name`.
+
+    A blank value clears the stored one rather than writing "", so the field
+    goes back to resolving from the candidate profile.
+    """
+
+    values: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("values")
+    @classmethod
+    def _bounded(cls, v: dict[str, str]) -> dict[str, str]:
+        if len(v) > 60:
+            raise ValueError("Too many fields in one save.")
+        for name, value in v.items():
+            if not name or len(name) > 80:
+                raise ValueError(f"'{name}' is not a valid field name.")
+            if len(value) > 2000:
+                raise ValueError(f"The value for '{name}' is too long.")
+        return v
+
+
+class RunFieldValuesResponse(BaseModel):
+    status: str
+    saved: int
+    resumed: bool
 
 
 class HrReferencesOverrideRequest(BaseModel):

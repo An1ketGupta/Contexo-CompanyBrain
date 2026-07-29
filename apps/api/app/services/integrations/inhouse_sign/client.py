@@ -113,6 +113,12 @@ async def create_envelope(
     )
 
 
+async def reconcile_envelope(envelope_id: str) -> dict[str, Any]:
+    """Ask apps/esign to reconcile an envelope's signer statuses against
+    Documenso. Returns {"status": "reconciled"|"no_op", "changed": bool, ...}."""
+    return await _request("POST", f"/envelopes/{envelope_id}/reconcile")
+
+
 async def void_envelopes_for_run(*, org_id: str, run_id: str, reason: str) -> int:  # noqa: ARG001
     if not is_configured():
         return 0
@@ -153,3 +159,10 @@ def merge_pdfs(pdf_byte_list: list[bytes]) -> bytes:
         return merged.tobytes()
     finally:
         merged.close()
+
+
+async def reconcile_envelope(envelope_id: str) -> dict[str, Any]:
+    """Ask apps/esign to reconcile an envelope's signer statuses against
+    Documenso (best-effort). Returns {"status": "reconciled"|"no_op",
+    "changed": bool, "signers": [...], "envelope_status": ...}."""
+    return await _request("POST", f"/envelopes/{envelope_id}/reconcile")

@@ -263,3 +263,211 @@ export interface PromptTemplate {
   created_at: string;
   updated_at: string;
 }
+
+// ── Document generation pipeline ───────────────────────────────────────────
+// Templates, their versions, and the typed fields detected inside them.
+// Distinct from `PromptTemplate` above, which is a chat prompt: these are
+// uploaded .docx/.pdf files that get filled per candidate and emailed out.
+
+export type DocumentDataType =
+  | "text"
+  | "email"
+  | "phone"
+  | "currency"
+  | "date"
+  | "number"
+  | "boolean"
+  | "address"
+  | "country"
+  | "state"
+  | "city"
+  | "designation"
+  | "department"
+  | "manager"
+  | "company"
+  | "signature_block"
+  | "custom";
+
+export type ReviewStatus = "proposed" | "confirmed" | "rejected";
+export type DocTemplateStatus = "draft" | "active" | "archived";
+export type AnalysisStatus =
+  | "pending"
+  | "analyzing"
+  | "completed"
+  | "failed"
+  | "manual";
+
+export interface DocumentType {
+  id: string;
+  key: string;
+  label: string;
+  description: string | null;
+  is_system: boolean;
+}
+
+export interface DocTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  status: DocTemplateStatus;
+  is_default: boolean;
+  document_type_id: string;
+  document_type_key: string | null;
+  document_type_label: string | null;
+  current_version_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface DocTemplateVersion {
+  id: string;
+  version_no: number;
+  original_filename: string;
+  mime_type: string;
+  file_bytes: number | null;
+  file_sha256: string;
+  analysis_status: AnalysisStatus;
+  analysis_error: string | null;
+  analyzed_at: string | null;
+  detected_type_id: string | null;
+  detected_type_confidence: number | null;
+  created_at: string | null;
+}
+
+export interface DocTemplateVariable {
+  id: string;
+  internal_name: string;
+  display_name: string;
+  description: string | null;
+  data_type: DocumentDataType;
+  is_required: boolean;
+  default_value: string | null;
+  validation_rules: Record<string, unknown>;
+  aliases: string[];
+  example_value: string | null;
+  /** 0–1. Null when a human created the field. */
+  confidence: number | null;
+  status: ReviewStatus;
+  source: "ai" | "manual";
+}
+
+export interface DocTemplateSlot {
+  id: string;
+  variable_id: string | null;
+  /** internal_name of the bound variable, flattened by the API. */
+  variable: string | null;
+  variable_label: string | null;
+  variable_type: DocumentDataType | null;
+  paragraph_index: number;
+  paragraph_kind: "body" | "table" | "header" | "footer";
+  start_offset: number;
+  end_offset: number;
+  action: "replace_span" | "insert_after_label" | "insert_empty_cell";
+  /** What sits at this position today — the text a generation overwrites. */
+  original_text: string;
+  context_before: string;
+  context_after: string;
+  confidence: number | null;
+  status: ReviewStatus;
+  source: "ai" | "manual";
+}
+
+export interface DocTemplateSchema {
+  version: DocTemplateVersion;
+  variables: DocTemplateVariable[];
+  slots: DocTemplateSlot[];
+  /** Above this, the builder pre-selects the field for confirmation. */
+  confirm_threshold: number;
+}
+
+export interface DocAnalyzeResult {
+  status: AnalysisStatus;
+  detected_type: string | null;
+  detected_type_confidence: number | null;
+  candidates_found: number;
+  variables_created: number;
+  variables_refreshed: number;
+  slots_created: number;
+  slots_refreshed: number;
+  truncated: boolean;
+  error: string | null;
+}
+
+export interface DocPreviewResult {
+  docx_url: string | null;
+  pdf_url: string | null;
+  warnings: string[];
+  used_values: Record<string, unknown>;
+}
+
+export type GeneratedDocumentStatus =
+  | "pending"
+  | "validation_failed"
+  | "generating"
+  | "generation_failed"
+  | "generated"
+  | "approved"
+  | "rejected"
+  | "sending"
+  | "sent"
+  | "send_failed";
+
+export interface ValidationIssue {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+  variable: string | null;
+}
+
+export interface ValidationReport {
+  ok: boolean;
+  errors: ValidationIssue[];
+  warnings: ValidationIssue[];
+}
+
+export interface GeneratedFile {
+  format: "docx" | "pdf";
+  url: string | null;
+}
+
+export interface GeneratedDocument {
+  id: string;
+  status: GeneratedDocumentStatus;
+  template_id: string;
+  template_name: string | null;
+  version_id: string;
+  generation_no: number;
+  onboarding_run_id: string | null;
+  validation_report: ValidationReport | Record<string, never>;
+  /** { values: {name: value}, sources: {name: "offer.start_date"} } */
+  context_snapshot: {
+    values?: Record<string, unknown>;
+    sources?: Record<string, string | null>;
+  };
+  candidate_snapshot: Record<string, Record<string, unknown>>;
+  error_message: string | null;
+  files: GeneratedFile[];
+  generated_at: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
+  rejection_reason: string | null;
+  created_at: string | null;
+}
+
+/** Outcome codes from POST /generated-documents. Only `generated` produced a
+ * document; the rest are states HR resolves rather than errors to throw. */
+export type GenerateOutcome =
+  | "generated"
+  | "missing_template"
+  | "no_confirmed_fields"
+  | "validation_failed"
+  | "template_drift"
+  | "render_failed"
+  | "no_candidate";
+
+export interface GenerateResult {
+  outcome: GenerateOutcome;
+  document: GeneratedDocument | null;
+  warnings: string[];
+  error: string | null;
+}

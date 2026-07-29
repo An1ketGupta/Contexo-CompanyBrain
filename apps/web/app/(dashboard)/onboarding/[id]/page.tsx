@@ -24,6 +24,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill, type PillTone } from "@/components/actual/kit";
+import { DOCUMENT_KIND_LABEL as DOC_LABEL } from "@/lib/onboarding-documents";
 
 interface ReferenceRow {
   id: string;
@@ -43,6 +44,13 @@ interface ReferenceRow {
   response_role_description: string | null;
 }
 
+interface EsignSigner {
+  role: string;
+  name: string;
+  status: string; // "pending" | "completed"
+  completed_at: string | null;
+}
+
 interface DocumentRow {
   id: string;
   kind: string;
@@ -60,6 +68,7 @@ interface DocumentRow {
   esign_status: string | null;
   esign_signing_url: string | null;
   esign_completed_at: string | null;
+  esign_signers: EsignSigner[];
   created_at: string;
   updated_at: string;
 }
@@ -134,14 +143,6 @@ const STATUS_LABELS: Record<string, string> = {
   blocked_missing_template: "Blocked — missing template",
   failed: "Failed",
   cancelled: "Cancelled",
-};
-
-const DOC_LABEL: Record<string, string> = {
-  loi: "Letter of Intent",
-  appointment_letter: "Appointment Letter",
-  nda: "NDA",
-  induction: "Induction document",
-  offer_bundle: "Offer bundle",
 };
 
 const fetcher = async <T,>(url: string): Promise<T> => {
@@ -287,6 +288,11 @@ export default function OnboardingDetailPage() {
           detail?: string;
           message?: string;
         };
+        // 409 means the backend reconciled and found HR already signed —
+        // refresh so the UI picks up the updated per-signer statuses.
+        if (res.status === 409) {
+          await mutate();
+        }
         setActionError(
           body.detail
             || body.message
@@ -544,15 +550,27 @@ export default function OnboardingDetailPage() {
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber" />
             <div className="flex-1">
               <p className="text-sm font-bold text-amber">
-                Upload your{" "}
-                {(data.blocked_template_kind || "")
+                {(data.blocked_template_kind || "document")
                   .replace(/_/g, " ")
                   .toUpperCase()}{" "}
-                template to continue
+                generation is blocked
               </p>
+              {/* The agent's own words. A missing template, a template whose
+                  fields nobody confirmed, and a missing company address all
+                  stop the run here, and each is fixed somewhere different — so
+                  the headline stays neutral and the reason does the work. */}
+              {data.blocked_reason ? (
+                <p className="mt-1 text-xs text-amber/90">{data.blocked_reason}</p>
+              ) : null}
+
+              {/* When the block is a value nobody has supplied, HR answers it
+                  here. The template link stays for the other blocks — a
+                  template that was never uploaded has no fields to fill. */}
+              <BlockingFieldsForm runId={id} onSaved={mutate} />
+
               <Link
-                href="/onboarding/templates"
-                className="mt-2 inline-block text-xs font-bold text-amber underline hover:no-underline"
+                href="/document-templates"
+                className="mt-3 inline-block text-xs font-bold text-amber underline hover:no-underline"
               >
                 Open templates →
               </Link>
@@ -713,6 +731,164 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
+interface BlockingField {
+  internal_name: string;
+  label: string;
+  data_type: string;
+  description: string | null;
+  example_value: string | null;
+  code: string;
+  message: string;
+  value: string;
+}
+
+interface BlockingFields {
+  document_kind: string | null;
+  template_name: string | null;
+  generated_document_id: string | null;
+  fields: BlockingField[];
+}
+
+function inputTypeFor(dataType: string): string {
+  switch (dataType) {
+    case "date":
+      return "date";
+    case "email":
+      return "email";
+    case "phone":
+      return "tel";
+    case "number":
+    case "currency":
+      return "text";
+    default:
+      return "text";
+  }
+}
+
+/**
+ * The fields the last generation attempt blocked on, as a form.
+ *
+ * Renders nothing unless there is something to type: a run blocked because no
+ * template was ever uploaded has no fields, and an empty box under that message
+ * would read as "fill this in to continue" when there is nothing to fill.
+ */
+function BlockingFieldsForm({
+  runId,
+  onSaved,
+}: {
+  runId: string;
+  onSaved: () => void;
+}) {
+  const { data, mutate: refetch } = useSWR<BlockingFields>(
+    runId ? `/api/onboarding/runs/${runId}/blocking-fields` : null,
+    fetcher,
+  );
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fields = data?.fields ?? [];
+  if (fields.length === 0) return null;
+
+  const valueOf = (f: BlockingField) => edits[f.internal_name] ?? f.value;
+  const incomplete = fields.some((f) => !valueOf(f).trim());
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const values: Record<string, string> = {};
+      for (const f of fields) values[f.internal_name] = valueOf(f);
+
+      const res = await fetch(`/api/onboarding/runs/${runId}/field-values`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ values }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          detail?: string;
+          message?: string;
+        };
+        setError(
+          body.detail || body.message || "Couldn't save these values.",
+        );
+        return;
+      }
+      setEdits({});
+      // The agent re-runs on the server; both views need the new state.
+      await Promise.all([refetch(), onSaved()]);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 space-y-3 rounded-xl border border-amber/30 bg-card p-3">
+      <p className="text-xs font-bold text-foreground">
+        Fill in {fields.length === 1 ? "this value" : "these values"} to continue
+      </p>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        {fields.map((f) => (
+          <div key={f.internal_name}>
+            <label
+              htmlFor={`field-${f.internal_name}`}
+              className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground"
+            >
+              {f.label}
+            </label>
+            {f.data_type === "address" ? (
+              <textarea
+                id={`field-${f.internal_name}`}
+                rows={2}
+                placeholder={f.example_value || ""}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-2 py-1.5 text-xs"
+                value={valueOf(f)}
+                onChange={(e) =>
+                  setEdits((v) => ({ ...v, [f.internal_name]: e.target.value }))
+                }
+              />
+            ) : (
+              <input
+                id={`field-${f.internal_name}`}
+                type={inputTypeFor(f.data_type)}
+                placeholder={f.example_value || ""}
+                className="mt-1 h-8 w-full rounded-lg border border-input bg-background px-2 text-xs"
+                value={valueOf(f)}
+                onChange={(e) =>
+                  setEdits((v) => ({ ...v, [f.internal_name]: e.target.value }))
+                }
+              />
+            )}
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {f.description || f.message}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      {error ? (
+        <p className="text-xs font-medium text-destructive">{error}</p>
+      ) : null}
+
+      <div className="flex items-center gap-2">
+        <Button size="sm" onClick={save} disabled={saving || incomplete}>
+          {saving ? (
+            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+          ) : null}
+          Save and continue
+        </Button>
+        <p className="text-[11px] text-muted-foreground">
+          {incomplete
+            ? "Every field is required by the template."
+            : "The agent picks the run back up automatically."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function LoiPanel({
   data,
   busy,
@@ -739,6 +915,14 @@ function LoiPanel({
   const awaitingSign = data.status === "loi_pending_hr_sign";
   const inEsign = data.status === "loi_pending_esign_signature";
   const esignStatus = (loi?.esign_status || "").toLowerCase();
+
+  // Per-signer progress from the signing envelope.
+  const hrSigner = loi?.esign_signers?.find((s) => s.role === "hr");
+  const candidateSigner = loi?.esign_signers?.find(
+    (s) => s.role === "candidate",
+  );
+  const hrSigned = hrSigner?.status === "completed";
+  const candidateSigned = candidateSigner?.status === "completed";
 
   return (
     <div className="space-y-3">
@@ -891,48 +1075,73 @@ function LoiPanel({
           <div>
             <p className="text-sm font-medium">Signing the LOI</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              The envelope is routed <strong>HR → candidate</strong>. You sign
-              first. The candidate will receive a signing email automatically
-              once you're done.
+              {hrSigned ? (
+                <>
+                  You&apos;ve signed. The candidate will receive a signing
+                  email automatically.
+                </>
+              ) : (
+                <>
+                  The envelope is routed <strong>HR → candidate</strong>. You
+                  sign first. The candidate will receive a signing email
+                  automatically once you&apos;re done.
+                </>
+              )}
             </p>
           </div>
 
           <dl className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-            <div className="flex items-center justify-between rounded-lg border border-border bg-muted/40 px-3 py-2">
+            <div
+              className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
+                hrSigned
+                  ? "border-success/30 bg-success-tint"
+                  : "border-border bg-muted/40"
+              }`}
+            >
               <dt className="font-medium text-foreground">You (HR)</dt>
-              <dd className="text-muted-foreground">
-                {esignStatus === "completed" ? "Signed ✓" : "Pending"}
+              <dd className={hrSigned ? "font-medium text-success-ink" : "text-muted-foreground"}>
+                {hrSigned ? "Signed ✓" : "Pending"}
               </dd>
             </div>
-            <div className="flex items-center justify-between rounded-lg border border-border bg-muted/40 px-3 py-2">
+            <div
+              className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
+                candidateSigned
+                  ? "border-success/30 bg-success-tint"
+                  : "border-border bg-muted/40"
+              }`}
+            >
               <dt className="font-medium text-foreground">
                 {data.candidate_name || "Candidate"}
               </dt>
-              <dd className="text-muted-foreground">
-                {esignStatus === "completed"
+              <dd className={candidateSigned ? "font-medium text-success-ink" : "text-muted-foreground"}>
+                {candidateSigned
                   ? "Signed ✓"
-                  : "Waiting for HR first"}
+                  : hrSigned
+                    ? "Pending"
+                    : "Waiting for HR first"}
               </dd>
             </div>
           </dl>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              onClick={onOpenSigningLink}
-              disabled={busy === "loi-signing"}
-            >
-              {busy === "loi-signing" ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-              )}
-              Open my signing link
-            </Button>
-            <p className="text-[11px] text-muted-foreground">
-              Link expires after 5 minutes — click again for a fresh one.
-            </p>
-          </div>
+          {!hrSigned ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                onClick={onOpenSigningLink}
+                disabled={busy === "loi-signing"}
+              >
+                {busy === "loi-signing" ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                Open my signing link
+              </Button>
+              <p className="text-[11px] text-muted-foreground">
+                Link expires after 5 minutes — click again for a fresh one.
+              </p>
+            </div>
+          ) : null}
         </div>
       ) : null}
 

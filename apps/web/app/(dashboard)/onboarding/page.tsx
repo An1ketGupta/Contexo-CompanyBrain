@@ -3,13 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import useSWR from "swr";
-import {
-  AlertTriangle,
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  Users,
-} from "lucide-react";
+import { Users } from "lucide-react";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader, StatusPill, type PillTone } from "@/components/actual/kit";
@@ -17,11 +11,7 @@ import {
   OnboardingSources,
   type SourcesResponse,
 } from "@/components/onboarding/onboarding-sources";
-import { TemplateMapperModal } from "@/components/onboarding/template-mapper-modal";
-import {
-  TemplateSlot,
-  type TemplateStatusRow,
-} from "@/components/onboarding/template-slot";
+import { TemplateReadinessPanel } from "@/components/onboarding/template-readiness-panel";
 
 interface OnboardingRunRow {
   id: string;
@@ -44,28 +34,7 @@ interface ListResponse {
   runs: OnboardingRunRow[];
 }
 
-interface TemplateStatusResponse {
-  loi: TemplateStatusRow | null;
-  appointment_letter: TemplateStatusRow | null;
-  nda: TemplateStatusRow | null;
-  induction: TemplateStatusRow | null;
-}
-
-interface IntegrationsStatusResponse {
-  drive?: {
-    available?: boolean;
-    connected?: boolean;
-  };
-}
-
 type StatusKey = "all" | "active" | "blocked" | "completed";
-
-const TEMPLATE_KINDS = [
-  { key: "loi" as const, label: "Letter of Intent" },
-  { key: "appointment_letter" as const, label: "Appointment Letter" },
-  { key: "nda" as const, label: "NDA" },
-  { key: "induction" as const, label: "Induction" },
-];
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Draft",
@@ -119,24 +88,12 @@ const fetcher = async <T,>(url: string): Promise<T> => {
 export default function OnboardingListPage() {
   const [filter, setFilter] = useState<StatusKey>("all");
   const [templatesOpen, setTemplatesOpen] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [tagError, setTagError] = useState<string | null>(null);
-  const [mapper, setMapper] = useState<{ docId: string; kind: string } | null>(
-    null,
-  );
 
   const { data, error, isLoading } = useSWR<ListResponse>(
     "/api/onboarding/runs",
     fetcher,
     { refreshInterval: 15_000 },
   );
-  const { data: templates, mutate: refreshTemplates } =
-    useSWR<TemplateStatusResponse>("/api/onboarding/templates/status", fetcher);
-  const { data: integrations } = useSWR<IntegrationsStatusResponse>(
-    "/api/integrations/status",
-    fetcher,
-  );
-  const driveConnected = Boolean(integrations?.drive?.connected);
   const {
     data: sources,
     error: sourcesError,
@@ -164,40 +121,6 @@ export default function OnboardingListPage() {
     [rows],
   );
 
-const missingCount = templates
-    ? TEMPLATE_KINDS.filter(
-        (k) => templates[k.key]?.template_status !== "active",
-      ).length
-    : 0;
-
-  const allConfigured = missingCount === 0 && templates !== undefined;
-
-  async function tagDoc(docId: string, kind: string) {
-    setBusy(`${kind}`);
-    setTagError(null);
-    try {
-      const res = await fetch("/api/onboarding/templates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document_id: docId, template_kind: kind }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
-          detail?: string;
-          message?: string;
-        };
-        setTagError(body.detail || body.message || "Couldn't assign template.");
-        return;
-      }
-      await refreshTemplates();
-      // Auto-open AI mapper. If the DOCX already has placeholders, the
-      // modal short-circuits and shows a "no conversion needed" state.
-      setMapper({ docId, kind });
-    } finally {
-      setBusy(null);
-    }
-  }
-
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
       <div className="mb-8">
@@ -208,69 +131,10 @@ const missingCount = templates
         />
       </div>
 
-      {/* ── Templates setup ─────────────────────────────────────── */}
-      <div className="mb-6 rounded-2xl border border-border bg-card">
-        <button
-          onClick={() => setTemplatesOpen((o) => !o)}
-          className="flex w-full items-center justify-between px-5 py-4 text-left"
-        >
-          <div className="flex items-center gap-2">
-            {allConfigured ? (
-              <CheckCircle2 className="h-4 w-4 text-success" />
-            ) : (
-              <AlertTriangle className="h-4 w-4 text-amber" />
-            )}
-            <span className="text-sm font-bold text-foreground">
-              Document templates
-            </span>
-            {!allConfigured && missingCount > 0 ? (
-              <span className="rounded-full bg-amber-tint px-2 py-0.5 text-[10px] font-bold text-amber">
-                {missingCount} missing
-              </span>
-            ) : allConfigured ? (
-              <span className="rounded-full bg-success-tint px-2 py-0.5 text-[10px] font-bold text-success">
-                All set
-              </span>
-            ) : null}
-          </div>
-          {templatesOpen ? (
-            <ChevronUp className="h-4 w-4 text-muted-foreground" />
-          ) : (
-            <ChevronDown className="h-4 w-4 text-muted-foreground" />
-          )}
-        </button>
-
-        {templatesOpen ? (
-          <div className="border-t border-border px-5 pb-5 pt-4">
-            {tagError ? (
-              <div className="mb-3 rounded-xl border border-destructive/30 bg-destructive-soft p-2.5 text-xs font-medium text-destructive">
-                {tagError}
-              </div>
-            ) : null}
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              {TEMPLATE_KINDS.map(({ key, label }) => {
-                const current = templates?.[key] ?? null;
-                return (
-                  <TemplateSlot
-                    key={key}
-                    kind={key}
-                    label={label}
-                    current={current}
-                    onAssign={(docId) => tagDoc(docId, key)}
-                    onDriveImported={() => {
-                      void refreshTemplates();
-                    }}
-                    onFinishSetup={(docId) => setMapper({ docId, kind: key })}
-                    isBusy={busy === key}
-                    driveConnected={driveConnected}
-                  />
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-      </div>
+      <TemplateReadinessPanel
+        open={templatesOpen}
+        onToggle={() => setTemplatesOpen((o) => !o)}
+      />
 
       {/* ── Runs list ──────────────────────────────────────────── */}
       <h2 className="mb-3 font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
@@ -372,22 +236,6 @@ const missingCount = templates
         error={sourcesError}
       />
 
-      <TemplateMapperModal
-        documentId={mapper?.docId ?? null}
-        templateKind={mapper?.kind ?? "loi"}
-        open={mapper !== null}
-        onOpenChange={(o) => {
-          if (!o) {
-            setMapper(null);
-            // Saving inside the mapper promotes draft→active; refresh so the
-            // slot badges reflect the new status without a reload.
-            void refreshTemplates();
-          }
-        }}
-        onApplied={() => {
-          void refreshTemplates();
-        }}
-      />
     </div>
   );
 }

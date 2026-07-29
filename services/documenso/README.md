@@ -71,6 +71,15 @@ docker compose --env-file .env up -d
    ```
    DOCUMENSO_WEBHOOK_SECRET=whsec_xxxxxxxx
    ```
+   Documenso then refuses to *deliver* to that endpoint — its SSRF guard drops
+   any webhook host resolving to a private address, which `host.docker.internal`
+   does. The symptom is silent: nothing arrives, and Documenso's `WebhookCall`
+   rows read `responseCode 0 / "Webhook URL resolves to a private or loopback
+   address"` while envelopes sit at `sent` forever. `.env.example` allowlists
+   the one host; keep it **empty in production**:
+   ```
+   NEXT_PRIVATE_WEBHOOK_SSRF_BYPASS_HOSTS=host.docker.internal
+   ```
 
 ## Production (free tier)
 

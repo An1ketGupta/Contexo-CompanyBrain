@@ -10,7 +10,9 @@ import {
   CalendarDays,
   Hash,
   CheckCircle2,
+  FileCheck,
   FileQuestion,
+  FileSignature,
   FileText,
   Gauge,
   HeartPulse,
@@ -82,6 +84,16 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/recruiting", label: "Recruiting", icon: Briefcase },
       { href: "/onboarding", label: "Onboarding", icon: ShieldCheck },
+      {
+        href: "/document-templates",
+        label: "Document templates",
+        icon: FileSignature,
+      },
+      {
+        href: "/generated-documents",
+        label: "Generated docs",
+        icon: FileCheck,
+      },
       { href: "/executive/briefing", label: "Exec briefing", icon: Presentation },
     ],
   },

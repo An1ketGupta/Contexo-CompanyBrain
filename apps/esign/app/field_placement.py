@@ -34,6 +34,22 @@ SIGNATURE_MARKERS: dict[str, str] = {
     "candidate": "◇SIGN:CANDIDATE◇",
 }
 
+# What we actually search the PDF for. Searching the whole marker misses:
+# DOCX→PDF conversion emits the bracketing ◇ as its own glyph run, and
+# PyMuPDF's search_for only matches within a run, so "◇SIGN:CANDIDATE◇"
+# finds nothing while "SIGN:CANDIDATE" finds it every time. The symptom of
+# getting this wrong is silent and ugly — no hit means no whiteout (the
+# literal marker stays visible under the signature) and the field falls back
+# to the bottom of the last page, nowhere near where the template put it.
+_MARKER_CORES: dict[str, str] = {
+    "hr": "SIGN:HR",
+    "candidate": "SIGN:CANDIDATE",
+}
+_DIAMOND = "◇"
+# How far a ◇ may sit from the core text and still count as its bracket. One
+# glyph width is ~9pt; anything further apart belongs to a different marker.
+_BRACKET_GAP_PT = 4.0
+
 # A signature field wants a real box, not the width of the marker glyphs.
 # Anchor the box's top-left at the marker; these are point dimensions,
 # clamped so the box never runs off the page edge.
@@ -77,6 +93,23 @@ def _dedupe_rects(rects: list[fitz.Rect]) -> list[fitz.Rect]:
     return merged
 
 
+def _with_brackets(core: fitz.Rect, diamonds: list[fitz.Rect]) -> fitz.Rect:
+    """Grow a core hit ("SIGN:HR") to cover the ◇ glyphs on either side of it.
+
+    Whiting out only the core would leave two orphan diamonds printed on the
+    signed document, so the rect we paint over has to include them.
+    """
+    box = fitz.Rect(core)
+    for d in diamonds:
+        if min(box.y1, d.y1) - max(box.y0, d.y0) <= 0:
+            continue  # different line
+        before = d.x0 < box.x0 and box.x0 - d.x1 <= _BRACKET_GAP_PT
+        after = d.x1 > box.x1 and d.x0 - box.x1 <= _BRACKET_GAP_PT
+        if before or after:
+            box |= d
+    return box
+
+
 def _field_box(anchor: fitz.Rect, page: fitz.Rect) -> fitz.Rect:
     """A signature-sized box anchored at the marker's top-left, clamped to the
     page so no coordinate exceeds 100%."""
@@ -110,11 +143,13 @@ def extract_fields_and_clean(
     try:
         fields: list[SignatureField] = []
         for role in roles:
-            marker = SIGNATURE_MARKERS.get(role)
+            core = _MARKER_CORES.get(role)
             found_any = False
-            if marker:
+            if core:
                 for page_index, page in enumerate(doc):
-                    for rect in _dedupe_rects(page.search_for(marker)):
+                    diamonds = page.search_for(_DIAMOND)
+                    for hit in _dedupe_rects(page.search_for(core)):
+                        rect = _with_brackets(hit, diamonds)
                         # Cover the literal marker text before Documenso draws
                         # its field over the same spot.
                         page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)

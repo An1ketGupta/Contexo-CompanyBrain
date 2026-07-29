@@ -4,6 +4,7 @@ from app.services.integrations.inhouse_sign.client import (
     create_envelope,
     is_configured,
     merge_pdfs,
+    reconcile_envelope,
     void_envelopes_for_run,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "create_envelope",
     "is_configured",
     "merge_pdfs",
+    "reconcile_envelope",
     "void_envelopes_for_run",
 ]

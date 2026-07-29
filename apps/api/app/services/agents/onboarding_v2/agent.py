@@ -79,33 +79,43 @@ from app.database import get_service_client
 from app.observability import get_logger
 from app.services.agents.base_agent import BaseAgent
 from app.services.agents.onboarding_v2 import storage as ob_storage
-from app.services.agents.onboarding_v2 import template_slots as ob_slots
-from app.services.agents.onboarding_v2.blank_detector import scan_for_unfilled_signals
 from app.services.agents.onboarding_v2.pre_join import (
     ensure_pre_join_user,
     send_magic_link,
 )
-from app.services.agents.onboarding_v2.render_context import build_render_context
-from app.services.agents.onboarding_v2.template_analyzer import extract_text
+from app.services.documents import templates as doc_templates
+from app.services.documents.generation import service as doc_generation
 from app.services.email import send_email_event
-from app.services.pdf import (
-    PdfRenderError,
-    PdfRenderUnavailable,
-    TemplateVariableError,
-    render_docx_template_to_pdf,
-)
-from app.services.pdf.slot_renderer import SlotDriftError, render_docx_slots_to_pdf
 
 log = get_logger(__name__)
 
 
-# Mapping from `kind` to the documents.template_kind value we look up.
-# Kept here (not in storage.py) because it's policy, not plumbing.
-_TEMPLATE_KIND_FOR_KIND = {
-    "loi": "loi",
+# The agent's document kinds against the `document_types.key` values seeded by
+# migration 099. Only `loi` differs: the pipeline names the type after the
+# document ("letter_of_intent") rather than the agent's internal shorthand.
+_DOCUMENT_TYPE_KEY_FOR_KIND = {
+    "loi": "letter_of_intent",
     "appointment_letter": "appointment_letter",
     "nda": "nda",
+    "induction": "induction",
 }
+
+
+def _format_ctc(run: dict[str, Any]) -> str:
+    """CTC as it reads in a notification email.
+
+    Formatted from the run rather than pulled out of a document's render
+    context: template variables are named by whoever authored the template, so
+    there is no longer a guaranteed `ctc` key to read.
+    """
+    amount = run.get("ctc_amount")
+    if amount in (None, ""):
+        return "TBD"
+    currency = run.get("ctc_currency") or "INR"
+    try:
+        return f"{currency} {float(amount):,.2f}"
+    except (TypeError, ValueError):
+        return str(amount)
 
 
 class OnboardingV2Agent(BaseAgent):
@@ -179,17 +189,25 @@ class OnboardingV2Agent(BaseAgent):
         )
         self._run_row = None
 
-    async def _block_missing_template(self, template_kind: str) -> dict[str, Any]:
+    async def _block_missing_template(
+        self, template_kind: str, reason: str | None = None
+    ) -> dict[str, Any]:
         """Park the run in blocked_missing_template; HR will see a clear
-        prompt to upload the template and the agent will be re-kicked when
-        the upload happens."""
+        prompt to fix the template and the agent will be re-kicked once it is.
+
+        `reason` carries the generation service's own words when it has them —
+        "no fields have been confirmed on 'Letter of Intent'" is a different
+        problem from a missing template, and telling HR to upload one they can
+        see is already there sends them looking in the wrong place.
+        """
+        detail = reason or (
+            f"No {template_kind.replace('_', ' ')} template is set as the default. "
+            "Upload one in Document templates and mark it as the default."
+        )
         await self._set_status(
             "blocked_missing_template",
             extra={
-                "blocked_reason": (
-                    f"No {template_kind.replace('_', ' ')} template uploaded. "
-                    "Configure it in Onboarding → Document templates."
-                ),
+                "blocked_reason": detail,
                 "blocked_template_kind": template_kind,
             },
         )
@@ -198,10 +216,7 @@ class OnboardingV2Agent(BaseAgent):
             run_id=self.onboarding_run_id,
             actor_kind="agent",
             event_type="blocked_missing_template",
-            message=(
-                f"No {template_kind.replace('_', ' ')} template configured. "
-                "Go to Onboarding → Document templates and upload a DOCX for this slot."
-            ),
+            message=detail,
             metadata={"template_kind": template_kind},
         )
         return {"status": "blocked_missing_template", "missing": template_kind}
@@ -237,116 +252,126 @@ class OnboardingV2Agent(BaseAgent):
             "registered_address": data.get("registered_address") or "",
         }
 
-    # ── Render context ────────────────────────────────────────────────────
-
-    async def _build_render_context(self) -> dict[str, Any]:
-        """The substitution context for this run's documents.
-
-        The shape lives in `render_context.build_render_context` — shared with
-        the template preview endpoints so a preview can never promise a variable
-        a real render doesn't supply. Documented for HR in
-        apps/api/tools/ONBOARDING_TEMPLATE_VARS.md.
-        """
-        run = await self._load_run()
-        branding = await self._resolve_org_branding()
-        return build_render_context(run=run, branding=branding)
-
     # ── Rendering ─────────────────────────────────────────────────────────
 
-    async def _render_template(
-        self,
-        *,
-        template_kind: str,
-        docx_bytes: bytes,
-        doc_row: dict[str, Any],
-        ctx: dict[str, Any],
-    ) -> tuple[bytes, bytes]:
-        """Render a customer template with whichever fill pipeline it uses.
+    async def _template_is_ready(self, kind: str) -> bool:
+        """Is there an active default template for this kind?
 
-        Chosen per-template by `documents.fill_strategy`:
-
-          * `slots` — values are spliced in at recorded positions
-            (`template_field_slots`). The customer's document is never rewritten
-            and never parsed as template source. This is what every analyze
-            produces for an ordinary HR document.
-          * `jinja` — the document was hand-authored with valid `{{ }}` tags;
-            docxtpl renders it as-is.
-          * NULL — legacy: a template from before migration 097, whose stored
-            `.docx` may have `{{ }}` tags baked into it by the retired
-            rewrite step. Rendered with docxtpl so those keep working. Nothing
-            produces NULL any more; re-opening such a template in the mapper
-            re-analyzes it onto one of the two above.
-
-        Callers keep their existing `PdfRenderUnavailable` /
-        `TemplateVariableError` / `PdfRenderError` handling: the slots renderer
-        deliberately raises the same exception types. Only `SlotDriftError` is
-        distinct, and it is not a `PdfRenderError` subclass so it can't be
-        swallowed by those handlers.
+        A cheap pre-check so the caller can bail BEFORE flipping the run to a
+        `*_generating` status. Without it, a missing template (or a crash
+        mid-generation) leaves the run stuck under a misleading "Generating…"
+        label — the same reason the previous implementation fetched the
+        template first.
         """
-        if (doc_row.get("fill_strategy") or "") == "slots":
-            slots = await ob_slots.list_slots(
-                document_id=doc_row["id"], confirmed_only=True
-            )
-            filled_docx, pdf_bytes = await render_docx_slots_to_pdf(
-                docx_bytes=docx_bytes,
-                slots=slots,
-                context=ctx,
-                template_kind=template_kind,
-            )
-        else:
-            filled_docx, pdf_bytes = await render_docx_template_to_pdf(
-                template_bytes=docx_bytes,
-                context=ctx,
-                strict=True,
-                template_kind=template_kind,
-            )
-
-        await self._warn_if_unfilled(
-            template_kind=template_kind, filled_docx=filled_docx
+        resolved = await doc_templates.resolve_default_version(
+            org_id=self.org_id, type_key=_DOCUMENT_TYPE_KEY_FOR_KIND[kind]
         )
-        return filled_docx, pdf_bytes
+        return resolved is not None
 
-    async def _warn_if_unfilled(self, *, template_kind: str, filled_docx: bytes) -> None:
-        """Check the RENDERED document for fill-points nobody mapped.
+    async def _warn_generation(self, *, kind: str, outcome: Any) -> None:
+        """Surface non-fatal generation warnings on the run timeline.
 
-        Detection can't have perfect recall on arbitrary customer documents, so
-        this is the last line of defence: if a generated appointment letter still
-        contains `________` or a bare `Signature:`, some field was missed and HR
-        should hear about it before the candidate does.
-
-        Strictly non-fatal. A document with one unfilled line is still more
-        useful to HR than a failed run, and turning a warning into a hard error
-        would make this check a new way for generation to break.
+        Covers a PDF conversion that failed and unfilled spots the renderer
+        found in the output. Strictly informational — a document with one
+        unfilled line is still more useful to HR than a failed run.
         """
-        try:
-            warnings = scan_for_unfilled_signals(extract_text(filled_docx))
-        except Exception as exc:  # noqa: BLE001 — a warning must never fail a run
-            log.warning(
-                "onboarding_v2.unfilled_scan_failed kind=%s err=%s", template_kind, exc
-            )
+        if not outcome.warnings:
             return
-        if not warnings:
-            return
-
-        log.warning(
-            "onboarding_v2.unfilled_fields run=%s kind=%s count=%s",
-            self.onboarding_run_id, template_kind, len(warnings),
-        )
         await ob_storage.log_onboarding_event(
             org_id=self.org_id,
             run_id=self.onboarding_run_id,
             actor_kind="agent",
-            event_type="template_unfilled_fields",
-            message=(
-                f"The generated {template_kind.replace('_', ' ')} still has "
-                f"{len(warnings)} spot(s) that look unfilled. Check the document "
-                "and add the missing fields in the template mapper."
-            ),
-            metadata={"template_kind": template_kind, "warnings": warnings[:10]},
+            event_type="document_generated_with_warnings",
+            message=f"{kind}: {outcome.warnings[0]}",
+            metadata={"kind": kind, "warnings": outcome.warnings},
         )
 
+    async def _generate_document(self, kind: str) -> Any:
+        """Produce one document through the document generation pipeline.
+
+        The agent's single seam into `services/documents`. Everything the old
+        path did piecemeal — find the template, resolve the candidate, map
+        fields, validate, render, record — happens inside one call that returns
+        an outcome rather than raising, so the three generation steps branch on
+        data instead of maintaining near-identical except-ladders.
+
+        The pipeline writes the canonical `generated_documents` /
+        `generated_files` rows itself. The caller still uploads the bytes to the
+        run's own artifact path and upserts `onboarding_documents`, because the
+        run timeline, the HR review screen, and the e-sign handoff all read from
+        there. Two records of one document, deliberately: one is the versioned
+        audit trail, the other is this run's working copy.
+
+        `field_values` carries whatever HR typed into the blocked-run form after
+        a previous attempt failed validation. It has to be re-read on every
+        attempt rather than captured once, because filling that form is exactly
+        what re-kicks the agent.
+        """
+        run = await self._refresh_run()
+        return await doc_generation.generate(
+            org_id=self.org_id,
+            type_key=_DOCUMENT_TYPE_KEY_FOR_KIND[kind],
+            onboarding_run_id=self.onboarding_run_id,
+            variable_values=run.get("field_values") or {},
+        )
+
+    async def _handle_generation_failure(
+        self, *, kind: str, step: str, outcome: Any, unavailable_status: str
+    ) -> dict[str, Any] | None:
+        """Turn a non-ok generation outcome into the right run state.
+
+        Returns the step's return value, or None when the outcome was fine and
+        the caller should carry on. Centralised because all three generation
+        steps need identical handling and previously had three drifting copies
+        of it.
+        """
+        if outcome.ok:
+            return None
+
+        error = outcome.error or "Document generation failed."
+
+        if outcome.outcome in (
+            doc_generation.OUTCOME_MISSING_TEMPLATE,
+            doc_generation.OUTCOME_NO_FIELDS,
+        ):
+            await self.log_step(step, "skipped", {"reason": outcome.outcome, "kind": kind})
+            return await self._block_missing_template(kind, reason=error)
+
+        if outcome.outcome == doc_generation.OUTCOME_DRIFT:
+            await self.log_step(step, "blocked", error=f"{kind}: {error}")
+            return await self._block_template_drift(kind, RuntimeError(error))
+
+        if outcome.outcome == doc_generation.OUTCOME_VALIDATION_FAILED:
+            # Missing or invalid candidate data. Actionable by HR, so it is a
+            # blocked state with the specific fields named — never a document
+            # with a gap where the manager's name should be.
+            await self.log_step(step, "blocked", error=f"{kind}: {error}")
+            await self._set_status(
+                "blocked_missing_template",
+                extra={"blocked_reason": error, "blocked_template_kind": kind},
+            )
+            await ob_storage.log_onboarding_event(
+                org_id=self.org_id,
+                run_id=self.onboarding_run_id,
+                actor_kind="agent",
+                event_type="document_validation_failed",
+                message=error,
+                metadata={
+                    "kind": kind,
+                    "document_id": outcome.generated_document_id,
+                    "report": outcome.validation_report,
+                },
+            )
+            return {"status": "blocked_missing_template", "reason": "validation_failed"}
+
+        # Render or storage failure — retryable, so park the run somewhere it
+        # can resume from rather than failing it outright.
+        await self.log_step(step, "blocked", error=f"{kind}: {error}")
+        await self._set_status(unavailable_status, extra={"blocked_reason": error})
+        return {"status": unavailable_status, "error": outcome.outcome}
+
     async def _block_template_drift(
-        self, template_kind: str, exc: SlotDriftError
+        self, template_kind: str, exc: Exception
     ) -> dict[str, Any]:
         """Park the run because the template changed after its fields were
         confirmed.
@@ -461,84 +486,45 @@ class OnboardingV2Agent(BaseAgent):
     async def _step_generate_loi(self) -> dict[str, Any]:
         await self.log_step("generate_loi", "started")
 
-        # Check for the KB-tagged LOI template BEFORE flipping status to
-        # loi_generating — otherwise a missing template (or a crash between
-        # the two writes) leaves the run stuck on a misleading
+        # Check the template exists BEFORE flipping status to loi_generating —
+        # otherwise a missing template leaves the run stuck on a misleading
         # "Generating LOI" label.
-        fetched = await ob_storage.fetch_template_docx(
-            org_id=self.org_id, template_kind="loi"
-        )
-        if not fetched:
+        if not await self._template_is_ready("loi"):
             await self.log_step("generate_loi", "skipped", {"reason": "no_template"})
             return await self._block_missing_template("loi")
 
         await self._set_status("loi_generating")
-        docx_bytes, doc_row = fetched
-        ctx = await self._build_render_context()
 
-        try:
-            filled_docx, pdf_bytes = await self._render_template(
-                template_kind="loi",
-                docx_bytes=docx_bytes,
-                doc_row=doc_row,
-                ctx=ctx,
-            )
-        except SlotDriftError as exc:
-            await self.log_step("generate_loi", "blocked", error=str(exc))
-            return await self._block_template_drift("loi", exc)
-        except PdfRenderUnavailable as exc:
-            # Deployment config issue (Gotenberg not running). Reset to draft
-            # so the run is retryable once the sidecar is provisioned.
-            await self.log_step("generate_loi", "blocked", error=str(exc))
-            await self._set_status("draft", extra={"blocked_reason": str(exc)})
-            return {"status": "draft", "error": "pdf_render_unavailable"}
-        except TemplateVariableError as exc:
-            # The customer's DOCX references an unknown {{ variable }}.
-            # Block the run with an actionable message instead of failing
-            # silently — HR sees "Template references undefined variable
-            # 'manager_phone' — remove the placeholder or supply the value".
-            await self.log_step(
-                "generate_loi", "failed",
-                error=str(exc),
-                metadata={"missing_variable": exc.variable_name},
-            )
-            await self._set_status(
-                "blocked_missing_template",
-                extra={
-                    "blocked_reason": str(exc),
-                    "blocked_template_kind": "loi",
-                },
-            )
-            await ob_storage.log_onboarding_event(
-                org_id=self.org_id,
-                run_id=self.onboarding_run_id,
-                actor_kind="agent",
-                event_type="template_variable_error",
-                message=str(exc),
-                metadata={"template_kind": "loi", "variable": exc.variable_name},
-            )
-            return {"status": "blocked_missing_template", "variable": exc.variable_name}
-        except PdfRenderError as exc:
-            await self.log_step("generate_loi", "failed", error=str(exc))
-            await self._set_status("failed", extra={"blocked_reason": str(exc)})
-            raise
+        outcome = await self._generate_document("loi")
+        # `draft` on an unrecoverable render error: the run is retryable once
+        # the underlying problem (Gotenberg down, storage unreachable) is fixed.
+        handled = await self._handle_generation_failure(
+            kind="loi",
+            step="generate_loi",
+            outcome=outcome,
+            unavailable_status="draft",
+        )
+        if handled is not None:
+            return handled
 
+        ctx = outcome.context
         storage = await ob_storage.upload_onboarding_artifact(
             org_id=self.org_id,
             run_id=self.onboarding_run_id,
             kind="loi",
-            pdf_bytes=pdf_bytes,
-            docx_bytes=filled_docx,
+            pdf_bytes=outcome.pdf_bytes or b"",
+            docx_bytes=outcome.docx_bytes,
         )
         doc_id = await ob_storage.upsert_onboarding_document(
             org_id=self.org_id,
             run_id=self.onboarding_run_id,
             kind="loi",
             storage=storage,
-            source_template_id=doc_row.get("id"),
+            source_template_id=outcome.template_id,
             render_context=ctx,
             sign_status="draft",
         )
+        await self._warn_generation(kind="loi", outcome=outcome)
 
         await self._set_status("loi_pending_hr_review")
         await self.log_step(
@@ -552,8 +538,8 @@ class OnboardingV2Agent(BaseAgent):
             actor_kind="agent",
             event_type="loi_ready_for_review",
             message=(
-                f"LOI draft ready for HR review. Preview on the run page, "
-                f"download to edit if needed, then click Send for signature."
+                "LOI draft ready for HR review. Preview on the run page, "
+                "download to edit if needed, then click Send for signature."
             ),
             metadata={"document_id": doc_id},
         )
@@ -567,8 +553,6 @@ class OnboardingV2Agent(BaseAgent):
         LOI PDF link, and parks the run in loi_pending_hr_sign waiting for
         the signed-scan upload."""
         await self.log_step("send_to_hr_for_signature", "started")
-        run = await self._load_run()
-        ctx = await self._build_render_context()
 
         # Resolve which PDF to send: HR's edited copy if present, else the
         # agent's original render. Edited copy lives at hr_edited_pdf_path.
@@ -612,7 +596,7 @@ class OnboardingV2Agent(BaseAgent):
             "loi_pending_hr_sign", extra={"loi_sent_to_hr_at": now}
         )
         await self._notify_hr_loi_ready(
-            ctx, {"signed_url": signed_url, "file_bytes": None}
+            {"signed_url": signed_url, "file_bytes": None}
         )
         await self.log_step("send_to_hr_for_signature", "completed")
         await ob_storage.log_onboarding_event(
@@ -628,9 +612,7 @@ class OnboardingV2Agent(BaseAgent):
         )
         return {"status": "loi_pending_hr_sign", "document_id": doc.data["id"]}
 
-    async def _notify_hr_loi_ready(
-        self, ctx: dict[str, Any], storage: dict[str, Any]
-    ) -> None:
+    async def _notify_hr_loi_ready(self, storage: dict[str, Any]) -> None:
         """Email HR (the user who triggered the run) with a download link to
         the LOI so they can sign + scan it back."""
         settings = get_settings()
@@ -660,10 +642,10 @@ class OnboardingV2Agent(BaseAgent):
                 org_id=self.org_id,
                 dedupe_key=f"loi-ready-{self.onboarding_run_id}",
                 data={
-                    "candidate_name": ctx["candidate_name"],
-                    "role_title": ctx["role_title"],
-                    "ctc": ctx["ctc"],
-                    "start_date": ctx["start_date"],
+                    "candidate_name": run["candidate_name"],
+                    "role_title": run["role_title"],
+                    "ctc": _format_ctc(run),
+                    "start_date": str(run["start_date"]),
                     "loi_signed_url": storage.get("signed_url"),
                     "app_url": settings.app_url.rstrip("/"),
                     "run_id": self.onboarding_run_id,
@@ -697,7 +679,6 @@ class OnboardingV2Agent(BaseAgent):
     async def _step_send_loi_to_candidate(self) -> dict[str, Any]:
         await self.log_step("send_loi_to_candidate", "started")
         run = await self._load_run()
-        ctx = await self._build_render_context()
         settings = get_settings()
 
         # Look up the signed-by-HR LOI; HR's upload handler sets this path.
@@ -754,10 +735,10 @@ class OnboardingV2Agent(BaseAgent):
                 org_id=self.org_id,
                 dedupe_key=f"loi-cand-{self.onboarding_run_id}",
                 data={
-                    "candidate_name": ctx["candidate_name"],
-                    "role_title": ctx["role_title"],
-                    "company_name": ctx["company_name"],
-                    "start_date": ctx["start_date"],
+                    "candidate_name": run["candidate_name"],
+                    "role_title": run["role_title"],
+                    "company_name": (await self._resolve_org_branding())["name"],
+                    "start_date": str(run["start_date"]),
                     "loi_signed_url": signed_url,
                     "references_form_url": refs_form_url,
                     "app_url": settings.app_url.rstrip("/"),
@@ -961,91 +942,53 @@ class OnboardingV2Agent(BaseAgent):
 
         # Verify BOTH templates exist BEFORE flipping status — see comment
         # in _step_generate_loi for why we check first.
-        fetched_by_kind: dict[str, tuple[bytes, dict[str, Any]]] = {}
         for kind in ("appointment_letter", "nda"):
-            fetched = await ob_storage.fetch_template_docx(
-                org_id=self.org_id, template_kind=kind
-            )
-            if not fetched:
+            if not await self._template_is_ready(kind):
                 await self.log_step(
                     "generate_offer_bundle",
                     "skipped",
                     {"reason": f"no_template:{kind}"},
                 )
                 return await self._block_missing_template(kind)
-            fetched_by_kind[kind] = fetched
 
         await self._set_status("appointment_bundle_generating")
-        ctx = await self._build_render_context()
+        ctx: dict[str, Any] = {}
 
         for kind, label in (
             ("appointment_letter", "Appointment Letter"),
             ("nda", "NDA"),
         ):
-            fetched = fetched_by_kind[kind]
+            outcome = await self._generate_document(kind)
+            # `bgv_complete` is the step's own entry state, so a retry re-runs
+            # the whole bundle rather than resuming mid-way with one document
+            # generated and one not.
+            handled = await self._handle_generation_failure(
+                kind=kind,
+                step="generate_offer_bundle",
+                outcome=outcome,
+                unavailable_status="bgv_complete",
+            )
+            if handled is not None:
+                return handled
 
-            docx_bytes, doc_row = fetched
-            try:
-                filled_docx, pdf_bytes = await self._render_template(
-                    template_kind=kind,
-                    docx_bytes=docx_bytes,
-                    doc_row=doc_row,
-                    ctx=ctx,
-                )
-            except SlotDriftError as exc:
-                await self.log_step(
-                    "generate_offer_bundle", "blocked", error=f"{kind}: {exc}"
-                )
-                return await self._block_template_drift(kind, exc)
-            except TemplateVariableError as exc:
-                await self.log_step(
-                    "generate_offer_bundle", "failed",
-                    error=f"{kind}: {exc}",
-                    metadata={"missing_variable": exc.variable_name, "kind": kind},
-                )
-                await self._set_status(
-                    "blocked_missing_template",
-                    extra={
-                        "blocked_reason": str(exc),
-                        "blocked_template_kind": kind,
-                    },
-                )
-                await ob_storage.log_onboarding_event(
-                    org_id=self.org_id,
-                    run_id=self.onboarding_run_id,
-                    actor_kind="agent",
-                    event_type="template_variable_error",
-                    message=str(exc),
-                    metadata={"template_kind": kind, "variable": exc.variable_name},
-                )
-                return {"status": "blocked_missing_template", "variable": exc.variable_name}
-            except PdfRenderUnavailable as exc:
-                await self.log_step("generate_offer_bundle", "blocked", error=f"{kind}: {exc}")
-                await self._set_status("bgv_complete", extra={"blocked_reason": str(exc)})
-                return {"status": "bgv_complete", "error": "pdf_render_unavailable"}
-            except PdfRenderError as exc:
-                await self.log_step(
-                    "generate_offer_bundle", "failed", error=f"{kind}: {exc}"
-                )
-                await self._set_status("failed", extra={"blocked_reason": str(exc)})
-                raise
-
+            ctx = outcome.context
             storage = await ob_storage.upload_onboarding_artifact(
                 org_id=self.org_id,
                 run_id=self.onboarding_run_id,
                 kind=kind,
-                pdf_bytes=pdf_bytes,
-                docx_bytes=filled_docx,
+                pdf_bytes=outcome.pdf_bytes or b"",
+                docx_bytes=outcome.docx_bytes,
             )
             await ob_storage.upsert_onboarding_document(
                 org_id=self.org_id,
                 run_id=self.onboarding_run_id,
                 kind=kind,
                 storage=storage,
-                source_template_id=doc_row.get("id"),
+                source_template_id=outcome.template_id,
                 render_context=ctx,
                 sign_status="sent_to_hr",
             )
+            await self._warn_generation(kind=kind, outcome=outcome)
             await ob_storage.log_onboarding_event(
                 org_id=self.org_id,
                 run_id=self.onboarding_run_id,
@@ -1056,10 +999,14 @@ class OnboardingV2Agent(BaseAgent):
 
         await self._set_status("appointment_pending_hr_review")
         await self.log_step("generate_offer_bundle", "completed")
-        await self._notify_hr_bundle_ready(ctx)
+        await self._notify_hr_bundle_ready()
         return {"status": "appointment_pending_hr_review"}
 
-    async def _notify_hr_bundle_ready(self, ctx: dict[str, Any]) -> None:
+    async def _notify_hr_bundle_ready(self) -> None:
+        # Reads the run, not the document's render context. Template variables
+        # are now named by whoever authored the template, so `ctx` is no longer
+        # guaranteed to contain `candidate_name` — and a notification about a
+        # run should come from the run regardless.
         run = await self._load_run()
         triggered_by = run.get("triggered_by_user_id")
         if not triggered_by:
@@ -1083,8 +1030,8 @@ class OnboardingV2Agent(BaseAgent):
                 org_id=self.org_id,
                 dedupe_key=f"bundle-ready-{self.onboarding_run_id}",
                 data={
-                    "candidate_name": ctx["candidate_name"],
-                    "role_title": ctx["role_title"],
+                    "candidate_name": run["candidate_name"],
+                    "role_title": run["role_title"],
                     "app_url": settings.app_url.rstrip("/"),
                     "run_id": self.onboarding_run_id,
                 },
@@ -1259,10 +1206,7 @@ class OnboardingV2Agent(BaseAgent):
         synthesize induction content."""
         await self.log_step("generate_induction", "started")
 
-        fetched = await ob_storage.fetch_template_docx(
-            org_id=self.org_id, template_kind="induction"
-        )
-        if not fetched:
+        if not await self._template_is_ready("induction"):
             await self.log_step(
                 "generate_induction",
                 "skipped",
@@ -1272,68 +1216,39 @@ class OnboardingV2Agent(BaseAgent):
 
         await self._set_status("induction_generating")
         run = await self._load_run()
-        ctx = await self._build_render_context()
-        docx_bytes, doc_row = fetched
 
-        try:
-            filled_docx, pdf_bytes = await self._render_template(
-                template_kind="induction",
-                docx_bytes=docx_bytes,
-                doc_row=doc_row,
-                ctx=ctx,
-            )
-        except SlotDriftError as exc:
-            await self.log_step("generate_induction", "blocked", error=str(exc))
-            return await self._block_template_drift("induction", exc)
-        except TemplateVariableError as exc:
-            await self.log_step(
-                "generate_induction", "failed",
-                error=str(exc),
-                metadata={"missing_variable": exc.variable_name},
-            )
-            await self._set_status(
-                "blocked_missing_template",
-                extra={
-                    "blocked_reason": str(exc),
-                    "blocked_template_kind": "induction",
-                },
-            )
-            await ob_storage.log_onboarding_event(
-                org_id=self.org_id,
-                run_id=self.onboarding_run_id,
-                actor_kind="agent",
-                event_type="template_variable_error",
-                message=str(exc),
-                metadata={"template_kind": "induction", "variable": exc.variable_name},
-            )
-            return {"status": "blocked_missing_template", "variable": exc.variable_name}
-        except PdfRenderUnavailable as exc:
-            await self.log_step("generate_induction", "blocked", error=str(exc))
-            await self._set_status("policies_acknowledged", extra={"blocked_reason": str(exc)})
-            return {"status": "policies_acknowledged", "error": "pdf_render_unavailable"}
-        except PdfRenderError as exc:
-            await self.log_step("generate_induction", "failed", error=str(exc))
-            await self._set_status("failed", extra={"blocked_reason": str(exc)})
-            raise
+        outcome = await self._generate_document("induction")
+        # `policies_acknowledged` is this step's entry state, so a retry re-runs
+        # induction generation cleanly.
+        handled = await self._handle_generation_failure(
+            kind="induction",
+            step="generate_induction",
+            outcome=outcome,
+            unavailable_status="policies_acknowledged",
+        )
+        if handled is not None:
+            return handled
 
         storage = await ob_storage.upload_onboarding_artifact(
             org_id=self.org_id,
             run_id=self.onboarding_run_id,
             kind="induction",
-            pdf_bytes=pdf_bytes,
-            docx_bytes=filled_docx,
+            pdf_bytes=outcome.pdf_bytes or b"",
+            docx_bytes=outcome.docx_bytes,
         )
         doc_id = await ob_storage.upsert_onboarding_document(
             org_id=self.org_id,
             run_id=self.onboarding_run_id,
             kind="induction",
             storage=storage,
-            source_template_id=doc_row.get("id"),
-            render_context=ctx,
+            source_template_id=outcome.template_id,
+            render_context=outcome.context,
             sign_status="sent_to_candidate",
         )
+        await self._warn_generation(kind="induction", outcome=outcome)
 
         settings = get_settings()
+        branding = await self._resolve_org_branding()
         try:
             await send_email_event(
                 event_type="onboarding_induction_ready",
@@ -1342,10 +1257,14 @@ class OnboardingV2Agent(BaseAgent):
                 org_id=self.org_id,
                 dedupe_key=f"induction-{self.onboarding_run_id}",
                 data={
-                    "candidate_name": ctx["candidate_name"],
-                    "role_title": ctx["role_title"],
-                    "company_name": ctx["company_name"],
-                    "start_date": ctx["start_date"],
+                    # From the run and the org, not the document's render
+                    # context: template variables are named by whoever authored
+                    # the template, so `candidate_name` is no longer guaranteed
+                    # to be a key.
+                    "candidate_name": run["candidate_name"],
+                    "role_title": run["role_title"],
+                    "company_name": branding["name"],
+                    "start_date": str(run["start_date"]),
                     "induction_signed_url": storage.get("signed_url"),
                     "app_url": settings.app_url.rstrip("/"),
                 },
