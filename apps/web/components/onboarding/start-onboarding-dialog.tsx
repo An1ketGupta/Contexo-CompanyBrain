@@ -8,12 +8,12 @@
  *   - role + designation + CTC + start date + manager
  *
  * Background-check references are NO LONGER collected here — the candidate
- * submits them via a public form linked from their LOI email. HR retains an
+ * submits them via a public form linked from their LOIemail. HR retains an
  * override button on the run detail page if the candidate ghosts.
  *
  * On submit, POSTs to /api/onboarding/runs which fires the Inngest agent.
  * Routes the HR to the new run's detail page so they can watch the agent
- * generate the LOI in real time.
+ * generate the LOIin real time.
  */
 
 import { useRouter } from "next/navigation";

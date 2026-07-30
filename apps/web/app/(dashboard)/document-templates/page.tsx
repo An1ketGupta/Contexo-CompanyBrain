@@ -179,13 +179,6 @@ function TemplateCard({
             {template.status}
           </StatusPill>
         </div>
-
-        {template.is_default ? (
-          <p className="flex items-center gap-1.5 text-xs font-semibold text-brand">
-            <Star className="h-3 w-3 fill-current" />
-            Used automatically for {template.document_type_label}
-          </p>
-        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

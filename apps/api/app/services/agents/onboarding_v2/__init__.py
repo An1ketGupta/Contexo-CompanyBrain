@@ -1,4 +1,4 @@
-"""OnboardingV2Agent — pre-join HR pipeline (LOI → BGV → Appointment + NDA →
+"""OnboardingV2Agent — pre-join HR pipeline (LOI→ BGV → Appointment + NDA →
 Policies → Induction).
 
 Distinct from the existing OnboardingAgent (`onboarding_agent.py`), which

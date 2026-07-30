@@ -35,8 +35,8 @@ EventType = Literal[
     "weekly_briefing",
     "recruiting_published",
     # ── Onboarding v2 ─────────────────────────────────────────────────────
-    "onboarding_loi_ready",            # HR: LOI generated, please sign
-    "onboarding_loi_to_candidate",     # Candidate: signed LOI from HR
+    "onboarding_loi_ready",            # HR: LOIgenerated, please sign
+    "onboarding_loi_to_candidate",     # Candidate: signed LOIfrom HR
     "onboarding_bgv_request",          # Reference: please verify candidate
     "onboarding_bgv_reminder",         # Reference: gentle nudge
     "onboarding_candidate_refs_reminder",  # Candidate: please submit refs

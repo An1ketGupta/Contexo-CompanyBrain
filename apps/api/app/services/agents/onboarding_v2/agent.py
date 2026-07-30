@@ -7,16 +7,18 @@ park between human steps without losing context:
   draft
     │
     ▼
-  loi_generating ─── BLOCKED if no LOI template in KB
+  loi_generating ─── BLOCKED if no LOItemplate in KB
     │
     ▼
-  loi_pending_hr_review  ── HR previews the filled LOI; may download .docx,
-    │                       edit in Word, re-upload. Repeats until HR clicks
-    │                       "Send for signature". Agent parks until then.
+  loi_pending_hr_review  ── HR previews the filled LOIand may edit its text
+    │                       in place, or download the .docx, edit in Word and
+    │                       re-upload. Either way a new revision is stored.
+    │                       Repeats until HR clicks "Send for signature".
+    │                       Agent parks until then.
     │
     ├─(apps/esign configured)─▶ loi_pending_esign_signature ── HR → candidate
     │                             signing envelope routed via apps/esign. Both
-    │                             sign in-app; apps/esign stamps the LOI doc and
+    │                             sign in-app; apps/esign stamps the LOIdoc and
     │                             fires onboarding_v2/loi_signed_uploaded (the
     │                             run status stays loi_pending_esign_signature —
     │                             we advance off the doc's esign_status). ──┐
@@ -28,7 +30,7 @@ park between human steps without losing context:
   loi_signed_uploaded                                                        │
     │◀───────────────────────────────────────────────────────────────────────┘
     ▼
-  loi_sent_to_candidate ── Candidate email contains the signed LOI + a
+  loi_sent_to_candidate ── Candidate email contains the signed LOI+ a
     │                       token-gated public link to submit BGV refs.
     ▼
   awaiting_candidate_references ── Candidate fills the references form.
@@ -196,7 +198,7 @@ class OnboardingV2Agent(BaseAgent):
         prompt to fix the template and the agent will be re-kicked once it is.
 
         `reason` carries the generation service's own words when it has them —
-        "no fields have been confirmed on 'Letter of Intent'" is a different
+        "no fields have been confirmed on 'LOI'" is a different
         problem from a missing template, and telling HR to upload one they can
         see is already there sends them looking in the wrong place.
         """
@@ -429,7 +431,7 @@ class OnboardingV2Agent(BaseAgent):
         if current in ("draft", "loi_generating"):
             return await self._step_generate_loi()
         if current == "loi_pending_hr_review":
-            # HR is reviewing/editing the LOI draft. The run is re-kicked
+            # HR is reviewing/editing the LOIdraft. The run is re-kicked
             # from the approve-draft route which transitions us to
             # loi_pending_hr_sign and dispatches into the signature step.
             return {"status": current, "waiting_for": "hr_to_approve_loi_draft"}
@@ -481,7 +483,7 @@ class OnboardingV2Agent(BaseAgent):
 
         return {"status": current, "no_op": True}
 
-    # ── Step 1: LOI ────────────────────────────────────────────────────────
+    # ── Step 1: LOI────────────────────────────────────────────────────────
 
     async def _step_generate_loi(self) -> dict[str, Any]:
         await self.log_step("generate_loi", "started")
@@ -538,7 +540,7 @@ class OnboardingV2Agent(BaseAgent):
             actor_kind="agent",
             event_type="loi_ready_for_review",
             message=(
-                "LOI draft ready for HR review. Preview on the run page, "
+                "LOIdraft ready for HR review. Preview on the run page, "
                 "download to edit if needed, then click Send for signature."
             ),
             metadata={"document_id": doc_id},
@@ -548,9 +550,9 @@ class OnboardingV2Agent(BaseAgent):
     # ── Step 1b: HR has reviewed the draft → send for signature ────────────
 
     async def _step_send_to_hr_for_signature(self) -> dict[str, Any]:
-        """Called after HR approves the LOI draft (POST .../loi/approve-draft).
+        """Called after HR approves the LOIdraft (POST .../loi/approve-draft).
         Stamps the signing timestamp, emails HR with the (possibly-edited)
-        LOI PDF link, and parks the run in loi_pending_hr_sign waiting for
+        LOIPDF link, and parks the run in loi_pending_hr_sign waiting for
         the signed-scan upload."""
         await self.log_step("send_to_hr_for_signature", "started")
 
@@ -605,7 +607,7 @@ class OnboardingV2Agent(BaseAgent):
             actor_kind="agent",
             event_type="loi_sent_to_hr_for_signature",
             message=(
-                "HR approved the LOI draft — signing email dispatched. "
+                "HR approved the LOIdraft — signing email dispatched. "
                 "Awaiting scanned-signed-PDF upload."
             ),
             metadata={"used_edited_copy": bool(doc.data.get("hr_edited_pdf_path"))},
@@ -614,7 +616,7 @@ class OnboardingV2Agent(BaseAgent):
 
     async def _notify_hr_loi_ready(self, storage: dict[str, Any]) -> None:
         """Email HR (the user who triggered the run) with a download link to
-        the LOI so they can sign + scan it back."""
+        the LOIso they can sign + scan it back."""
         settings = get_settings()
         run = await self._load_run()
         triggered_by = run.get("triggered_by_user_id")
@@ -656,7 +658,7 @@ class OnboardingV2Agent(BaseAgent):
             await self.log_step("notify_hr_loi_ready", "failed", error=str(exc))
 
     async def _loi_esign_completed(self) -> bool:
-        """True once apps/esign has marked the LOI envelope fully signed.
+        """True once apps/esign has marked the LOIenvelope fully signed.
         apps/esign stamps onboarding_documents on the last signer (see
         apps/esign/app/routers/public_sign.py) — the run status is not touched."""
         svc = get_service_client()
@@ -674,7 +676,7 @@ class OnboardingV2Agent(BaseAgent):
             or row.get("sign_status") == "signed_by_candidate"
         )
 
-    # ── Step 2: Send signed LOI to candidate ───────────────────────────────
+    # ── Step 2: Send signed LOIto candidate ───────────────────────────────
 
     async def _step_send_loi_to_candidate(self) -> dict[str, Any]:
         await self.log_step("send_loi_to_candidate", "started")
@@ -764,7 +766,7 @@ class OnboardingV2Agent(BaseAgent):
             actor_kind="agent",
             event_type="loi_sent_to_candidate",
             message=(
-                f"Signed LOI emailed to {run['candidate_email']}. "
+                f"Signed LOIemailed to {run['candidate_email']}. "
                 "Candidate was asked to submit BGV references via the form link."
             ),
         )
@@ -941,7 +943,7 @@ class OnboardingV2Agent(BaseAgent):
         await self.log_step("generate_offer_bundle", "started")
 
         # Verify BOTH templates exist BEFORE flipping status — see comment
-        # in _step_generate_loi for why we check first.
+        # in _step_generate_LOIfor why we check first.
         for kind in ("appointment_letter", "nda"):
             if not await self._template_is_ready(kind):
                 await self.log_step(
@@ -1057,7 +1059,7 @@ class OnboardingV2Agent(BaseAgent):
 
         user_id = run.get("pre_join_user_id")
         if not user_id:
-            # Provisioning didn't run at LOI sign time (e.g. failed); retry
+            # Provisioning didn't run at LOIsign time (e.g. failed); retry
             # now. If it fails again, we surface a clean failure rather than
             # silently stalling.
             try:
@@ -1201,7 +1203,7 @@ class OnboardingV2Agent(BaseAgent):
 
     async def _step_generate_induction(self) -> dict[str, Any]:
         """Render the org's KB-tagged induction DOCX template with the same
-        variable-substitution pipeline used for LOI / AL / NDA. If no
+        variable-substitution pipeline used for LOI/ AL / NDA. If no
         template is tagged, block and prompt HR to upload one — we never
         synthesize induction content."""
         await self.log_step("generate_induction", "started")

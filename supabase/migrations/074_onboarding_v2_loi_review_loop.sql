@@ -1,10 +1,10 @@
--- ── 074: Onboarding v2 — LOI review-and-edit loop + candidate-driven references ──
+-- ── 074: Onboarding v2 — LOIreview-and-edit loop + candidate-driven references ──
 --
 -- Why this migration exists
 -- -------------------------
 -- Two product changes that ripple through the schema:
 --
---   (a) HR wants to PREVIEW and EDIT the generated LOI before it's sent off for
+--   (a) HR wants to PREVIEW and EDIT the generated LOIbefore it's sent off for
 --       signature. Today the agent goes straight from `loi_generating` to
 --       `loi_pending_hr_sign` (emails HR immediately). The new flow inserts a
 --       `loi_pending_hr_review` state where the agent parks, HR can download +
@@ -12,7 +12,7 @@
 --       signature-request email fire.
 --
 --   (b) BGV references are collected from the CANDIDATE via a public form
---       (link embedded in the LOI email), NOT from HR at run-start. The agent
+--       (link embedded in the LOIemail), NOT from HR at run-start. The agent
 --       parks in `awaiting_candidate_references` until the candidate submits.
 --       HR retains an override button to enter references manually if the
 --       candidate ghosts.
@@ -84,16 +84,16 @@ COMMENT ON COLUMN onboarding_runs.references_form_token IS
   'UUID embedded in the LOI-to-candidate email. Authorises the candidate to '
   'POST to /api/public/onboarding/references/{token} without a login.';
 COMMENT ON COLUMN onboarding_runs.loi_approved_for_signing_at IS
-  'Stamped when HR clicks "Send for signature" on the LOI review screen. '
+  'Stamped when HR clicks "Send for signature" on the LOIreview screen. '
   'Until then the agent is parked in loi_pending_hr_review and no signature '
   'email has been sent.';
 COMMENT ON COLUMN onboarding_runs.loi_draft_revision IS
-  'Incremented every time HR replaces the LOI draft with an edited .docx '
+  'Incremented every time HR replaces the LOIdraft with an edited .docx '
   'during the review step. Useful for the timeline + audit.';
 
 
 -- ── 2. onboarding_documents — HR edit tracking ────────────────────────────
--- The agent generates the LOI from a template and stores it at
+-- The agent generates the LOIfrom a template and stores it at
 -- storage_path. If HR uploads an edited version during the review step,
 -- we keep BOTH the original (storage_path) and the edit
 -- (hr_edited_storage_path) for audit. The signature-request step prefers

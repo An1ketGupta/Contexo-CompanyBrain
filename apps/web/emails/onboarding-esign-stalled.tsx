@@ -20,7 +20,7 @@ export function OnboardingEsignStalledEmail({
       heading="LOI signing hasn't completed"
     >
       <Text style={p}>
-        The Letter of Intent for <strong>{candidate_name}</strong> ({role_title})
+        The LOI for <strong>{candidate_name}</strong> ({role_title})
         was sent for signature{" "}
         <strong>{hours_elapsed} hours ago</strong> but the envelope still
         hasn&apos;t been fully signed by both parties.

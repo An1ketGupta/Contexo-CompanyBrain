@@ -2,7 +2,7 @@
 // the HR run page because the public /sign page names the same documents to a
 // candidate who has never seen the dashboard, and the two must agree.
 export const DOCUMENT_KIND_LABEL: Record<string, string> = {
-  loi: "Letter of Intent",
+  loi: "LOI",
   appointment_letter: "Appointment Letter",
   nda: "NDA",
   induction: "Induction document",

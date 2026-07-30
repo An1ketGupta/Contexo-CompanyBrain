@@ -183,7 +183,7 @@ export function OnboardingSources({
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Sparkles className="h-4 w-4" /> Start a new onboarding
+            Start a new onboarding
           </h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Pick a candidate from your recruiting pipeline, or add one
@@ -334,7 +334,6 @@ function JobCandidatesPanel({
               >
                 Sync candidates
               </Link>{" "}
-              in Recruiting to pull applicants from connected ATSes.
             </>
           ) : (
             <>

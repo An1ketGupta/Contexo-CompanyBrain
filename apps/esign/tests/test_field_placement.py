@@ -3,7 +3,7 @@
 The bug behind them: DOCX→PDF conversion emits the bracketing ◇ of
 `◇SIGN:HR◇` as its own glyph run on its own baseline box, and PyMuPDF's
 `search_for` would not match across that boundary in a real Gotenberg-produced
-LOI — so nothing was found, the marker text was never whited out, and every
+LOI— so nothing was found, the marker text was never whited out, and every
 signature field silently fell back to the bottom of the last page instead of
 where the template put it.
 

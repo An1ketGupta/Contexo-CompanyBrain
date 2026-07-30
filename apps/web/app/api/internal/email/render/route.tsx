@@ -98,14 +98,14 @@ import {
   type RecruitingPublishedEmailProps,
 } from "@/emails/recruiting-published";
 import {
-  OnboardingLoiReadyEmail,
-  onboardingLoiReadySubject,
-  type OnboardingLoiReadyEmailProps,
+  OnboardingLOIReadyEmail,
+  onboardingLOIReadySubject,
+  type OnboardingLOIReadyEmailProps,
 } from "@/emails/onboarding-loi-ready";
 import {
-  OnboardingLoiToCandidateEmail,
-  onboardingLoiToCandidateSubject,
-  type OnboardingLoiToCandidateEmailProps,
+  OnboardingLOIToCandidateEmail,
+  onboardingLOIToCandidateSubject,
+  type OnboardingLOIToCandidateEmailProps,
 } from "@/emails/onboarding-loi-to-candidate";
 import {
   OnboardingBgvRequestEmail,
@@ -247,13 +247,13 @@ const TEMPLATES = {
     subject: recruitingPublishedSubject,
   } satisfies Template<RecruitingPublishedEmailProps>,
   onboarding_loi_ready: {
-    Component: OnboardingLoiReadyEmail,
-    subject: onboardingLoiReadySubject,
-  } satisfies Template<OnboardingLoiReadyEmailProps>,
+    Component: OnboardingLOIReadyEmail,
+    subject: onboardingLOIReadySubject,
+  } satisfies Template<OnboardingLOIReadyEmailProps>,
   onboarding_loi_to_candidate: {
-    Component: OnboardingLoiToCandidateEmail,
-    subject: onboardingLoiToCandidateSubject,
-  } satisfies Template<OnboardingLoiToCandidateEmailProps>,
+    Component: OnboardingLOIToCandidateEmail,
+    subject: onboardingLOIToCandidateSubject,
+  } satisfies Template<OnboardingLOIToCandidateEmailProps>,
   onboarding_bgv_request: {
     Component: OnboardingBgvRequestEmail,
     subject: onboardingBgvRequestSubject,

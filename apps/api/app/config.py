@@ -333,7 +333,7 @@ class Settings(BaseSettings):
     )
 
     # ── Onboarding v2 — PDF generation sidecar ──────────────────────────────
-    # The Onboarding v2 agent (LOI / Appointment Letter / NDA) fills customer-
+    # The Onboarding v2 agent (LOI/ Appointment Letter / NDA) fills customer-
     # uploaded DOCX templates via docxtpl, then converts to PDF by POSTing to
     # Gotenberg's /forms/libreoffice/convert. Run gotenberg as a sidecar on
     # Railway (gotenberg/gotenberg:8 image) and set this to the internal URL.

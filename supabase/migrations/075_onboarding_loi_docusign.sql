@@ -1,9 +1,9 @@
 -- 075_onboarding_loi_docusign.sql
--- LOI signing via DocuSign (HR → candidate routed).
+-- LOIsigning via DocuSign (HR → candidate routed).
 --
 -- Why:
---   Until now the LOI flow required HR to print/scan/upload, then the
---   candidate received the LOI as a PDF attachment but didn't sign it
+--   Until now the LOIflow required HR to print/scan/upload, then the
+--   candidate received the LOIas a PDF attachment but didn't sign it
 --   digitally. When DocuSign is configured we want a single envelope routed
 --   from HR to the candidate, with both signatures captured electronically.
 --

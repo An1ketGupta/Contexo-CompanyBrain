@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { use, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { use, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -11,9 +12,22 @@ import {
   MapPin,
   Plus,
   Sparkles,
+  Trash2,
+  Upload,
 } from "lucide-react";
 
 import { PageHeader, StatusPill } from "@/components/actual/kit";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { AddFieldDialog } from "@/components/document-templates/add-field-dialog";
 import { FieldRow } from "@/components/document-templates/field-row";
 import { PlaceFieldDialog } from "@/components/document-templates/place-field-dialog";
@@ -21,6 +35,7 @@ import { UnmappedPositions } from "@/components/document-templates/unmapped-posi
 import { Button } from "@/components/ui/button";
 import {
   useDocumentTemplate,
+  useDocumentTemplates,
   useTemplateSchema,
   useTemplateVersions,
 } from "@/hooks/use-document-templates";
@@ -32,9 +47,11 @@ export default function TemplateFieldsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const router = useRouter();
 
   const { template } = useDocumentTemplate(id);
-  const { versions } = useTemplateVersions(id);
+  const { versions, uploadVersion } = useTemplateVersions(id);
+  const { archiveTemplate } = useDocumentTemplates();
 
   const versionId = template?.current_version_id ?? versions[0]?.id ?? null;
   const {
@@ -56,6 +73,8 @@ export default function TemplateFieldsPage({
   const [previewResult, setPreviewResult] = useState<DocPreviewResult | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [placeOpen, setPlaceOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const replaceFileInput = useRef<HTMLInputElement>(null);
 
   const variables = schema?.variables ?? [];
   const slots = schema?.slots ?? [];
@@ -131,6 +150,24 @@ export default function TemplateFieldsPage({
     });
   }
 
+  async function runReplace(file: File) {
+    await run("replace", async () => {
+      await uploadVersion(file);
+      setPreviewResult(null);
+      setNotice(
+        "New file uploaded. Fields from the previous version don't carry over — run “Find fields” to detect them again.",
+      );
+    });
+    if (replaceFileInput.current) replaceFileInput.current.value = "";
+  }
+
+  async function runDelete() {
+    await run("delete", async () => {
+      await archiveTemplate(id);
+      router.push("/document-templates");
+    });
+  }
+
   return (
     <div className="mx-auto max-w-5xl space-y-8 p-6 md:p-8">
       <Button asChild variant="ghost" size="sm" className="-ml-2">
@@ -143,7 +180,6 @@ export default function TemplateFieldsPage({
       <PageHeader
         eyebrow={template?.document_type_label ?? "Template"}
         title={template?.name ?? "Review fields"}
-        description="Confirm which details change for each person. Everything else in your document stays exactly as you wrote it."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -176,6 +212,72 @@ export default function TemplateFieldsPage({
               )}
               {variables.length ? "Re-analyze" : "Find fields"}
             </Button>
+
+            <input
+              ref={replaceFileInput}
+              type="file"
+              accept=".docx,.pdf"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) runReplace(file);
+              }}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => replaceFileInput.current?.click()}
+              disabled={busy !== null}
+            >
+              {busy === "replace" ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="mr-2 h-4 w-4" />
+              )}
+              New
+            </Button>
+
+            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  disabled={busy !== null}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete this template?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    <span className="font-medium text-foreground">
+                      {template?.name}
+                    </span>{" "}
+                    will be archived and stop being used to generate documents.
+                    Documents already generated from it are not affected.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={busy === "delete"}>
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={(e) => {
+                      e.preventDefault();
+                      runDelete();
+                    }}
+                    disabled={busy === "delete"}
+                  >
+                    {busy === "delete" ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : null}
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         }
       />
@@ -191,12 +293,10 @@ export default function TemplateFieldsPage({
       ) : null}
 
       {occupiedCount > 0 ? (
-        <Banner tone="warn">
-          {occupiedCount} field{occupiedCount === 1 ? "" : "s"}{" "}
-          in this document still contain a real person&rsquo;s details from the
-          sample. Confirming
-          a field means it gets replaced for each new person; rejecting it means
-          the sample value stays in every document you send.
+        <Banner tone="info">
+          Confirming a field means it gets replaced for each new person.
+          <br />
+          Rejecting it means the sample value stays in every document you send.
         </Banner>
       ) : null}
 
@@ -368,7 +468,7 @@ function Banner({
 
   return (
     <div className={`flex items-start gap-2 rounded-lg px-4 py-3 text-sm ${styles}`}>
-      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      <AlertTriangle className="h-4 w-4 shrink-0 my-auto mr-0.5" />
       <span>{children}</span>
     </div>
   );

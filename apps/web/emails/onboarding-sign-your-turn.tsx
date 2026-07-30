@@ -3,7 +3,7 @@ import { EmailShell, button, muted, p } from "./_layout";
 
 export interface OnboardingSignYourTurnEmailProps {
   recipient_name: string;
-  document_label: string; // e.g. "Letter of Intent"
+  document_label: string; // e.g. "LOI"
   signing_url: string;
   app_url: string;
 }

@@ -3,7 +3,7 @@
 -- Adds five additive surfaces on top of migration 071 to take the pre-join
 -- pipeline from "happy path works" to "ship to paying customers":
 --
---   1. users.status — distinguishes pre_join (LOI sent, no login yet) from
+--   1. users.status — distinguishes pre_join (LOIsent, no login yet) from
 --      active members. Lets the compliance UI surface "Pending Day-1" rows
 --      and lets us scope analytics correctly. Default 'active' so existing
 --      rows don't flip meaning.
@@ -40,8 +40,8 @@ CREATE INDEX IF NOT EXISTS idx_users_org_status
   ON users (org_id, status);
 
 COMMENT ON COLUMN users.status IS
-  'Lifecycle: pre_join (LOI sent, no first login yet) | active | suspended. '
-  'OnboardingV2Agent creates pre_join rows at LOI sign time so policy '
+  'Lifecycle: pre_join (LOIsent, no first login yet) | active | suspended. '
+  'OnboardingV2Agent creates pre_join rows at LOIsign time so policy '
   'acknowledgements can be assigned before Day 1; flips to active on first '
   'magic-link redemption.';
 

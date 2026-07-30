@@ -137,7 +137,7 @@ def extract_fields_and_clean(
     bytes, fields).
 
     `roles` scopes which markers to look for (an AL+NDA candidate-only bundle
-    passes ["candidate"]; a routed LOI passes ["hr", "candidate"]).
+    passes ["candidate"]; a routed LOIpasses ["hr", "candidate"]).
     """
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:

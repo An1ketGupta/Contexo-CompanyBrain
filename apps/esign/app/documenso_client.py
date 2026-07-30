@@ -147,16 +147,41 @@ async def _request(
         raise DocumensoError(f"Documenso {method} {path}: non-JSON response") from exc
 
 
-def _match_recipient_id(recipients: list[dict], *, email: str) -> int:
-    """Find a recipient's id by email (case-insensitive). Ids are needed to
-    bind signature fields to the right signer."""
+def _recipient_id(r: dict) -> int | None:
+    rid = r.get("id") or r.get("recipientId")
+    if rid is None:
+        return None
+    try:
+        return int(rid)
+    except (TypeError, ValueError):
+        return None
+
+
+def _match_recipient_id(
+    recipients: list[dict], *, email: str, signing_order: int, claimed: set[int]
+) -> int:
+    """Resolve one Documenso recipient id for one of our signers.
+
+    Email alone is NOT a key. HR and the candidate are legitimately the same
+    address sometimes (a founder onboarding themselves, anyone testing the
+    flow), and Documenso happily creates two recipients for it. Matching on
+    email then handed both roles the same id, so every signature field piled
+    onto the first recipient and the second was left with none — `distribute`
+    rejects that with MISSING_SIGNATURE_FIELD. So: disambiguate by signing
+    order, and never hand the same recipient to two roles.
+    """
     want = email.strip().lower()
-    for r in recipients:
-        if str(r.get("email", "")).strip().lower() == want:
-            rid = r.get("id") or r.get("recipientId")
-            if rid is not None:
-                return int(rid)
-    raise DocumensoError(f"Documenso envelope has no recipient for {email}")
+    same_email = [r for r in recipients if str(r.get("email", "")).strip().lower() == want]
+    by_order = [r for r in same_email if r.get("signingOrder") == signing_order]
+    for pool in (by_order, same_email):
+        for r in pool:
+            rid = _recipient_id(r)
+            if rid is not None and rid not in claimed:
+                return rid
+    raise DocumensoError(
+        f"Documenso envelope has no unclaimed recipient for {email} "
+        f"(signing order {signing_order})"
+    )
 
 
 def _parse_create(payload: dict) -> str:
@@ -228,10 +253,18 @@ async def create_and_distribute(
     envelope_item_id = _first_item_id(envelope)
     created_recipients = envelope.get("recipients") or []
 
-    # Map our roles to Documenso recipient ids via email.
+    # Map our roles to Documenso recipient ids, one recipient per role.
     role_to_recipient_id: dict[str, int] = {}
+    claimed: set[int] = set()
     for r in recipients:
-        role_to_recipient_id[r.role] = _match_recipient_id(created_recipients, email=r.email)
+        rid = _match_recipient_id(
+            created_recipients,
+            email=r.email,
+            signing_order=r.signing_order,
+            claimed=claimed,
+        )
+        role_to_recipient_id[r.role] = rid
+        claimed.add(rid)
 
     # 2) Place SIGNATURE fields (percentage coords) bound to each recipient.
     field_data = []
@@ -251,6 +284,17 @@ async def create_and_distribute(
         if envelope_item_id:
             entry["envelopeItemId"] = envelope_item_id
         field_data.append(entry)
+
+    # Distribute 400s if any SIGNER owns no field, and its error names the
+    # Documenso recipient rather than our role — catch it here where we can say
+    # which role lost its signature box.
+    fielded = {e["recipientId"] for e in field_data}
+    unfielded = [role for role, rid in role_to_recipient_id.items() if rid not in fielded]
+    if unfielded:
+        raise DocumensoError(
+            f"No signature field was placed for: {', '.join(sorted(unfielded))}. "
+            "The document has no signature marker for that signer."
+        )
 
     if field_data:
         await _request(

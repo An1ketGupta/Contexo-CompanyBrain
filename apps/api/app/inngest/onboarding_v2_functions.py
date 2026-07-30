@@ -5,7 +5,7 @@ the next event re-kicks the agent which inspects status and dispatches. We
 expose a small set of events:
 
   onboarding_v2/start             - HR clicks "Mark Hired & Start Onboarding"
-  onboarding_v2/loi_signed_uploaded - HR uploads signed-LOI PDF
+  onboarding_v2/loi_signed_uploaded - HR uploads signed-LOIPDF
   onboarding_v2/bgv_response      - A reference submits the public form
   onboarding_v2/policy_ack_changed - An acknowledgement row flipped
   onboarding_v2/template_uploaded  - HR uploaded a previously-missing template
@@ -175,7 +175,7 @@ async def onboarding_v2_esign_completed(ctx: inngest.Context) -> dict[str, Any]:
 
 
 _SIGN_DOCUMENT_LABELS: dict[tuple[str, ...], str] = {
-    ("loi",): "Letter of Intent",
+    ("loi",): "LOI",
     ("appointment_letter", "nda"): "Appointment Letter + NDA",
 }
 
@@ -441,7 +441,7 @@ async def onboarding_v2_candidate_refs_reminders(
 async def onboarding_v2_esign_timeout_watch(
     ctx: inngest.Context,
 ) -> dict[str, Any]:
-    """Alert HR when an LOI signing envelope has been outstanding for >48 h.
+    """Alert HR when an LOIsigning envelope has been outstanding for >48 h.
 
     We deliberately do NOT auto-void — the candidate may still be in the
     process of signing. HR can decide whether to chase the candidate or void

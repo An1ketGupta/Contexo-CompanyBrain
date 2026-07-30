@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import {
+  Archive,
+  ArchiveRestore,
   Banknote,
   Briefcase,
   Building2,
@@ -115,6 +117,7 @@ interface Requisition {
   candidates_last_synced_at: string | null;
   candidates_last_sync_error: string | null;
   hiring_completed_at: string | null;
+  archived_at: string | null;
   sourcing_templates: SourcingTemplate[];
   linkedin_search_urls: LinkedinSearch[];
   naukri_search_urls: NaukriSearch[];
@@ -217,6 +220,7 @@ export default function RequisitionDetailPage() {
   const [jdDraft, setJdDraft] = useState("");
   const [savingJd, setSavingJd] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [markingHired, setMarkingHired] = useState(false);
   const [syncSummary, setSyncSummary] = useState<{
@@ -552,6 +556,34 @@ export default function RequisitionDetailPage() {
     }
   };
 
+  const handleArchiveToggle = async () => {
+    if (!id || !data) return;
+    const archived = Boolean(data.archived_at);
+    setArchiving(true);
+    try {
+      const res = await fetch(
+        `/api/recruiting/requisitions/${id}/${archived ? "unarchive" : "archive"}`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.message || body?.detail || `Failed (${res.status})`);
+      }
+      toast.success(archived ? "Requisition restored" : "Requisition archived");
+      await mutate();
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : archived
+            ? "Restore failed"
+            : "Archive failed",
+      );
+    } finally {
+      setArchiving(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="mx-auto max-w-5xl space-y-4 p-6 md:p-8">
@@ -572,7 +604,9 @@ export default function RequisitionDetailPage() {
     );
   }
 
-  const canEdit = data.status === "draft" || data.status === "failed";
+  const isArchived = Boolean(data.archived_at);
+  // An archived requisition is retired: no edits, no publish. Restore first.
+  const canEdit = (data.status === "draft" || data.status === "failed") && !isArchived;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
@@ -596,8 +630,8 @@ export default function RequisitionDetailPage() {
               {data.role_request}
             </h1>
           </div>
-          {canEdit && (
-            <div className="flex shrink-0 gap-1">
+          <div className="flex shrink-0 gap-1">
+            {canEdit && (
               <Button
                 size="sm"
                 variant="outline"
@@ -614,6 +648,26 @@ export default function RequisitionDetailPage() {
                 <Pencil className="h-3.5 w-3.5" />
                 {editingJd ? "Cancel" : "Edit"}
               </Button>
+            )}
+            {/* Archive works for any status — it's the only retire path a
+                published requisition has, since delete refuses those. */}
+            <Button
+              size="sm"
+              variant={isArchived ? "outline" : "ghost"}
+              onClick={handleArchiveToggle}
+              disabled={archiving}
+              className={isArchived ? undefined : "text-muted-foreground"}
+            >
+              {archiving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : isArchived ? (
+                <ArchiveRestore className="h-3.5 w-3.5" />
+              ) : (
+                <Archive className="h-3.5 w-3.5" />
+              )}
+              {isArchived ? "Restore" : "Archive"}
+            </Button>
+            {canEdit && (
               <Button
                 size="sm"
                 variant="ghost"
@@ -627,8 +681,8 @@ export default function RequisitionDetailPage() {
                   <Trash2 className="h-3.5 w-3.5" />
                 )}
               </Button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {(data.location ||
@@ -661,6 +715,20 @@ export default function RequisitionDetailPage() {
           </div>
         )}
 
+        {isArchived && (
+          <div className="mt-3 flex items-start gap-2 rounded-xl border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
+            <Archive className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <div className="font-bold text-foreground">Archived</div>
+              <p className="mt-1">
+                Hidden from the requisitions list since{" "}
+                {new Date(data.archived_at!).toLocaleString()}. Nothing was
+                deleted — any live ATS postings are untouched. Restore it to
+                edit or publish again.
+              </p>
+            </div>
+          </div>
+        )}
         {data.error_message && (
           <div className="mt-3 rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm font-medium text-destructive">
             {data.error_message}
@@ -756,8 +824,9 @@ export default function RequisitionDetailPage() {
         )}
       </section>
 
-      {/* Publish form */}
-      {!isPublished && (
+      {/* Publish form — hidden while archived; the API rejects publishing an
+          archived requisition, so don't render a form that can only 409. */}
+      {!isPublished && !isArchived && (
         <section className="rounded-2xl border border-border bg-card p-6">
           <h2 className="mb-4 text-base font-extrabold tracking-tight">Publish</h2>
           <div className="grid gap-4 md:grid-cols-2">

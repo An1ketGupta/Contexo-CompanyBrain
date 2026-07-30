@@ -1,7 +1,7 @@
 import { Button, Hr, Section, Text } from "@react-email/components";
 import { EmailShell, button, muted, p } from "./_layout";
 
-export interface OnboardingLoiReadyEmailProps {
+export interface OnboardingLOIReadyEmailProps {
   candidate_name: string;
   role_title: string;
   ctc: string;
@@ -11,7 +11,7 @@ export interface OnboardingLoiReadyEmailProps {
   run_id: string;
 }
 
-export function OnboardingLoiReadyEmail({
+export function OnboardingLOIReadyEmail({
   candidate_name,
   role_title,
   ctc,
@@ -19,14 +19,14 @@ export function OnboardingLoiReadyEmail({
   loi_signed_url,
   app_url,
   run_id,
-}: OnboardingLoiReadyEmailProps) {
+}: OnboardingLOIReadyEmailProps) {
   return (
     <EmailShell
       preview={`LOI ready for ${candidate_name}`}
-      heading="The Letter of Intent is ready for your signature"
+      heading="The LOI is ready for your signature"
     >
       <Text style={p}>
-        We just generated the Letter of Intent for{" "}
+        We just generated the LOI for{" "}
         <strong>{candidate_name}</strong> ({role_title}). Download it, sign it,
         scan it, and upload the signed copy from the onboarding dashboard — the
         agent will email it to the candidate from there.
@@ -63,8 +63,8 @@ export function OnboardingLoiReadyEmail({
   );
 }
 
-export const onboardingLoiReadySubject = (
-  props: OnboardingLoiReadyEmailProps,
+export const onboardingLOIReadySubject = (
+  props: OnboardingLOIReadyEmailProps,
 ): string => `LOI ready to sign — ${props.candidate_name}`;
 
-export default OnboardingLoiReadyEmail;
+export default OnboardingLOIReadyEmail;

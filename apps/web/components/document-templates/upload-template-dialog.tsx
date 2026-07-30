@@ -110,9 +110,7 @@ export function UploadTemplateDialog({
         <DialogHeader>
           <DialogTitle>Upload a template</DialogTitle>
           <DialogDescription>
-            A finished document works best — we read the filled-in values to
-            work out which details change per person. Your original file is
-            stored untouched and never edited.
+            We detect the personalized fields. Your original template is never modified.
           </DialogDescription>
         </DialogHeader>
 

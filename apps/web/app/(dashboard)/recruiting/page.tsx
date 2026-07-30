@@ -3,19 +3,34 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import useSWR from "swr";
+import { toast } from "sonner";
 import {
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
   Briefcase,
   FileText,
   Hash,
+  Loader2,
   Plus,
   Search,
   Settings,
+  Trash2,
   X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { PageHeader, StatusPill, type PillTone } from "@/components/actual/kit";
 import { NotionParentPicker } from "@/components/recruiting/notion-parent-picker";
 import { SlackChannelPicker } from "@/components/recruiting/slack-channel-picker";
@@ -35,10 +50,13 @@ interface RequisitionRow {
   ats_postings: AtsPostingRow[];
   created_at: string;
   published_at: string | null;
+  hiring_completed_at: string | null;
+  archived_at: string | null;
 }
 
 interface ListResponse {
   requisitions: RequisitionRow[];
+  archived_count: number;
 }
 
 interface NotionParentStatus {
@@ -58,13 +76,8 @@ interface SlackChannelStatus {
 }
 
 type StatusKey = "all" | "draft" | "published" | "failed";
-
-const PLATFORM_STYLE: Record<string, { label: string; bg: string; text: string }> = {
-  greenhouse: { label: "Greenhouse", bg: "bg-success-tint", text: "text-success" },
-  lever: { label: "Lever", bg: "bg-violet-tint", text: "text-violet" },
-  ashby: { label: "Ashby", bg: "bg-amber-tint", text: "text-amber" },
-  naukri: { label: "Naukri", bg: "bg-brand-tint", text: "text-brand" },
-};
+// "archived" is a separate server-side query, not a status value.
+type TabKey = StatusKey | "archived";
 
 const STATUS_META: Record<
   Exclude<StatusKey, "all">,
@@ -74,6 +87,11 @@ const STATUS_META: Record<
   published: { label: "Published", tone: "green", stripe: "bg-success" },
   failed: { label: "Failed", tone: "red", stripe: "bg-destructive" },
 };
+
+// Row actions sit on top of the full-row link overlay, so they re-enable
+// pointer events. Hidden until hover on desktop; always visible on touch.
+const ACTION_BTN =
+  "pointer-events-auto relative inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground opacity-100 transition hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100";
 
 const fetcher = async <T,>(url: string): Promise<T> => {
   const res = await fetch(url);
@@ -96,14 +114,35 @@ export default function RecruitingPage() {
   const [slackPickerOpen, setSlackPickerOpen] = useState(false);
   const [dismissedSetup, setDismissedSetup] = useState(false);
   const [dismissedSlackSetup, setDismissedSlackSetup] = useState(false);
-  const [filter, setFilter] = useState<StatusKey>("all");
+  const [filter, setFilter] = useState<TabKey>("all");
   const [query, setQuery] = useState("");
 
-  const { data, error, isLoading } = useSWR<ListResponse>(
+  const showingArchived = filter === "archived";
+
+  // Archived rows live behind a separate query so they don't eat into the
+  // 100-row cap on the active listing. Status counts always come from the
+  // active response, which is why it stays mounted on the Archived tab.
+  const { data, error, isLoading, mutate } = useSWR<ListResponse>(
     "/api/recruiting/requisitions",
     fetcher,
     { revalidateOnFocus: false },
   );
+
+  const {
+    data: archivedData,
+    error: archivedError,
+    isLoading: archivedLoading,
+    mutate: mutateArchived,
+  } = useSWR<ListResponse>(
+    showingArchived ? "/api/recruiting/requisitions?archived=true" : null,
+    fetcher,
+    { revalidateOnFocus: false },
+  );
+
+  const refreshLists = () => {
+    void mutate();
+    void mutateArchived();
+  };
 
   const { data: notionStatus, mutate: mutateNotionStatus } =
     useSWR<NotionParentStatus>(
@@ -130,25 +169,41 @@ export default function RecruitingPage() {
     !dismissedSlackSetup;
 
   const counts = useMemo(() => {
-    const c = { all: 0, draft: 0, published: 0, failed: 0 } as Record<StatusKey, number>;
+    const c = { all: 0, draft: 0, published: 0, failed: 0, archived: 0 } as Record<
+      TabKey,
+      number
+    >;
     for (const r of data?.requisitions ?? []) {
       c.all += 1;
       if (r.status === "draft" || r.status === "published" || r.status === "failed") {
         c[r.status as Exclude<StatusKey, "all">] += 1;
       }
     }
+    c.archived = data?.archived_count ?? 0;
     return c;
   }, [data]);
 
   const visible = useMemo(() => {
-    const rows = data?.requisitions ?? [];
+    const rows = showingArchived
+      ? (archivedData?.requisitions ?? [])
+      : (data?.requisitions ?? []);
     const q = query.trim().toLowerCase();
     return rows.filter((r) => {
-      if (filter !== "all" && r.status !== filter) return false;
+      if (!showingArchived && filter !== "all" && r.status !== filter) return false;
       if (q && !r.role_request.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [data, filter, query]);
+  }, [data, archivedData, filter, query, showingArchived]);
+
+  const listLoading = showingArchived ? archivedLoading : isLoading;
+  const listError = showingArchived ? archivedError : error;
+  // Nothing at all in the org — the only case that gets the onboarding empty
+  // state rather than the "no rows in this tab" note.
+  const orgIsEmpty =
+    !isLoading &&
+    !error &&
+    (data?.requisitions.length ?? 0) === 0 &&
+    counts.archived === 0;
 
   const bothConfigured =
     notionStatus?.parent_id &&
@@ -239,10 +294,12 @@ export default function RecruitingPage() {
         onPicked={() => mutateSlackStatus()}
       />
 
-      {!isLoading && !error && (data?.requisitions?.length ?? 0) > 0 && (
+      {!isLoading && !error && !orgIsEmpty && (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-1.5">
-            {(["all", "published", "draft", "failed"] as StatusKey[]).map((k) => {
+            {(["all", "published", "draft", "failed", "archived"] as TabKey[]).map((k) => {
+              // Don't advertise an Archived tab until something is in it.
+              if (k === "archived" && counts.archived === 0) return null;
               const active = filter === k;
               return (
                 <button
@@ -291,17 +348,17 @@ export default function RecruitingPage() {
         </div>
       )}
 
-      {isLoading ? (
+      {listLoading ? (
         <div className="space-y-3">
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-20 w-full rounded-2xl" />
           ))}
         </div>
-      ) : error ? (
+      ) : listError ? (
         <div className="rounded-2xl border border-destructive/30 bg-destructive-soft p-4 text-sm font-medium text-destructive">
           Failed to load requisitions.
         </div>
-      ) : !data?.requisitions?.length ? (
+      ) : orgIsEmpty ? (
         <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border bg-background p-12 text-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-tint text-brand">
             <Briefcase className="h-5 w-5" />
@@ -327,7 +384,7 @@ export default function RecruitingPage() {
       ) : (
         <ul className="space-y-2">
           {visible.map((r) => (
-            <RequisitionItem key={r.id} row={r} />
+            <RequisitionItem key={r.id} row={r} onChanged={refreshLists} />
           ))}
         </ul>
       )}
@@ -393,18 +450,83 @@ function StatusRow({
   );
 }
 
-function RequisitionItem({ row }: { row: RequisitionRow }) {
+function RequisitionItem({
+  row,
+  onChanged,
+}: {
+  row: RequisitionRow;
+  onChanged: () => void;
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const statusMeta =
     STATUS_META[row.status as Exclude<StatusKey, "all">] ?? STATUS_META.draft;
-  const platforms = row.ats_postings?.length
-    ? row.ats_postings.map((p) => p.platform)
-    : row.ats_platform
-      ? [row.ats_platform]
-      : [];
+
+  const isArchived = Boolean(row.archived_at);
+  // Published requisitions are the ATS audit-trail anchor; the API rejects
+  // deleting them, so don't offer the action. Archive is their retire path.
+  const canDelete = row.status === "draft" || row.status === "failed";
+  const busy = deleting || archiving;
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/recruiting/requisitions/${row.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok && res.status !== 204) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          body?.message || body?.detail || `Failed (${res.status})`,
+        );
+      }
+      toast.success("Requisition deleted");
+      setConfirmOpen(false);
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleArchiveToggle = async () => {
+    setArchiving(true);
+    try {
+      const res = await fetch(
+        `/api/recruiting/requisitions/${row.id}/${isArchived ? "unarchive" : "archive"}`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          body?.message || body?.detail || `Failed (${res.status})`,
+        );
+      }
+      toast.success(isArchived ? "Requisition restored" : "Requisition archived");
+      onChanged();
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : isArchived
+            ? "Restore failed"
+            : "Archive failed",
+      );
+    } finally {
+      setArchiving(false);
+    }
+  };
 
   return (
-    <li className="overflow-hidden rounded-2xl border border-border bg-card transition-colors hover:bg-muted/40">
-      <Link href={`/recruiting/${row.id}`} className="flex">
+    <li className="group relative overflow-hidden rounded-2xl border border-border bg-card transition-colors hover:bg-muted/40">
+      <Link
+        href={`/recruiting/${row.id}`}
+        aria-label={row.role_request}
+        className="absolute inset-0 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      <div className="pointer-events-none flex">
         <span
           aria-hidden
           className={`w-1 shrink-0 ${statusMeta.stripe}`}
@@ -425,40 +547,81 @@ function RequisitionItem({ row }: { row: RequisitionRow }) {
                   </span>
                 </>
               )}
+              {isArchived && (
+                <>
+                  {" · "}
+                  <span title={new Date(row.archived_at!).toLocaleString()}>
+                    Archived {relativeTime(row.archived_at!)}
+                  </span>
+                </>
+              )}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            {platforms.map((p) => {
-              const style = PLATFORM_STYLE[p];
-              if (!style) {
-                return (
-                  <span
-                    key={p}
-                    className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-[11px] font-medium capitalize text-muted-foreground"
-                  >
-                    {p}
-                  </span>
-                );
-              }
-              return (
-                <span
-                  key={p}
-                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${style.bg} ${style.text}`}
-                >
-                  <span
-                    aria-hidden
-                    className={`flex h-4 w-4 items-center justify-center rounded text-[9px] font-bold ${style.bg} ${style.text}`}
-                  >
-                    {style.label.charAt(0)}
-                  </span>
-                  {style.label}
-                </span>
-              );
-            })}
+            {row.hiring_completed_at && !isArchived && (
+              <StatusPill tone="blue">Filled</StatusPill>
+            )}
             <StatusPill tone={statusMeta.tone}>{statusMeta.label}</StatusPill>
+            <button
+              type="button"
+              onClick={handleArchiveToggle}
+              disabled={busy}
+              aria-label={`${isArchived ? "Restore" : "Archive"} ${row.role_request}`}
+              title={isArchived ? "Restore" : "Archive"}
+              className={ACTION_BTN}
+            >
+              {archiving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : isArchived ? (
+                <ArchiveRestore className="h-3.5 w-3.5" />
+              ) : (
+                <Archive className="h-3.5 w-3.5" />
+              )}
+            </button>
+            {canDelete && (
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(true)}
+                disabled={busy}
+                aria-label={`Delete ${row.role_request}`}
+                title="Delete"
+                className={`${ACTION_BTN} hover:bg-destructive-soft hover:text-destructive`}
+              >
+                {deleting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3.5 w-3.5" />
+                )}
+              </button>
+            )}
           </div>
         </div>
-      </Link>
+      </div>
+
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this requisition?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This requisition and its generated JD variants will
+              be removed. 
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void handleDelete();
+              }}
+              disabled={deleting}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </li>
   );
 }

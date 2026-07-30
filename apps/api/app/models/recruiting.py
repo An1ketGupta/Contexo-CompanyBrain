@@ -282,3 +282,7 @@ class RequisitionRead(BaseModel):
     candidates_last_sync_error: str | None = None
     # Set once HR clicks "Hiring completed" on this requisition. NULL until then.
     hiring_completed_at: datetime | None = None
+    # Archived rows are hidden from the default listing. Published requisitions
+    # can't be deleted (audit trail), so archiving is their only retire path.
+    archived_at: datetime | None = None
+    archived_by: str | None = None

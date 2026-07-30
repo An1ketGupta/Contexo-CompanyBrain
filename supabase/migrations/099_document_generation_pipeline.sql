@@ -95,7 +95,7 @@ COMMENT ON TABLE document_types IS
 -- the labels are what HR sees in the type picker.
 INSERT INTO document_types (org_id, key, label, description, is_system, sort_order) VALUES
   (NULL, 'offer_letter',           'Offer Letter',             'Initial offer of employment extended to a candidate.',        TRUE, 10),
-  (NULL, 'letter_of_intent',       'Letter of Intent',         'Non-binding statement of intent to hire, issued pre-offer.',  TRUE, 20),
+  (NULL, 'letter_of_intent',       'LOI',         'Non-binding statement of intent to hire, issued pre-offer.',  TRUE, 20),
   (NULL, 'appointment_letter',     'Appointment Letter',       'Formal appointment issued after the offer is accepted.',      TRUE, 30),
   (NULL, 'employment_agreement',   'Employment Agreement',     'Full employment contract setting out terms and conditions.',  TRUE, 40),
   (NULL, 'nda',                    'NDA',                      'Non-disclosure agreement.',                                   TRUE, 50),
@@ -136,7 +136,7 @@ ALTER TABLE doc_templates
     status IN ('draft', 'active', 'archived')
   );
 
--- One default per (org, type). The agent asks for "the org's LOI template" and
+-- One default per (org, type). The agent asks for "the org's LOItemplate" and
 -- must get a deterministic answer; the old code did
 -- `order(created_at desc).limit(1)`, which silently changed which template was
 -- live whenever someone uploaded another one.

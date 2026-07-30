@@ -177,6 +177,8 @@ def _to_read(row: dict[str, Any]) -> dict[str, Any]:
         "candidates_last_synced_at": row.get("candidates_last_synced_at"),
         "candidates_last_sync_error": row.get("candidates_last_sync_error"),
         "hiring_completed_at": row.get("hiring_completed_at"),
+        "archived_at": row.get("archived_at"),
+        "archived_by": row.get("archived_by"),
     }
 
 
@@ -257,7 +259,7 @@ async def publish_requisition(
     def _fetch_owner() -> dict[str, Any] | None:
         res = (
             svc.table("job_requisitions")
-            .select("created_by, status")
+            .select("created_by, status, archived_at")
             .eq("id", requisition_id)
             .eq("org_id", org_id)
             .maybe_single()
@@ -272,6 +274,13 @@ async def publish_requisition(
         role = await _user_role(token, user_id)
         if role != "admin":
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Not your requisition.")
+    if own_row.get("archived_at"):
+        # An archived draft is retired; pushing it to the ATS would create a
+        # live job posting nothing in the UI points at.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This requisition is archived. Restore it before publishing.",
+        )
 
     try:
         updated = await recruiting_agent.publish_requisition(
@@ -406,6 +415,89 @@ async def mark_hiring_completed(
 
     updated = await asyncio.to_thread(_update)
     return _to_read({**row, **updated})
+
+
+# ── Archive / Unarchive ─────────────────────────────────────────────────────
+
+
+async def _set_archived(
+    requisition_id: str,
+    current_user: dict,
+    *,
+    archived: bool,
+) -> dict[str, Any]:
+    """Shared body for archive/unarchive. Same permission rule as delete:
+    the creator, or an org admin."""
+    org_id, user_id, token = _require_org(current_user)
+    svc = get_service_client()
+
+    def _fetch() -> dict[str, Any] | None:
+        res = (
+            svc.table("job_requisitions")
+            .select("*")
+            .eq("id", requisition_id)
+            .eq("org_id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        return res.data if res else None
+
+    row = await asyncio.to_thread(_fetch)
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Requisition not found.")
+    if row["created_by"] != user_id:
+        role = await _user_role(token, user_id)
+        if role != "admin":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Not your requisition.")
+
+    already = bool(row.get("archived_at"))
+    if already == archived:
+        return _to_read(row)
+
+    updates: dict[str, Any] = (
+        {"archived_at": datetime.now(UTC).isoformat(), "archived_by": user_id}
+        if archived
+        else {"archived_at": None, "archived_by": None}
+    )
+
+    def _update() -> dict[str, Any]:
+        res = (
+            svc.table("job_requisitions")
+            .update(updates)
+            .eq("id", requisition_id)
+            .eq("org_id", org_id)
+            .execute()
+        )
+        return (res.data or [{}])[0]
+
+    updated = await asyncio.to_thread(_update)
+    await audit_log.write(
+        org_id=org_id,
+        requisition_id=requisition_id,
+        actor_user_id=user_id,
+        action="archive" if archived else "unarchive",
+        status="success",
+        request_summary={"status": _normalise_status(row.get("status"))},
+    )
+    return _to_read({**row, **updated})
+
+
+@router.post("/requisitions/{requisition_id}/archive", response_model=RequisitionRead)
+async def archive_requisition(
+    requisition_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """Hide a requisition from the default listing without destroying it.
+    This is the retire path for published rows, which delete refuses."""
+    return await _set_archived(requisition_id, current_user, archived=True)
+
+
+@router.post("/requisitions/{requisition_id}/unarchive", response_model=RequisitionRead)
+async def unarchive_requisition(
+    requisition_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    return await _set_archived(requisition_id, current_user, archived=False)
 
 
 # ── Edit / Delete (drafts only) ─────────────────────────────────────────────
@@ -602,24 +694,48 @@ async def delete_requisition(
 
 @router.get("/requisitions")
 async def list_requisitions(
+    archived: bool = False,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
+    """Active requisitions by default; `?archived=true` returns the archived
+    ones instead. The two sets are fetched separately so archived rows don't
+    eat into the 100-row cap on the main listing.
+
+    `archived_count` ships with both responses so the UI can label its
+    Archived tab without a second round trip.
+    """
     org_id, _user_id, token = _require_org(current_user)
     client = get_user_client(token)
 
     def _fetch() -> list[dict[str, Any]]:
-        res = (
-            client.table("job_requisitions")
-            .select("*")
-            .eq("org_id", org_id)
-            .order("created_at", desc=True)
-            .limit(100)
-            .execute()
-        )
+        q = client.table("job_requisitions").select("*").eq("org_id", org_id)
+        if archived:
+            # Most-recently-archived first — that's the row you're most likely
+            # to want back.
+            q = q.not_.is_("archived_at", "null").order("archived_at", desc=True)
+        else:
+            q = q.is_("archived_at", "null").order("created_at", desc=True)
+        res = q.limit(100).execute()
         return res.data or []
 
-    rows = await asyncio.to_thread(_fetch)
-    return {"requisitions": [_to_read(r) for r in rows]}
+    def _fetch_archived_count() -> int:
+        res = (
+            client.table("job_requisitions")
+            .select("id", count="exact", head=True)
+            .eq("org_id", org_id)
+            .not_.is_("archived_at", "null")
+            .execute()
+        )
+        return res.count or 0
+
+    rows, archived_count = await asyncio.gather(
+        asyncio.to_thread(_fetch),
+        asyncio.to_thread(_fetch_archived_count),
+    )
+    return {
+        "requisitions": [_to_read(r) for r in rows],
+        "archived_count": archived_count,
+    }
 
 
 @router.get("/requisitions/{requisition_id}", response_model=RequisitionRead)

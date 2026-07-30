@@ -1,6 +1,6 @@
 # Onboarding v2 — Template Variable Reference
 
-This is the full list of placeholders you can use in your **Letter of Intent**, **Appointment Letter**, and **NDA** DOCX templates. Type the placeholder verbatim (with the double curly braces) anywhere in the document; the agent will fill it in when generating each PDF.
+This is the full list of placeholders you can use in your **LOI**, **Appointment Letter**, and **NDA** DOCX templates. Type the placeholder verbatim (with the double curly braces) anywhere in the document; the agent will fill it in when generating each PDF.
 
 > **Validation is strict.** If you reference a variable that isn't in this list — typo or unsupported field — the run blocks with the exact missing name. Fix the template, re-upload, and the agent retries automatically. No silent `{{ unknown_var }}` will ever ship to a candidate.
 
@@ -93,4 +93,4 @@ Returns a signed URL to a PDF rendered with **sample candidate data** so you can
 
 ## Editing existing templates
 
-When you re-upload a template (new version in the KB), all **future** runs use the new version. In-progress runs keep using the version they started with — we snapshot `source_template_id` so a customer can't break a half-signed LOI by editing the master template.
+When you re-upload a template (new version in the KB), all **future** runs use the new version. In-progress runs keep using the version they started with — we snapshot `source_template_id` so a customer can't break a half-signed LOIby editing the master template.

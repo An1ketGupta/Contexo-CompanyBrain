@@ -62,19 +62,76 @@ def _verify(request_body: bytes, headers: dict[str, str]) -> None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid webhook signature.")
 
 
-def _correlation_id(payload: dict[str, Any]) -> str | None:
+def _correlation_ids(payload: dict[str, Any]) -> list[str]:
+    """Candidate ids to match against `documenso_envelope_id`, best first.
+
+    `envelopeId` MUST be tried before `id`: Documenso's webhook payload is
+    still shaped around the pre-v2 Document model, so `id` is the legacy
+    *numeric document* id (16) while `envelopeId` carries the v2 string id
+    ("envelope_yabk…") — which is what create_and_distribute returns and what
+    we store. Reading `id` first matches nothing and every event is dropped as
+    unknown_envelope. The rest are fallbacks for older/alternative shapes.
+    """
     inner = payload.get("payload") or payload
-    return (
-        inner.get("id")
-        or inner.get("envelopeId")
-        or inner.get("documentId")
-        or inner.get("externalId")
-    )
+    ordered = [
+        inner.get("envelopeId"),
+        inner.get("id"),
+        inner.get("documentId"),
+        inner.get("externalId"),
+    ]
+    seen: dict[str, None] = {}
+    for value in ordered:
+        if value is not None and str(value):
+            seen.setdefault(str(value), None)
+    return list(seen)
 
 
 def _payload_recipients(payload: dict[str, Any]) -> list[dict[str, Any]]:
     inner = payload.get("payload") or payload
     return inner.get("recipients") or inner.get("Recipient") or []
+
+
+def mark_done_signers(
+    signers: list[dict[str, Any]],
+    remote_recipients: list[dict[str, Any]],
+    *,
+    now_iso: str,
+) -> bool:
+    """Flip our signer rows to completed from Documenso's recipient statuses.
+    Returns whether anything changed.
+
+    Correlates on the Documenso recipient id we stored at create time, falling
+    back to email only for rows that predate it. Email is not a key: HR and the
+    candidate can share an address, and matching on it completed both signers
+    the moment either one signed — the run would skip a signature entirely.
+    """
+    done_ids: set[int] = set()
+    done_emails: set[str] = set()
+    for r in remote_recipients:
+        if str(r.get("signingStatus") or r.get("status") or "").upper() not in _DONE_STATUSES:
+            continue
+        rid = documenso._recipient_id(r)
+        if rid is not None:
+            done_ids.add(rid)
+        email = str(r.get("email", "")).strip().lower()
+        if email:
+            done_emails.add(email)
+
+    changed = False
+    for s in signers:
+        if s.get("status") == "completed":
+            continue
+        rid = documenso._recipient_id({"id": s.get("documenso_recipient_id")})
+        done = (
+            rid in done_ids
+            if rid is not None
+            else str(s.get("email", "")).strip().lower() in done_emails
+        )
+        if done:
+            s["status"] = "completed"
+            s["completed_at"] = now_iso
+            changed = True
+    return changed
 
 
 def _source_event(events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -95,41 +152,39 @@ async def documenso_webhook(request: Request) -> dict[str, str]:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid JSON body.") from exc
 
     event_type = str(payload.get("event") or payload.get("type") or "").upper()
-    documenso_envelope_id = _correlation_id(payload)
-    if not documenso_envelope_id:
+    candidate_ids = _correlation_ids(payload)
+    if not candidate_ids:
         # Not an envelope we can correlate (e.g. a template event) — ack so
         # Documenso stops retrying.
         return {"status": "ignored"}
 
     svc = get_service_client()
-    env = await asyncio.to_thread(
+    res = await asyncio.to_thread(
         lambda: svc.table("onboarding_signing_envelopes")
         .select("*")
-        .eq("documenso_envelope_id", str(documenso_envelope_id))
+        .in_("documenso_envelope_id", candidate_ids)
         .eq("provider", "documenso")
-        .maybe_single()
+        .limit(1)
         .execute()
     )
-    env = env.data if env else None
+    env = (res.data or [None])[0] if res else None
     if not env:
+        # Loud on purpose: a silent 200 here is indistinguishable from success
+        # on Documenso's side, so a correlation-key regression sits invisible
+        # while envelopes hang at 'sent'.
+        log.warning(
+            "esign.webhook_unknown_envelope event=%s candidate_ids=%s",
+            event_type,
+            candidate_ids,
+        )
         return {"status": "unknown_envelope"}
+    documenso_envelope_id = env["documenso_envelope_id"]
     if env.get("status") in ("completed", "voided", "declined", "expired"):
         return {"status": "no_op"}  # idempotent: already terminal
 
-    # Reconcile our signer statuses from the payload (match by email).
-    done_emails = {
-        str(r.get("email", "")).strip().lower()
-        for r in _payload_recipients(payload)
-        if str(r.get("signingStatus") or r.get("status") or "").upper() in _DONE_STATUSES
-    }
     signers: list[dict[str, Any]] = env.get("signers") or []
     now_iso = datetime.now(UTC).isoformat()
-    changed = False
-    for s in signers:
-        if s.get("status") != "completed" and s.get("email", "").strip().lower() in done_emails:
-            s["status"] = "completed"
-            s["completed_at"] = now_iso
-            changed = True
+    changed = mark_done_signers(signers, _payload_recipients(payload), now_iso=now_iso)
 
     all_done = event_type in _COMPLETED_EVENTS or all(
         s.get("status") == "completed" for s in signers

@@ -136,7 +136,7 @@ class OnboardingRunRead(BaseModel):
     policies_acknowledged_at: datetime | None = None
     induction_sent_at: datetime | None = None
     completed_at: datetime | None = None
-    # New: LOI review & candidate-references-form tracking.
+    # New: LOIreview & candidate-references-form tracking.
     loi_approved_for_signing_at: datetime | None = None
     loi_draft_edited_at: datetime | None = None
     loi_draft_revision: int = 0
@@ -147,6 +147,7 @@ class OnboardingRunRead(BaseModel):
     # Note: references_form_token is intentionally NOT exposed in this read
     # model — it's the candidate's auth credential. HR doesn't need it; we
     # surface the form URL on the detail page through a separate field below.
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -177,18 +178,83 @@ class BgvFormSubmit(BaseModel):
     role_description: str = Field(default="", max_length=4000)
 
 
-class LoiApproveDraftResponse(BaseModel):
+class LOIApproveDraftResponse(BaseModel):
     """Returned by POST /runs/{id}/loi/approve-draft."""
     status: str
     document_id: str
 
 
-class LoiReplaceDraftResponse(BaseModel):
+class LOIReplaceDraftResponse(BaseModel):
     """Returned by POST /runs/{id}/loi/replace-draft. The preview_url points
     to a freshly-rendered PDF of HR's edited .docx so the UI can refresh the
     inline preview immediately after upload."""
     status: str
     revision: int
+    preview_url: str | None = None
+
+
+class LOIDraftParagraph(BaseModel):
+    """One editable line of the LOIdraft.
+
+    `index` is a `canonical_paragraphs()` position, not a position in this
+    list — blank paragraphs are omitted but the numbering is the document's, so
+    an index posted back always addresses the same paragraph.
+    """
+
+    index: int
+    text: str
+    # Always set on the way out; ignored on the way in, where only the index
+    # decides which paragraph is rewritten.
+    kind: str = "body"
+
+
+class LOIDraftTextResponse(BaseModel):
+    """Returned by GET /runs/{id}/loi/draft-text.
+
+    `fingerprint` identifies the exact .docx these lines came from; the editor
+    hands it back on save so a draft that was re-rendered underneath HR is
+    rejected instead of edited blind.
+    """
+
+    revision: int
+    fingerprint: str
+    paragraphs: list[LOIDraftParagraph] = Field(default_factory=list)
+
+
+class LOIEditTextRequest(BaseModel):
+    """Only the paragraphs HR actually changed. A line whose text matches the
+    stored one is ignored server-side, so re-sending the whole document is
+    harmless but pointless."""
+
+    fingerprint: str = Field(..., min_length=1, max_length=64)
+    edits: list[LOIDraftParagraph] = Field(..., min_length=1, max_length=400)
+
+    @field_validator("edits")
+    @classmethod
+    def _bounded(cls, v: list[LOIDraftParagraph]) -> list[LOIDraftParagraph]:
+        seen: set[int] = set()
+        for edit in v:
+            if edit.index < 0:
+                raise ValueError("A line index can't be negative.")
+            if edit.index in seen:
+                raise ValueError(f"Line {edit.index} was sent twice.")
+            seen.add(edit.index)
+            if len(edit.text) > 8000:
+                raise ValueError(
+                    "One of the lines is too long. Split it across paragraphs "
+                    "in Word instead."
+                )
+        return v
+
+
+class LOIEditTextResponse(BaseModel):
+    """Returned by POST /runs/{id}/loi/edit-text. Same shape as the .docx
+    re-upload path — HR's edits land as a new revision either way."""
+
+    status: str
+    revision: int
+    changed_count: int
+    fingerprint: str
     preview_url: str | None = None
 
 

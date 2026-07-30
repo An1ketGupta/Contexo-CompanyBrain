@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import useSWR from "swr";
-import { Users } from "lucide-react";
+import { Loader2, Plus, Sparkles, Trash2, Users } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { PageHeader, StatusPill, type PillTone } from "@/components/actual/kit";
 import {
   OnboardingSources,
@@ -88,8 +90,10 @@ const fetcher = async <T,>(url: string): Promise<T> => {
 export default function OnboardingListPage() {
   const [filter, setFilter] = useState<StatusKey>("all");
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [newOnboardingOpen, setNewOnboardingOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const { data, error, isLoading } = useSWR<ListResponse>(
+  const { data, error, isLoading, mutate } = useSWR<ListResponse>(
     "/api/onboarding/runs",
     fetcher,
     { refreshInterval: 15_000 },
@@ -98,9 +102,34 @@ export default function OnboardingListPage() {
     data: sources,
     error: sourcesError,
     isLoading: sourcesLoading,
-  } = useSWR<SourcesResponse>("/api/onboarding/sources", fetcher, {
-    refreshInterval: 60_000,
-  });
+  } = useSWR<SourcesResponse>(
+    newOnboardingOpen ? "/api/onboarding/sources" : null,
+    fetcher,
+    { refreshInterval: 60_000 },
+  );
+
+  async function deleteRun(e: React.MouseEvent, run: OnboardingRunRow) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (
+      !confirm(
+        `Delete the onboarding for ${run.candidate_name}? This removes it from the list — it can't be undone from here.`,
+      )
+    )
+      return;
+    setDeletingId(run.id);
+    try {
+      const res = await fetch(`/api/onboarding/runs/${run.id}/archive`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(`Failed (${res.status})`);
+      await mutate();
+    } catch (err) {
+      alert(`Couldn't delete this onboarding. ${String(err)}`);
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   const rows = data?.runs ?? [];
   const filtered = useMemo(() => {
@@ -127,7 +156,13 @@ export default function OnboardingListPage() {
         <PageHeader
           eyebrow="Talent"
           title="Onboarding"
-          description="LOI → BGV → Appointment + NDA → Policies → Induction — driven by the Onboarding agent."
+          description="LOI→ BGV → Appointment + NDA → Policies → Induction — driven by the Onboarding agent."
+          actions={
+            <Button onClick={() => setNewOnboardingOpen(true)}>
+              <Plus className="w-4 h-4"/>
+              New onboarding
+            </Button>
+          }
         />
       </div>
 
@@ -187,7 +222,7 @@ export default function OnboardingListPage() {
           </p>
           <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
             {filter === "all"
-              ? "Pick a candidate from the section above, or add one manually."
+              ? "Click New onboarding above to pick a candidate or add one manually."
               : "Switch filter to see runs in other states."}
           </p>
         </div>
@@ -196,10 +231,10 @@ export default function OnboardingListPage() {
           {filtered.map((r) => {
             const meta = statusStyle(r.status);
             return (
-              <li key={r.id}>
+              <li key={r.id} className="group relative">
                 <Link
                   href={`/onboarding/${r.id}`}
-                  className="group flex items-stretch gap-4 rounded-2xl border border-border bg-card p-4 transition-colors hover:bg-muted/40"
+                  className="flex items-stretch gap-4 rounded-2xl border border-border bg-card p-4 transition-colors hover:bg-muted/40"
                 >
                   <div className={"w-1 shrink-0 rounded-full " + meta.stripe} />
                   <div className="min-w-0 flex-1">
@@ -220,22 +255,40 @@ export default function OnboardingListPage() {
                       </p>
                     ) : null}
                   </div>
-                  <div className="hidden text-right text-xs text-muted-foreground sm:block">
+                  <div className="hidden shrink-0 text-right text-xs text-muted-foreground sm:block">
                     Updated {relativeTime(r.updated_at)}
                   </div>
+                  <div className="w-8 shrink-0" />
                 </Link>
+                <button
+                  type="button"
+                  onClick={(e) => deleteRun(e, r)}
+                  disabled={deletingId === r.id}
+                  title="Delete onboarding"
+                  className="absolute right-4 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive-soft hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-50"
+                >
+                  {deletingId === r.id ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                </button>
               </li>
             );
           })}
         </ul>
       )}
 
-      <OnboardingSources
-        sources={sources}
-        isLoading={sourcesLoading}
-        error={sourcesError}
-      />
-
+      <Sheet open={newOnboardingOpen} onOpenChange={setNewOnboardingOpen}>
+        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-2xl">
+          <SheetTitle className="sr-only">Start a new onboarding</SheetTitle>
+          <OnboardingSources
+            sources={sources}
+            isLoading={sourcesLoading}
+            error={sourcesError}
+          />
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

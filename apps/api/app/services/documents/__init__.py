@@ -24,4 +24,8 @@ Module map:
                      contract between detection and rendering
     constants        vocabularies mirroring the CHECK constraints in 099
     audit            append-only trail over `document_audit_logs`
+    text_edit        read a *generated* document as editable lines and write
+                     edited lines back — the review loop, not templates (rule 3
+                     is about uploaded templates; a generated draft is HR's to
+                     correct before it is signed)
 """

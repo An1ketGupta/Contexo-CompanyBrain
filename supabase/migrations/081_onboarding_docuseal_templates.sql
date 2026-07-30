@@ -13,7 +13,7 @@
 -- Our onboarding e-sign flow was built on POST /submissions/pdf (upload the
 -- docxtpl→Gotenberg-rendered PDF bytes and let DocuSeal auto-place a
 -- signature field). On the free edition that endpoint simply doesn't exist,
--- so the LOI / AL+NDA signing envelopes 404 on creation.
+-- so the LOI/ AL+NDA signing envelopes 404 on creation.
 --
 -- The only *free* programmatic way to create a signable submission is
 -- POST /submissions against an existing template_id — a template built once
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS onboarding_docuseal_templates (
   org_id                UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
 
   -- Which onboarding signing envelope this template drives.
-  --   'loi'          — Letter of Intent, routed HR (role 1) → candidate (role 2)
+  --   'loi'          — LOI, routed HR (role 1) → candidate (role 2)
   --   'offer_bundle' — Appointment Letter + NDA, candidate-only (role 1)
   template_key          TEXT NOT NULL,
 
@@ -104,4 +104,4 @@ COMMENT ON TABLE onboarding_docuseal_templates IS
   'Per-(org, envelope) DocuSeal template binding for onboarding e-sign. Free '
   'DocuSeal cannot ingest a PDF via API, so we POST /submissions against a '
   'template_id built once in the DocuSeal UI and pre-fill per-candidate data '
-  'as read-only field values. template_key: loi (routed) | offer_bundle (AL+NDA).';
+  'as read-only field values. template_key: LOI(routed) | offer_bundle (AL+NDA).';

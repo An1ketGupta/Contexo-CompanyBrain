@@ -6,5 +6,5 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  return proxyPostJson(request, `/onboarding/runs/${id}/references-override`);
+  return proxyPostJson(request, `/onboarding/runs/${id}/loi/edit-text`);
 }

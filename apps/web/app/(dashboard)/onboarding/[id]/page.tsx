@@ -2,18 +2,18 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import useSWR, { mutate as globalMutate } from "swr";
 import {
   AlertTriangle,
   ArrowLeft,
   Bell,
   CheckCircle2,
-  Clock,
   ExternalLink,
   FileSignature,
   FileText,
   Loader2,
+  Pencil,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
@@ -24,6 +24,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill, type PillTone } from "@/components/actual/kit";
+import { LOIDraftEditor } from "@/components/onboarding/loi-draft-editor";
+import { StageBoard, currentStageKey } from "@/components/onboarding/stage-board";
 import { DOCUMENT_KIND_LABEL as DOC_LABEL } from "@/lib/onboarding-documents";
 
 interface ReferenceRow {
@@ -164,6 +166,20 @@ function relativeTime(iso: string | null): string {
   return new Date(iso).toLocaleDateString();
 }
 
+function expiryLabel(iso: string | null): string {
+  if (!iso) return "—";
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return `expired ${relativeTime(iso)}`;
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return "expires in under a minute";
+  if (min < 60) return `expires in ${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `expires in ${hr}h`;
+  const d = Math.floor(hr / 24);
+  if (d < 30) return `expires in ${d}d`;
+  return `expires ${new Date(iso).toLocaleDateString()}`;
+}
+
 export default function OnboardingDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
@@ -179,7 +195,7 @@ export default function OnboardingDetailPage() {
   const loiFileInput = useRef<HTMLInputElement>(null);
   const loiDraftInput = useRef<HTMLInputElement>(null);
 
-  async function uploadSignedLoi(file: File) {
+  async function uploadSignedLOI(file: File) {
     setBusy("upload-loi");
     setActionError(null);
     try {
@@ -205,7 +221,7 @@ export default function OnboardingDetailPage() {
     }
   }
 
-  async function replaceLoiDraft(file: File) {
+  async function replaceLOIDraft(file: File) {
     setBusy("replace-loi-draft");
     setActionError(null);
     try {
@@ -231,7 +247,7 @@ export default function OnboardingDetailPage() {
     }
   }
 
-  async function approveLoiDraft() {
+  async function approveLOIDraft() {
     if (
       !confirm(
         "Send this LOI to HR for signature? You won't be able to edit further once sent.",
@@ -262,7 +278,7 @@ export default function OnboardingDetailPage() {
     }
   }
 
-  async function downloadLoiDocx() {
+  async function downloadLOIDocx() {
     setBusy("download-loi-docx");
     setActionError(null);
     try {
@@ -278,7 +294,7 @@ export default function OnboardingDetailPage() {
     }
   }
 
-  async function openLoiSigningLink() {
+  async function openLOISigningLink() {
     setBusy("loi-signing");
     setActionError(null);
     try {
@@ -471,6 +487,7 @@ export default function OnboardingDetailPage() {
   }
 
   const isBlocked = data.status === "blocked_missing_template";
+  const stage = currentStageKey(data);
   const ctc =
     data.ctc_amount !== null && data.ctc_amount !== undefined
       ? `${data.ctc_currency || "INR"} ${data.ctc_amount.toLocaleString()}`
@@ -538,6 +555,16 @@ export default function OnboardingDetailPage() {
         </div>
       </header>
 
+      {/* Stage board — the run's five stages as columns, candidate box parked
+          in whichever one it's sitting in. Only that stage's panel renders
+          below. */}
+      <section className="mb-8">
+        <StageBoard
+          run={data}
+          statusLabel={STATUS_LABELS[data.status] || data.status}
+        />
+      </section>
+
       {actionError ? (
         <div className="mb-4 rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm font-medium text-destructive">
           {actionError}
@@ -555,10 +582,6 @@ export default function OnboardingDetailPage() {
                   .toUpperCase()}{" "}
                 generation is blocked
               </p>
-              {/* The agent's own words. A missing template, a template whose
-                  fields nobody confirmed, and a missing company address all
-                  stop the run here, and each is fixed somewhere different — so
-                  the headline stays neutral and the reason does the work. */}
               {data.blocked_reason ? (
                 <p className="mt-1 text-xs text-amber/90">{data.blocked_reason}</p>
               ) : null}
@@ -609,98 +632,95 @@ export default function OnboardingDetailPage() {
         />
       </section>
 
-      {/* LOI section */}
-      <SectionHeader icon={FileSignature} title="Letter of Intent" />
-      <div className="mb-6 rounded-2xl border border-border bg-card p-4">
-        <LoiPanel
-          data={data}
-          busy={busy}
-          fileRef={loiFileInput}
-          draftFileRef={loiDraftInput}
-          onUpload={uploadSignedLoi}
-          onReplaceDraft={replaceLoiDraft}
-          onApproveDraft={approveLoiDraft}
-          onDownloadDocx={downloadLoiDocx}
-          onOpenSigningLink={openLoiSigningLink}
-        />
-      </div>
+      {/* Only the stage the run is actually sitting in. The other four are
+          summarised in the board above — an empty panel for a stage nobody has
+          reached yet is noise, not information. */}
+      {stage === "loi" ? (
+        <>
+          <SectionHeader icon={FileSignature} title="LOI" />
+          <div className="mb-12 rounded-2xl border border-border bg-card p-4">
+            <LOIPanel
+              data={data}
+              busy={busy}
+              fileRef={loiFileInput}
+              draftFileRef={loiDraftInput}
+              onUpload={uploadSignedLOI}
+              onReplaceDraft={replaceLOIDraft}
+              onApproveDraft={approveLOIDraft}
+              onDownloadDocx={downloadLOIDocx}
+              onDraftSaved={mutate}
+              onOpenSigningLink={openLOISigningLink}
+            />
+          </div>
+        </>
+      ) : null}
 
-      {/* BGV section */}
-      <SectionHeader icon={ShieldCheck} title="Background verification" />
-      <div className="mb-6 rounded-2xl border border-border bg-card p-4">
-        <BgvPanel
-          data={data}
-          references={data.references}
-          busy={busy}
-          onHrOverride={submitHrReferencesOverride}
-          onNudge={nudgeCandidate}
-          onExtendToken={extendReferencesToken}
-        />
-      </div>
+      {stage === "bgv" ? (
+        <>
+          <SectionHeader icon={ShieldCheck} title="Background verification" />
+          <div className="mb-12 rounded-2xl border border-border bg-card p-4">
+            <BgvPanel
+              data={data}
+              references={data.references}
+              busy={busy}
+              onHrOverride={submitHrReferencesOverride}
+              onNudge={nudgeCandidate}
+              onExtendToken={extendReferencesToken}
+            />
+          </div>
+        </>
+      ) : null}
 
-      {/* Appointment + NDA section */}
-      <SectionHeader icon={FileText} title="Appointment Letter + NDA" />
-      <div className="mb-6 rounded-2xl border border-border bg-card p-4">
-        <BundlePanel
-          data={data}
-          busy={busy}
-          onApprove={approveBundle}
-        />
-      </div>
+      {stage === "appointment" ? (
+        <>
+          <SectionHeader icon={FileText} title="Appointment Letter + NDA" />
+          <div className="mb-12 rounded-2xl border border-border bg-card p-4">
+            <BundlePanel
+              data={data}
+              busy={busy}
+              onApprove={approveBundle}
+            />
+          </div>
+        </>
+      ) : null}
 
-      {/* Policies + Induction */}
-      <SectionHeader icon={CheckCircle2} title="Policies & Induction" />
-      <div className="mb-6 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-2xl border border-border bg-card p-4">
-          <p className="text-sm font-medium">Policies</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Assigned: {relativeTime(data.policies_assigned_at)}
-            <br />
-            Acknowledged: {relativeTime(data.policies_acknowledged_at)}
-          </p>
-        </div>
-        <div className="rounded-2xl border border-border bg-card p-4">
-          <p className="text-sm font-medium">Induction</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Sent: {relativeTime(data.induction_sent_at)}
-          </p>
-          {data.documents.find((d) => d.kind === "induction")?.signed_url ? (
-            <a
-              href={
-                data.documents.find((d) => d.kind === "induction")!.signed_url!
-              }
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-foreground underline hover:no-underline"
-            >
-              Open induction PDF <ExternalLink className="h-3 w-3" />
-            </a>
-          ) : null}
-        </div>
-      </div>
+      {stage === "policies" ? (
+        <>
+          <SectionHeader icon={CheckCircle2} title="Policies" />
+          <div className="mb-12 rounded-2xl border border-border bg-card p-4">
+            <p className="text-sm font-medium">Policies</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Assigned: {relativeTime(data.policies_assigned_at)}
+              <br />
+              Acknowledged: {relativeTime(data.policies_acknowledged_at)}
+            </p>
+          </div>
+        </>
+      ) : null}
 
-      {/* Timeline */}
-      <SectionHeader icon={Clock} title="Timeline" />
-      <div className="mb-12 rounded-2xl border border-border bg-card p-4">
-        <ol className="space-y-3">
-          {data.events.map((e) => (
-            <li key={e.id} className="flex gap-3 text-xs">
-              <span className="mt-0.5 text-muted-foreground">
-                {relativeTime(e.created_at)}
-              </span>
-              <span className="text-foreground">
-                <span className="mr-1.5 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] uppercase text-muted-foreground">
-                  {e.actor_kind}
-                </span>
-                {e.message || e.event_type}
-              </span>
-            </li>
-          ))}
-          {data.events.length === 0 ? (
-            <li className="text-xs text-muted-foreground">No events yet.</li>
-          ) : null}
-        </ol>
-      </div>
+      {stage === "induction" ? (
+        <>
+          <SectionHeader icon={CheckCircle2} title="Induction" />
+          <div className="mb-12 rounded-2xl border border-border bg-card p-4">
+            <p className="text-sm font-medium">Induction</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Sent: {relativeTime(data.induction_sent_at)}
+            </p>
+            {data.documents.find((d) => d.kind === "induction")?.signed_url ? (
+              <a
+                href={
+                  data.documents.find((d) => d.kind === "induction")!.signed_url!
+                }
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-foreground underline hover:no-underline"
+              >
+                Open induction PDF <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : null}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -889,7 +909,7 @@ function BlockingFieldsForm({
   );
 }
 
-function LoiPanel({
+function LOIPanel({
   data,
   busy,
   fileRef,
@@ -898,6 +918,7 @@ function LoiPanel({
   onReplaceDraft,
   onApproveDraft,
   onDownloadDocx,
+  onDraftSaved,
   onOpenSigningLink,
 }: {
   data: RunDetail;
@@ -908,8 +929,10 @@ function LoiPanel({
   onReplaceDraft: (f: File) => void;
   onApproveDraft: () => void;
   onDownloadDocx: () => void;
+  onDraftSaved: () => Promise<unknown>;
   onOpenSigningLink: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
   const loi = data.documents.find((d) => d.kind === "loi");
   const inReview = data.status === "loi_pending_hr_review";
   const awaitingSign = data.status === "loi_pending_hr_sign";
@@ -944,97 +967,121 @@ function LoiPanel({
             </span>
           )}
         </p>
-        <div className="flex items-center gap-2">
-          {loi?.signed_url ? (
-            <a
-              href={loi.signed_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs font-medium text-foreground underline hover:no-underline"
-            >
-              Open PDF <ExternalLink className="h-3 w-3" />
-            </a>
-          ) : null}
-        </div>
       </div>
 
       {inReview ? (
         <div className="space-y-3 rounded-xl border border-amber/30 bg-amber-tint p-4">
           <div>
             <p className="text-sm font-medium">
-              Review the LOI before sending for signature
+              {editing
+                ? "Editing the LOI"
+                : "Review the LOI before sending for signature"}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Check the filled values are correct. Download the .docx if you
-              need to tweak wording in Word, then re-upload here. When you
-              click <em>Send for signature</em>, an email goes to you with the
-              LOI to print, sign, and scan back.
-            </p>
-          </div>
-
-          {loi?.signed_url ? (
-            <a
-              href={loi.signed_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 self-start rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              Preview LOI in new tab
-            </a>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              Generating the preview…
-            </p>
-          )}
-
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              ref={draftFileRef}
-              type="file"
-              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) onReplaceDraft(f);
-                if (draftFileRef.current) draftFileRef.current.value = "";
-              }}
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onDownloadDocx}
-              disabled={busy === "download-loi-docx"}
-            >
-              {busy === "download-loi-docx" ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-              ) : null}
-              Download .docx to edit
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => draftFileRef.current?.click()}
-              disabled={busy === "replace-loi-draft"}
-            >
-              {busy === "replace-loi-draft" ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              {editing ? (
+                <>
+                  Change any line below and save — the PDF re-renders straight
+                  away. Lines you don&rsquo;t touch keep their original
+                  formatting.
+                </>
               ) : (
-                <Upload className="mr-1.5 h-3.5 w-3.5" />
+                <>
+                  When you click <em>Send for signature</em>, an email
+                  goes to you with the LOI to print, sign, and scan back.
+                </>
               )}
-              Replace with edited .docx
-            </Button>
-            <Button
-              size="sm"
-              onClick={onApproveDraft}
-              disabled={busy === "approve-loi-draft"}
-            >
-              {busy === "approve-loi-draft" ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-              ) : null}
-              Send for signature
-            </Button>
+            </p>
           </div>
+
+          {editing ? (
+            <LOIDraftEditor
+              runId={data.id}
+              onSaved={onDraftSaved}
+              onClose={() => setEditing(false)}
+            />
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                {loi?.signed_url ? (
+                  <Button variant="outline" size="sm" asChild>
+                    <a
+                      href={loi.signed_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                      Preview LOI in new tab
+                    </a>
+                  </Button>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Generating the preview…
+                  </p>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditing(true)}
+                >
+                  <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                  Edit LOI here
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={onApproveDraft}
+                  disabled={busy === "approve-loi-draft"}
+                >
+                  {busy === "approve-loi-draft" ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : null}
+                  Send for signature
+                </Button>
+              </div>
+
+              {/* The Word round-trip stays for edits the text editor can't
+                  express — new clauses, tables, layout. */}
+              <div className="flex flex-wrap items-center gap-3 border-t border-amber/20 pt-2.5">
+                <input
+                  ref={draftFileRef}
+                  type="file"
+                  accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) onReplaceDraft(f);
+                    if (draftFileRef.current) draftFileRef.current.value = "";
+                  }}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Need to restructure it in Word?
+                </p>
+                <button
+                  type="button"
+                  onClick={onDownloadDocx}
+                  disabled={busy === "download-loi-docx"}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground underline hover:no-underline disabled:opacity-60"
+                >
+                  {busy === "download-loi-docx" ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : null}
+                  Download .docx
+                </button>
+                <button
+                  type="button"
+                  onClick={() => draftFileRef.current?.click()}
+                  disabled={busy === "replace-loi-draft"}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground underline hover:no-underline disabled:opacity-60"
+                >
+                  {busy === "replace-loi-draft" ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Upload className="h-3 w-3" />
+                  )}
+                  Upload an edited .docx
+                </button>
+              </div>
+            </>
+          )}
         </div>
       ) : null}
 
@@ -1073,7 +1120,7 @@ function LoiPanel({
       {inEsign ? (
         <div className="space-y-3 rounded-xl border border-brand/30 bg-brand-tint p-4">
           <div>
-            <p className="text-sm font-medium">Signing the LOI</p>
+            <p className="text-sm font-medium">Signing LOI</p>
             <p className="mt-1 text-xs text-muted-foreground">
               {hrSigned ? (
                 <>
@@ -1082,8 +1129,8 @@ function LoiPanel({
                 </>
               ) : (
                 <>
-                  The envelope is routed <strong>HR → candidate</strong>. You
-                  sign first. The candidate will receive a signing email
+                  The envelope is routed <strong>HR → candidate</strong>. 
+                  The candidate will receive a signing email
                   automatically once you&apos;re done.
                 </>
               )}
@@ -1273,32 +1320,34 @@ function BgvPanel({
     new Date(data.references_form_expires_at) < new Date();
 
   const formExpiryLabel = data.references_form_expires_at
-    ? `Form link ${formExpired ? "expired" : "expires"} ${relativeTime(data.references_form_expires_at)}`
+    ? `Form link ${expiryLabel(data.references_form_expires_at)}`
     : null;
 
   if (awaitingCandidate && references.length === 0) {
     return (
-      <div className="space-y-3">
-        <p className="text-sm text-muted-foreground">
-          Waiting for the candidate to submit references via the form link in
-          their LOI email.
-          {data.references_reminder_count > 0
-            ? ` Reminders sent: ${data.references_reminder_count}.`
-            : ""}
-        </p>
-
-        {formExpiryLabel ? (
-          <p
-            className={
-              "text-xs " +
-              (formExpired
-                ? "font-medium text-destructive"
-                : "text-muted-foreground")
-            }
-          >
-            {formExpiryLabel}
+      <div className="space-y-4">
+        <div>
+          <p className="text-sm text-muted-foreground">
+            Waiting for the candidate to submit references via the form link in
+            their LOI email.
+            {data.references_reminder_count > 0
+              ? ` Reminders sent: ${data.references_reminder_count}.`
+              : ""}
           </p>
-        ) : null}
+
+          {formExpiryLabel ? (
+            <p
+              className={
+                "mt-1 text-xs " +
+                (formExpired
+                  ? "font-medium text-destructive"
+                  : "text-muted-foreground")
+              }
+            >
+              {formExpiryLabel}
+            </p>
+          ) : null}
+        </div>
 
         <div className="flex flex-wrap items-center gap-2">
           {formExpired ? (
@@ -1332,7 +1381,9 @@ function BgvPanel({
           )}
         </div>
 
-        <HrReferencesOverride busy={busy} onSubmit={onHrOverride} />
+        <div className="border-t border-border pt-3">
+          <HrReferencesOverride busy={busy} onSubmit={onHrOverride} />
+        </div>
       </div>
     );
   }
@@ -1349,72 +1400,102 @@ function BgvPanel({
     <ul className="space-y-3">
       {references.map((r) => {
         const submitted = r.status === "submitted";
+        const initials = r.reference_name
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part) => part[0]!.toUpperCase())
+          .join("");
         return (
           <li
             key={r.id}
-            className="flex items-start justify-between gap-3 rounded-xl border border-border bg-muted/40 p-3"
+            className="rounded-xl border border-border bg-muted/40 p-3.5"
           >
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-foreground">
-                {r.reference_name}{" "}
-                <span className="font-normal text-muted-foreground">
-                  ({r.reference_email})
-                </span>
-              </p>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {r.relationship || "Professional reference"} ·{" "}
-                {submitted
-                  ? `Responded ${relativeTime(r.submitted_at)}`
-                  : r.opened_at
-                    ? `Opened ${relativeTime(r.opened_at)}`
-                    : r.email_sent_at
-                      ? `Sent ${relativeTime(r.email_sent_at)}`
-                      : "Pending"}
-              </p>
-              {submitted ? (
-                <div className="mt-2 space-y-1 rounded-lg border border-border bg-card p-2 text-xs">
-                  <p>
-                    <strong>Worked together:</strong>{" "}
-                    {r.response_worked_together_months ?? "—"} months ·{" "}
-                    <strong>Would recommend:</strong>{" "}
-                    {r.response_would_recommend === null
-                      ? "—"
-                      : r.response_would_recommend
-                        ? "Yes"
-                        : "No"}
-                  </p>
-                  {r.response_role_description ? (
-                    <p>
-                      <strong>Role:</strong> {r.response_role_description}
-                    </p>
-                  ) : null}
-                  {r.response_strengths ? (
-                    <p>
-                      <strong>Strengths:</strong> {r.response_strengths}
-                    </p>
-                  ) : null}
-                  {r.response_concerns ? (
-                    <p>
-                      <strong>Concerns:</strong> {r.response_concerns}
-                    </p>
-                  ) : null}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-tint text-xs font-bold text-brand">
+                  {initials}
                 </div>
-              ) : null}
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {r.reference_name}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {r.reference_email}
+                  </p>
+                </div>
+              </div>
+              <StatusPill
+                tone={submitted ? "green" : "blue"}
+                className="shrink-0"
+              >
+                {r.status}
+              </StatusPill>
             </div>
-            <span
-              className={
-                "rounded-full px-2.5 py-0.5 text-[10px] font-bold " +
-                (submitted
-                  ? "bg-success-tint text-success"
-                  : "bg-brand-tint text-brand")
-              }
-            >
-              {r.status}
-            </span>
+
+            <p className="mt-2 text-xs text-muted-foreground">
+              {r.relationship || "Professional reference"} ·{" "}
+              {submitted
+                ? `Responded ${relativeTime(r.submitted_at)}`
+                : r.opened_at
+                  ? `Opened ${relativeTime(r.opened_at)}`
+                  : r.email_sent_at
+                    ? `Sent ${relativeTime(r.email_sent_at)}`
+                    : "Pending"}
+            </p>
+
+            {submitted ? (
+              <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 rounded-lg border border-border bg-card p-3 text-xs">
+                <ReferenceField label="Worked together">
+                  {r.response_worked_together_months ?? "—"} months
+                </ReferenceField>
+                <ReferenceField label="Would recommend">
+                  {r.response_would_recommend === null
+                    ? "—"
+                    : r.response_would_recommend
+                      ? "Yes"
+                      : "No"}
+                </ReferenceField>
+                {r.response_role_description ? (
+                  <ReferenceField label="Role" full>
+                    {r.response_role_description}
+                  </ReferenceField>
+                ) : null}
+                {r.response_strengths ? (
+                  <ReferenceField label="Strengths" full>
+                    {r.response_strengths}
+                  </ReferenceField>
+                ) : null}
+                {r.response_concerns ? (
+                  <ReferenceField label="Concerns" full>
+                    {r.response_concerns}
+                  </ReferenceField>
+                ) : null}
+              </div>
+            ) : null}
           </li>
         );
       })}
     </ul>
+  );
+}
+
+function ReferenceField({
+  label,
+  full,
+  children,
+}: {
+  label: string;
+  full?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className={full ? "col-span-2" : undefined}>
+      <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-0.5 text-foreground">{children}</p>
+    </div>
   );
 }
 

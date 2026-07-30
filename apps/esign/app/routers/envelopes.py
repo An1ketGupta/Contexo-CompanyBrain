@@ -26,15 +26,15 @@ from app.auth import verify_internal_api_key
 from app.config import get_settings
 from app.database import get_service_client
 from app.field_placement import extract_fields_and_clean
+from app.inngest_events import send_event
 from app.models import (
     CreateEnvelopeRequest,
     CreateEnvelopeResponse,
     EnvelopeStatus,
     SignerOut,
 )
+from app.routers.webhooks import _source_event, mark_done_signers
 from app.storage import download_pdf, expires_at_iso, upload_pdf
-from app.inngest_events import send_event
-from app.routers.webhooks import _DONE_STATUSES, _source_event
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ PUBLIC_TOKEN_TTL_DAYS = 14
 # than our internal kind slugs. Keep in sync with apps/web's
 # lib/onboarding-documents.ts.
 DOCUMENT_KIND_LABELS = {
-    "loi": "Letter of Intent",
+    "loi": "LOI",
     "appointment_letter": "Appointment Letter",
     "nda": "NDA",
     "induction": "Induction Document",
@@ -58,7 +58,7 @@ DOCUMENT_KIND_LABELS = {
 
 
 def _envelope_title(kinds: list[str], signer_name: str) -> str:
-    """e.g. "Letter of Intent — Aniket Gupta".
+    """e.g. "LOI — Aniket Gupta".
 
     The run_id used to be the suffix; it made the title unreadable for the one
     person who actually sees it, and traceability doesn't depend on it —
@@ -273,20 +273,9 @@ async def reconcile_envelope(envelope_id: str) -> dict[str, Any]:
         log.warning("esign.documenso_reconcile_fetch_failed envelope=%s err=%s", envelope_id, exc)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Documenso fetch failed: {exc}") from exc
 
-    done_emails = {
-        str(r.get("email", "")).strip().lower()
-        for r in (detail.get("recipients") or [])
-        if str(r.get("signingStatus") or r.get("status") or "").upper() in _DONE_STATUSES
-    }
-
     signers: list[dict[str, Any]] = env.get("signers") or []
     now_iso = datetime.now(UTC).isoformat()
-    changed = False
-    for s in signers:
-        if s.get("status") != "completed" and s.get("email", "").strip().lower() in done_emails:
-            s["status"] = "completed"
-            s["completed_at"] = now_iso
-            changed = True
+    changed = mark_done_signers(signers, detail.get("recipients") or [], now_iso=now_iso)
 
     documenso_status = str(detail.get("status") or "").upper()
     all_done = documenso_status in ("COMPLETED",) or all(

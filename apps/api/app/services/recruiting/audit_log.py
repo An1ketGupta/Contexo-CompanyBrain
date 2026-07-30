@@ -31,6 +31,8 @@ Action = Literal[
     "edit",
     "delete",
     "candidate_sync",
+    "archive",
+    "unarchive",
 ]
 
 Status = Literal["success", "failure", "skipped"]

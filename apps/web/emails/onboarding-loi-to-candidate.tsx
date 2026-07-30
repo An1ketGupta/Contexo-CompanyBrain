@@ -1,7 +1,7 @@
 import { Button, Hr, Section, Text } from "@react-email/components";
 import { EmailShell, button, muted, p } from "./_layout";
 
-export interface OnboardingLoiToCandidateEmailProps {
+export interface OnboardingLOIToCandidateEmailProps {
   candidate_name: string;
   role_title: string;
   company_name: string;
@@ -11,26 +11,26 @@ export interface OnboardingLoiToCandidateEmailProps {
   app_url: string;
 }
 
-export function OnboardingLoiToCandidateEmail({
+export function OnboardingLOIToCandidateEmail({
   candidate_name,
   role_title,
   company_name,
   start_date,
   loi_signed_url,
   references_form_url,
-}: OnboardingLoiToCandidateEmailProps) {
+}: OnboardingLOIToCandidateEmailProps) {
   const first = candidate_name.split(" ")[0];
   return (
     <EmailShell
-      preview={`Your Letter of Intent from ${company_name}`}
-      heading={`Welcome, ${first} — here's your Letter of Intent`}
+      preview={`Your LOI from ${company_name}`}
+      heading={`Welcome, ${first} — here's your LOI`}
     >
       <Text style={p}>
         We&apos;re excited to have you joining <strong>{company_name}</strong>{" "}
         as <strong>{role_title}</strong> starting <strong>{start_date}</strong>.
       </Text>
       <Text style={p}>
-        Please find your signed Letter of Intent attached. Hold on to this — the
+        Please find your signed LOI attached. Hold on to this — the
         Appointment Letter and other formal documents will follow once we
         complete a quick background reference check.
       </Text>
@@ -38,7 +38,7 @@ export function OnboardingLoiToCandidateEmail({
       {loi_signed_url ? (
         <Section style={{ margin: "20px 0" }}>
           <Button href={loi_signed_url} style={button}>
-            Download Letter of Intent
+            Download LOI
           </Button>
         </Section>
       ) : null}
@@ -73,8 +73,8 @@ export function OnboardingLoiToCandidateEmail({
   );
 }
 
-export const onboardingLoiToCandidateSubject = (
-  props: OnboardingLoiToCandidateEmailProps,
-): string => `Your Letter of Intent — ${props.company_name}`;
+export const onboardingLOIToCandidateSubject = (
+  props: OnboardingLOIToCandidateEmailProps,
+): string => `Your LOI — ${props.company_name}`;
 
-export default OnboardingLoiToCandidateEmail;
+export default OnboardingLOIToCandidateEmail;

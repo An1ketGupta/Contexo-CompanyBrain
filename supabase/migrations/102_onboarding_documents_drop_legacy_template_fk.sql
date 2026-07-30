@@ -11,7 +11,7 @@
 --
 -- The failure landed after the run had already flipped to `*_generating` and
 -- after `generated_documents` had recorded a successful render, so runs stuck
--- on "Preparing LOI from template" forever while the renderer happily produced
+-- on "Preparing LOIfrom template" forever while the renderer happily produced
 -- the same PDF on every Inngest retry. All three generation steps (LOI,
 -- appointment letter + NDA, induction) wrote this column, so all three stalled.
 --

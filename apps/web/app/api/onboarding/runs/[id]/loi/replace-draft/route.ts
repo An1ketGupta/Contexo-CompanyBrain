@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { API_URL, getAccessToken, unauthorized } from "@/lib/api-proxy";
 import { REQUEST_ID_HEADER, coerceRequestId } from "@/lib/request-id";
 
-// Multipart upload of HR's edited LOI .docx during loi_pending_hr_review.
+// Multipart upload of HR's edited LOI.docx during loi_pending_hr_review.
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },

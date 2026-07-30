@@ -117,11 +117,6 @@ export function AddFieldDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Add a field</DialogTitle>
-          <DialogDescription>
-            For a detail that changes per person but wasn&rsquo;t picked up
-            automatically. You&rsquo;ll still need to point it at a spot in the
-            document.
-          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">

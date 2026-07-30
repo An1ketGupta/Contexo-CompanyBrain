@@ -1,4 +1,4 @@
--- ── 071: Onboarding v2 — LOI → BGV → Appointment Letter + NDA → Policies → Induction ──
+-- ── 071: Onboarding v2 — LOI→ BGV → Appointment Letter + NDA → Policies → Induction ──
 --
 -- Why this migration exists
 -- -------------------------
@@ -17,7 +17,7 @@
 --   1. documents.template_kind — admins tag KB docs as 'loi' | 'appointment_letter'
 --      | 'nda' templates. The agent looks them up by tag rather than by name
 --      heuristic. If no doc carries the tag for an org, the run is blocked
---      with an actionable error ("upload your LOI template").
+--      with an actionable error ("upload your LOItemplate").
 --
 --   2. onboarding_runs — one row per candidate going through onboarding. Carries
 --      the canonical state-machine field (status), inputs collected at trigger
@@ -57,7 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_documents_template_kind
   WHERE template_kind IS NOT NULL;
 
 COMMENT ON COLUMN documents.template_kind IS
-  'When set, marks this KB document as a Jinja-templated DOCX the Onboarding v2 agent fills per candidate (loi | appointment_letter | nda | induction).';
+  'When set, marks this KB document as a Jinja-templated DOCX the Onboarding v2 agent fills per candidate (LOI| appointment_letter | nda | induction).';
 
 
 -- ── 2. onboarding_runs ─────────────────────────────────────────────────────
@@ -152,7 +152,7 @@ CREATE POLICY onboarding_runs_select ON onboarding_runs
 -- both use the service client); no INSERT/UPDATE policy needed.
 
 COMMENT ON TABLE onboarding_runs IS
-  'One row per candidate going through HR onboarding (LOI → BGV → Appointment + NDA → Policies → Induction). State machine driven by OnboardingV2Agent.';
+  'One row per candidate going through HR onboarding (LOI→ BGV → Appointment + NDA → Policies → Induction). State machine driven by OnboardingV2Agent.';
 
 
 -- ── 3. onboarding_documents ────────────────────────────────────────────────

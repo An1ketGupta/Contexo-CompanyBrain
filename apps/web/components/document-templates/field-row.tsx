@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, ChevronDown, Loader2, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Loader2, Trash2, X } from "lucide-react";
 
 import { StatusPill } from "@/components/actual/kit";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,33 @@ import type {
   DocumentDataType,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+const SNIPPET_CONTEXT_CHARS = 90;
+
+/** Trim from the left, cutting at a word boundary so we never open mid-word. */
+function truncateStart(text: string, maxChars: number) {
+  const trimmed = text.trimStart();
+  if (trimmed.length <= maxChars) return trimmed;
+  const tail = trimmed.slice(trimmed.length - maxChars);
+  const space = tail.indexOf(" ");
+  return `…${space === -1 ? tail : tail.slice(space + 1)}`;
+}
+
+/** Trim from the right, cutting at a word boundary. */
+function truncateEnd(text: string, maxChars: number) {
+  const trimmed = text.trimEnd();
+  if (trimmed.length <= maxChars) return trimmed;
+  const head = trimmed.slice(0, maxChars);
+  const space = head.lastIndexOf(" ");
+  return `${space === -1 ? head : head.slice(0, space)}…`;
+}
+
+const PARAGRAPH_KIND_LABELS: Record<DocTemplateSlot["paragraph_kind"], string> = {
+  body: "",
+  table: "in a table",
+  header: "in the header",
+  footer: "in the footer",
+};
 
 const DATA_TYPES: { value: DocumentDataType; label: string }[] = [
   { value: "text", label: "Text" },
@@ -58,10 +85,12 @@ export function FieldRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [name, setName] = useState(variable.display_name);
+  const [slotIndex, setSlotIndex] = useState(0);
 
   const confident =
     variable.confidence !== null && variable.confidence >= threshold;
   const pending = variable.status === "proposed";
+  const previewSlot = slots[slotIndex % Math.max(slots.length, 1)];
 
   return (
     <div
@@ -90,14 +119,6 @@ export function FieldRow({
             </p>
           </div>
         </button>
-
-        {variable.confidence !== null ? (
-          <StatusPill tone={confident ? "green" : "amber"}>
-            {Math.round(variable.confidence * 100)}%
-          </StatusPill>
-        ) : (
-          <StatusPill tone="blue">Added by you</StatusPill>
-        )}
 
         <Select
           value={variable.data_type}
@@ -149,6 +170,34 @@ export function FieldRow({
           </Button>
         )}
       </div>
+
+      {!expanded && previewSlot ? (
+        <div className="flex items-start gap-3 border-t px-3 py-2.5">
+          <p className="min-w-0 flex-1 border-l-2 border-border pl-2.5 text-xs leading-relaxed text-muted-foreground">
+            {truncateStart(previewSlot.context_before, SNIPPET_CONTEXT_CHARS)}
+            <span className="mx-1 rounded border border-brand/30 bg-brand-tint px-1.5 py-0.5 font-mono text-[11px] font-medium text-brand">
+              {previewSlot.original_text.trim() || "(blank)"}
+            </span>
+            {truncateEnd(previewSlot.context_after, SNIPPET_CONTEXT_CHARS)}
+            {PARAGRAPH_KIND_LABELS[previewSlot.paragraph_kind] ? (
+              <span className="ml-1.5 italic opacity-70">
+                {PARAGRAPH_KIND_LABELS[previewSlot.paragraph_kind]}
+              </span>
+            ) : null}
+          </p>
+
+          {slots.length > 1 ? (
+            <button
+              type="button"
+              onClick={() => setSlotIndex((i) => (i + 1) % slots.length)}
+              className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              {slotIndex + 1} of {slots.length}
+              <ChevronRight className="h-3 w-3" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {expanded ? (
         <div className="space-y-4 border-t px-3 py-4">
