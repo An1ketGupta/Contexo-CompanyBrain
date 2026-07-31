@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from app.auth import verify_jwt
 from app.database import get_service_client, get_user_client
+from app.services import org_config
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +82,17 @@ class UpdateArchiveSettingsRequest(BaseModel):
     # Explicit clear sentinel for `delete_after_archive_days` because the
     # JSON `null` we'd otherwise need would collide with "field omitted".
     clear_delete_retention: bool = False
+
+
+class UpdateOnboardingStepsRequest(BaseModel):
+    """Which optional onboarding steps this org runs. An omitted field leaves
+    that step's current setting alone, so the UI can PATCH one toggle at a
+    time. LOIis absent because it is never optional."""
+
+    bgv: bool | None = None
+    appointment_bundle: bool | None = None
+    policies: bool | None = None
+    induction: bool | None = None
 
 
 class UpdateProfileRequest(BaseModel):
@@ -505,6 +517,64 @@ async def update_org_archive_settings(
         "threshold_days": int(archive_cfg.get("threshold_days") or 45),
         "delete_after_archive_days": archive_cfg.get("delete_after_archive_days"),
         "allowed_threshold_days": ARCHIVE_THRESHOLD_CHOICES,
+    }
+
+
+@router.get("/organizations/me/onboarding-steps")
+async def get_org_onboarding_steps(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, bool]:
+    """Which optional steps the onboarding pipeline runs for this org."""
+    _, org_id, _ = _require_user(current_user)
+    steps = await org_config.get_onboarding_steps(org_id)
+    return {
+        "bgv": steps.bgv,
+        "appointment_bundle": steps.appointment_bundle,
+        "policies": steps.policies,
+        "induction": steps.induction,
+    }
+
+
+@router.patch("/organizations/me/onboarding-steps")
+async def update_org_onboarding_steps(
+    body: UpdateOnboardingStepsRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, bool]:
+    """Admin-only. Turn optional onboarding steps on or off.
+
+    Goes through `org_config` rather than writing `organizations.metadata`
+    directly like the archive settings above: the onboarding agent reads these
+    flags through that module's TTL cache, and `update_onboarding_steps` is
+    what invalidates it.
+    """
+    user_id, org_id, token = _require_user(current_user)
+    client = get_user_client(token)
+
+    me = await asyncio.to_thread(
+        lambda: client.table("users")
+        .select("role")
+        .eq("id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not me.data or me.data.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workspace admins can change onboarding steps.",
+        )
+
+    steps = await org_config.update_onboarding_steps(
+        org_id=org_id,
+        bgv=body.bgv,
+        appointment_bundle=body.appointment_bundle,
+        policies=body.policies,
+        induction=body.induction,
+    )
+    return {
+        "bgv": steps.bgv,
+        "appointment_bundle": steps.appointment_bundle,
+        "policies": steps.policies,
+        "induction": steps.induction,
     }
 
 

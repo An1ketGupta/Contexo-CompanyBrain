@@ -7,6 +7,9 @@ What lives here:
     the high/medium bands shown on the message confidence badge. Stored in
     `organizations.metadata.confidence_thresholds`; defaults baked in so a
     brand-new org never sees a "not configured" state.
+  * `onboarding_v2_steps` — which optional steps of the onboarding pipeline
+    this org runs. Read by `OnboardingV2Agent` once per invocation. Stored in
+    `organizations.metadata.onboarding_v2_steps`.
 
 We expect:
   * Hot-path read on every chat call (must stay <1ms).
@@ -53,6 +56,11 @@ DEFAULT_CONFIDENCE_MEDIUM = 0.45
 # UI. This preserves the v1 behavior and the existing Day 3-4 write flows.
 DEFAULT_CONFIDENCE_BLOCK = 0.0
 
+# Every optional onboarding step is on unless an admin turns it off. A brand-new
+# org gets the full pipeline, which is the behaviour that existed before steps
+# became per-org configurable.
+DEFAULT_STEP_ENABLED = True
+
 
 @dataclass(frozen=True)
 class ConfidenceThresholds:
@@ -83,10 +91,41 @@ class ConfidenceThresholds:
 
 
 @dataclass(frozen=True)
+class OnboardingStepConfig:
+    """Which optional steps of the onboarding pipeline this org runs.
+
+    Stored on `organizations.metadata.onboarding_v2_steps` as
+    `{"bgv": true, "appointment_bundle": true, "policies": true,
+    "induction": true}`.
+
+    LOIis deliberately absent: it is the one mandatory step, and every
+    later step reads state the LOIstep writes. The four here can each be
+    turned off independently — the agent skips straight to the next enabled
+    step rather than parking on one the org doesn't run. Order is fixed;
+    this is a set of on/off switches, not a workflow builder.
+    """
+
+    bgv: bool = DEFAULT_STEP_ENABLED
+    appointment_bundle: bool = DEFAULT_STEP_ENABLED
+    policies: bool = DEFAULT_STEP_ENABLED
+    induction: bool = DEFAULT_STEP_ENABLED
+
+    @classmethod
+    def default(cls) -> OnboardingStepConfig:
+        return cls()
+
+
+# The metadata keys, in pipeline order. Used by the parser and the writer so
+# neither has to repeat the field list.
+STEP_KEYS = ("bgv", "appointment_bundle", "policies", "induction")
+
+
+@dataclass(frozen=True)
 class OrgConfig:
     org_id: str
     ai_instructions: str | None
     confidence: ConfidenceThresholds
+    steps: OnboardingStepConfig
     fetched_at: float
 
 
@@ -138,6 +177,30 @@ def _parse_confidence(meta: dict[str, Any] | None) -> ConfidenceThresholds:
     return ConfidenceThresholds(high=high, medium=medium, block=block)
 
 
+def _parse_steps(meta: dict[str, Any] | None) -> OnboardingStepConfig:
+    """Read the step toggles out of metadata JSONB, defaulting to all-on.
+
+    Same defensive posture as `_parse_confidence`: an org that has never
+    touched the setting, a row someone hand-edited into a non-dict, or a key
+    holding a value that isn't a bool all resolve to "run this step". Failing
+    open matters more here than elsewhere — the alternative reading of a
+    corrupt row is silently skipping a step of someone's hiring paperwork.
+    """
+    if not meta:
+        return OnboardingStepConfig.default()
+    raw = meta.get("onboarding_v2_steps")
+    if not isinstance(raw, dict):
+        return OnboardingStepConfig.default()
+    return OnboardingStepConfig(
+        **{key: _as_bool(raw.get(key)) for key in STEP_KEYS}
+    )
+
+
+def _as_bool(value: Any) -> bool:
+    """A step is enabled unless the stored value is exactly `false`."""
+    return value if isinstance(value, bool) else DEFAULT_STEP_ENABLED
+
+
 async def get_org_config(org_id: str) -> OrgConfig:
     now = time.monotonic()
     cached = _cache.get(org_id)
@@ -169,16 +232,19 @@ async def get_org_config(org_id: str) -> OrgConfig:
                 org_id=org_id,
                 ai_instructions=None,
                 confidence=ConfidenceThresholds.default(),
+                steps=OnboardingStepConfig.default(),
                 fetched_at=now,
             )
 
         raw = (row.get("ai_instructions") or "").strip()
         instructions = raw[:INSTRUCTIONS_MAX_CHARS] or None
         confidence = _parse_confidence(row.get("metadata"))
+        steps = _parse_steps(row.get("metadata"))
         cfg = OrgConfig(
             org_id=org_id,
             ai_instructions=instructions,
             confidence=confidence,
+            steps=steps,
             fetched_at=time.monotonic(),
         )
         _cache[org_id] = cfg
@@ -251,3 +317,64 @@ async def update_confidence_thresholds(
     return ConfidenceThresholds(
         high=saved["high"], medium=saved["medium"], block=saved["block"]
     )
+
+
+async def get_onboarding_steps(org_id: str) -> OnboardingStepConfig:
+    """Convenience: just the onboarding step toggles."""
+    cfg = await get_org_config(org_id)
+    return cfg.steps
+
+
+async def update_onboarding_steps(
+    *,
+    org_id: str,
+    bgv: bool | None = None,
+    appointment_bundle: bool | None = None,
+    policies: bool | None = None,
+    induction: bool | None = None,
+) -> OnboardingStepConfig:
+    """Persist step toggles to organizations.metadata and bust the cache.
+
+    A `None` argument leaves that step's current setting alone, so a caller
+    that only knows about one toggle can't silently reset the others. Unlike
+    the confidence thresholds there's nothing to validate — the four flags are
+    independent booleans with no ordering between them.
+    """
+    updates = {
+        "bgv": bgv,
+        "appointment_bundle": appointment_bundle,
+        "policies": policies,
+        "induction": induction,
+    }
+
+    svc = get_service_client()
+
+    def _run() -> dict[str, Any]:
+        existing = (
+            svc.table("organizations")
+            .select("metadata")
+            .eq("id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        meta = (existing.data or {}).get("metadata") or {} if existing else {}
+        prior = meta.get("onboarding_v2_steps")
+        prior = prior if isinstance(prior, dict) else {}
+        # Read-modify-write rather than a JSONB merge: `metadata` is a shared
+        # bucket (archive settings, confidence thresholds, ...) and PostgREST's
+        # merge operator isn't exposed through the Python client.
+        steps = {
+            key: (
+                updates[key]
+                if updates[key] is not None
+                else _as_bool(prior.get(key))
+            )
+            for key in STEP_KEYS
+        }
+        meta = {**meta, "onboarding_v2_steps": steps}
+        svc.table("organizations").update({"metadata": meta}).eq("id", org_id).execute()
+        return meta
+
+    saved_meta = await asyncio.to_thread(_run)
+    invalidate(org_id)
+    return OnboardingStepConfig(**saved_meta["onboarding_v2_steps"])

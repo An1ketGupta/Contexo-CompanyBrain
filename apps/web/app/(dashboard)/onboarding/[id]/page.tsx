@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill, type PillTone } from "@/components/actual/kit";
 import { LOIDraftEditor } from "@/components/onboarding/loi-draft-editor";
 import { StageBoard, currentStageKey } from "@/components/onboarding/stage-board";
+import { useOnboardingSteps } from "@/hooks/use-onboarding-steps";
 import { DOCUMENT_KIND_LABEL as DOC_LABEL } from "@/lib/onboarding-documents";
 
 interface ReferenceRow {
@@ -189,6 +190,10 @@ export default function OnboardingDetailPage() {
     fetcher,
     { refreshInterval: 8_000 },
   );
+
+  // The stages this workspace runs. A stage switched off in settings is one
+  // the run passes straight through, so the board doesn't show a column for it.
+  const { enabledStages } = useOnboardingSteps();
 
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -487,7 +492,7 @@ export default function OnboardingDetailPage() {
   }
 
   const isBlocked = data.status === "blocked_missing_template";
-  const stage = currentStageKey(data);
+  const stage = currentStageKey(data, enabledStages);
   const ctc =
     data.ctc_amount !== null && data.ctc_amount !== undefined
       ? `${data.ctc_currency || "INR"} ${data.ctc_amount.toLocaleString()}`
@@ -555,13 +560,14 @@ export default function OnboardingDetailPage() {
         </div>
       </header>
 
-      {/* Stage board — the run's five stages as columns, candidate box parked
-          in whichever one it's sitting in. Only that stage's panel renders
-          below. */}
+      {/* Stage board — the stages this workspace runs as columns, candidate
+          box parked in whichever one it's sitting in. Only that stage's panel
+          renders below. */}
       <section className="mb-8">
         <StageBoard
           run={data}
           statusLabel={STATUS_LABELS[data.status] || data.status}
+          enabledStages={enabledStages}
         />
       </section>
 

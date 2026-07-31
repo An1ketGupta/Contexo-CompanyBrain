@@ -224,60 +224,6 @@ class PreviewResponse(BaseModel):
     used_values: dict[str, Any] = Field(default_factory=dict)
 
 
-# ── Generation ─────────────────────────────────────────────────────────────
-
-
-class GenerateRequest(BaseModel):
-    """Either `template_id` (this exact template) or `type_key` (the org's
-    default for that type). The candidate comes from whichever id is supplied."""
-
-    template_id: str | None = None
-    type_key: str | None = None
-    onboarding_run_id: str | None = None
-    candidate_id: str | None = None
-    requisition_id: str | None = None
-    # HR-entered corrections, keyed by dotted profile path
-    # (e.g. "manager.full_name"). Applied last — a human correcting a value is
-    # the most authoritative source there is.
-    overrides: dict[str, Any] = Field(default_factory=dict)
-
-
-class GeneratedFileRead(BaseModel):
-    format: str
-    url: str | None = None
-
-
-class GeneratedDocumentRead(BaseModel):
-    id: str
-    status: str
-    template_id: str
-    template_name: str | None = None
-    version_id: str
-    generation_no: int
-    onboarding_run_id: str | None = None
-    validation_report: dict[str, Any] = Field(default_factory=dict)
-    context_snapshot: dict[str, Any] = Field(default_factory=dict)
-    candidate_snapshot: dict[str, Any] = Field(default_factory=dict)
-    error_message: str | None = None
-    files: list[GeneratedFileRead] = Field(default_factory=list)
-    generated_at: str | None = None
-    approved_at: str | None = None
-    rejected_at: str | None = None
-    rejection_reason: str | None = None
-    created_at: str | None = None
-
-
-class GenerateResponse(BaseModel):
-    outcome: str
-    document: GeneratedDocumentRead | None = None
-    warnings: list[str] = Field(default_factory=list)
-    error: str | None = None
-
-
-class RejectRequest(BaseModel):
-    reason: str | None = Field(default=None, max_length=500)
-
-
 class TemplateReadiness(BaseModel):
     """Whether one document type can be generated right now.
 

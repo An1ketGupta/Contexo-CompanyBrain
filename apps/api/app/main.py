@@ -109,9 +109,6 @@ from app.routers import (
     webhooks as webhooks_router,
 )
 from app.routers import (
-    document_generation as document_generation_router,
-)
-from app.routers import (
     document_templates as document_templates_router,
 )
 from app.routers import (
@@ -275,7 +272,6 @@ app.include_router(admin_intake_router.router)
 app.include_router(knowledge_health_router.router)
 app.include_router(internal_announcements_router.router)
 app.include_router(document_templates_router.router)
-app.include_router(document_generation_router.router)
 app.include_router(recruiting_router.router)
 app.include_router(ats_integrations_router.router)
 app.include_router(admin_recruiting_router.router)

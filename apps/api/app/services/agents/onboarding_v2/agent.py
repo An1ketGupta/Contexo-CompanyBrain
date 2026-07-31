@@ -69,6 +69,13 @@ park between human steps without losing context:
 The agent's `run()` method is re-entrant — it inspects the current status
 and dispatches to the right step. Inngest functions kick it with the
 current status hint so it can resume cleanly from any checkpoint.
+
+Four of these steps are optional per org (BGV, the appointment bundle,
+policies, induction — see `org_config.OnboardingStepConfig`). A disabled step
+writes the same status a real completion would and hands straight to the next
+one, so the diagram above still describes the possible states; a run just
+passes through some of them without stopping. The LOIsteps are not
+optional — everything downstream reads state they write. Order is fixed.
 """
 from __future__ import annotations
 
@@ -79,6 +86,7 @@ from typing import Any
 from app.config import get_settings
 from app.database import get_service_client
 from app.observability import get_logger
+from app.services import org_config
 from app.services.agents.base_agent import BaseAgent
 from app.services.agents.onboarding_v2 import storage as ob_storage
 from app.services.agents.onboarding_v2.pre_join import (
@@ -142,6 +150,7 @@ class OnboardingV2Agent(BaseAgent):
         self.onboarding_run_id = run_id
         self.resume_from = resume_from
         self._run_row: dict[str, Any] | None = None
+        self._steps: org_config.OnboardingStepConfig | None = None
         # Bound logger — every emit carries run/org context without per-call boilerplate.
         self.log = log.bind(
             onboarding_run_id=run_id,
@@ -170,6 +179,19 @@ class OnboardingV2Agent(BaseAgent):
     async def _refresh_run(self) -> dict[str, Any]:
         self._run_row = None
         return await self._load_run()
+
+    async def _step_config(self) -> org_config.OnboardingStepConfig:
+        """Which optional steps this org runs.
+
+        Cached per agent instance, and an instance is constructed per Inngest
+        invocation — so a run picks up a toggle change on its next kick rather
+        than being pinned to whatever was configured when it started. A run
+        already parked on a step is unaffected: the checks live at the entry
+        points of the steps that follow, not on the parked step itself.
+        """
+        if self._steps is None:
+            self._steps = await org_config.get_onboarding_steps(self.org_id)
+        return self._steps
 
     async def _set_status(
         self,
@@ -457,7 +479,7 @@ class OnboardingV2Agent(BaseAgent):
         if current == "bgv_pending":
             return await self._step_check_bgv_completion()
         if current == "bgv_complete":
-            return await self._step_generate_offer_bundle()
+            return await self._step_after_bgv()
         if current == "appointment_pending_hr_review":
             return {"status": current, "waiting_for": "hr_to_approve_bundle"}
         if current == "appointment_sent_to_candidate":
@@ -473,11 +495,14 @@ class OnboardingV2Agent(BaseAgent):
             # one that drifted — either way, re-attempt the step that blocked.
             # Both states record which template kind stalled, so the retry is
             # targeted rather than restarting the run.
+            # Routed through the same entry points a normal run uses, not
+            # straight at the generation step, so turning a step off is also a
+            # way to unblock a run stuck on a template for it.
             missing = (run.get("blocked_template_kind") or "loi").lower()
             if missing == "loi":
                 return await self._step_generate_loi()
             if missing in ("appointment_letter", "nda"):
-                return await self._step_generate_offer_bundle()
+                return await self._step_after_bgv()
             if missing == "induction":
                 return await self._step_generate_induction()
 
@@ -805,6 +830,17 @@ class OnboardingV2Agent(BaseAgent):
                 exc,
             )
 
+        steps = await self._step_config()
+        if not steps.bgv:
+            # No references form, no reference emails, no waiting. `bgv_complete`
+            # without `bgv_completed_at`: the timestamp means "every reference
+            # responded", which is not what happened here.
+            await self.log_step(
+                "send_loi_to_candidate", "bgv_skipped", {"reason": "step_disabled"}
+            )
+            await self._set_status("bgv_complete")
+            return await self._step_after_bgv()
+
         # Park in awaiting_candidate_references — BGV kicks off only after
         # the candidate (or an HR override) writes refs and re-kicks the agent.
         await self._set_status("awaiting_candidate_references")
@@ -935,9 +971,29 @@ class OnboardingV2Agent(BaseAgent):
             event_type="bgv_complete",
             message="All references have responded.",
         )
-        return await self._step_generate_offer_bundle()
+        return await self._step_after_bgv()
 
     # ── Step 4: Appointment Letter + NDA bundle ────────────────────────────
+
+    async def _step_after_bgv(self) -> dict[str, Any]:
+        """Fan-in for everything that lands on `bgv_complete`: BGV finishing
+        for real, BGV being skipped, and a re-kick of a run parked there.
+
+        When the bundle is disabled we hand straight to `_step_assign_policies`,
+        which is the same thing `run()` does on an `appointment_sent_to_candidate`
+        re-kick — so that step is already written to tolerate a second call
+        (duplicate acknowledgement inserts are swallowed, its candidate email
+        carries a dedupe key). Keep it that way.
+        """
+        steps = await self._step_config()
+        if steps.appointment_bundle:
+            return await self._step_generate_offer_bundle()
+
+        await self.log_step(
+            "generate_offer_bundle", "skipped", {"reason": "step_disabled"}
+        )
+        await self._set_status("appointment_sent_to_candidate")
+        return await self._step_assign_policies()
 
     async def _step_generate_offer_bundle(self) -> dict[str, Any]:
         await self.log_step("generate_offer_bundle", "started")
@@ -1054,6 +1110,21 @@ class OnboardingV2Agent(BaseAgent):
         the run by one round-trip than block on it.
         """
         await self.log_step("assign_policies", "started")
+
+        steps = await self._step_config()
+        if not steps.policies:
+            # Same shape as the no-policy-docs branch below: stamp the step as
+            # acknowledged and fall through, so the run never parks on a step
+            # nobody is going to action.
+            await self.log_step(
+                "assign_policies", "skipped", {"reason": "step_disabled"}
+            )
+            await self._set_status(
+                "policies_acknowledged",
+                extra={"policies_acknowledged_at": datetime.now(UTC).isoformat()},
+            )
+            return await self._step_generate_induction()
+
         svc = get_service_client()
         run = await self._load_run()
 
@@ -1207,6 +1278,13 @@ class OnboardingV2Agent(BaseAgent):
         template is tagged, block and prompt HR to upload one — we never
         synthesize induction content."""
         await self.log_step("generate_induction", "started")
+
+        steps = await self._step_config()
+        if not steps.induction:
+            await self.log_step(
+                "generate_induction", "skipped", {"reason": "step_disabled"}
+            )
+            return await self._step_finalise()
 
         if not await self._template_is_ready("induction"):
             await self.log_step(
