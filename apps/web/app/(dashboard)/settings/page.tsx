@@ -20,6 +20,7 @@ import {
   Mail,
   MoreHorizontal,
   Plug,
+  Send,
   ShieldCheck,
   ThumbsDown,
   ThumbsUp,
@@ -142,6 +143,12 @@ export default function SettingsPage() {
               description="Trust mode, auto-send categories, sending mailbox, escalation"
             />
             <SettingsLink
+              href="/admin/sales/settings"
+              icon={<Send className="h-4 w-4" />}
+              title="Sales outreach"
+              description="Trust mode, sending mailbox, follow-up cadence, escalation"
+            />
+            <SettingsLink
               href="/settings/webhooks"
               icon={<Webhook className="h-4 w-4" />}
               title="Webhooks"
@@ -231,11 +238,13 @@ function SettingsLink({
 // ── Card primitive ──────────────────────────────────────────────────────────
 
 function Card({
+  id,
   title,
   description,
   children,
   tone = "default",
 }: {
+  id?: string;
   title: string;
   description?: string;
   children: React.ReactNode;
@@ -243,6 +252,7 @@ function Card({
 }) {
   return (
     <section
+      id={id}
       className={
         tone === "destructive"
           ? "rounded-2xl border border-destructive/30 bg-card"
@@ -1891,6 +1901,7 @@ function OnboardingStepsCard({ canEdit }: { canEdit: boolean }) {
 
   return (
     <Card
+      id="onboarding-steps"
       title="Onboarding steps"
       description={
         canEdit

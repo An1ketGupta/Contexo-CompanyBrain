@@ -29,6 +29,7 @@ from .onboarding_v2_functions import FUNCTIONS as _ONBOARDING_V2_FUNCTIONS
 from .policy_functions import FUNCTIONS as _POLICY_FUNCTIONS
 from .query_log_retention import FUNCTIONS as _QUERY_LOG_RETENTION_FUNCTIONS
 from .report_functions import FUNCTIONS as _REPORT_FUNCTIONS
+from .sales_functions import FUNCTIONS as _SALES_FUNCTIONS
 from .slack_functions import FUNCTIONS as _SLACK_FUNCTIONS
 from .slack_inbound_functions import FUNCTIONS as _SLACK_INBOUND_FUNCTIONS
 from .email_classify_functions import FUNCTIONS as _EMAIL_CLASSIFY_FUNCTIONS
@@ -54,6 +55,7 @@ FUNCTIONS = [
     *_COMPLIANCE_FUNCTIONS,
     *_EMAIL_CLASSIFY_FUNCTIONS,
     *_CUSTOMER_SUPPORT_FUNCTIONS,
+    *_SALES_FUNCTIONS,
     *_MEETING_FUNCTIONS,
     *_API_TRIGGER_FUNCTIONS,
     *_FEEDBACK_FUNCTIONS,

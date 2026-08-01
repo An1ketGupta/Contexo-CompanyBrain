@@ -311,21 +311,19 @@ export default function RequisitionDetailPage() {
     fetcher,
     { revalidateOnFocus: false },
   );
-  // Naukri connection status — surfaces whether the recruiter has finished
-  // the Settings → Integrations connect step. Empty taxonomy dropdowns
-  // (the symptom the user just hit) almost always mean "not connected yet".
-  const { data: naukriConnectionStatus, mutate: mutateNaukriStatus } =
-    useSWR<{ connected: boolean; mapping_cached_at: string | null }>(
-      selectedAts.has("naukri") ? "/api/integrations/ats/status" : null,
-      async (url: string) => {
-        const r = await fetch(url);
-        if (!r.ok) throw new Error(`Failed (${r.status})`);
-        const body = await r.json();
-        return body.naukri ?? { connected: false, mapping_cached_at: null };
-      },
-      { revalidateOnFocus: false },
-    );
-  const naukriConnected = naukriConnectionStatus?.connected === true;
+  // Connection status for every posting destination — surfaces whether the
+  // recruiter has finished the Settings → Integrations connect step. Fetched
+  // unconditionally (not gated on selection) so we can warn on a destination
+  // the moment it's checked, before the recruiter ever hits Publish.
+  const { data: atsConnectionStatus, mutate: mutateAtsConnectionStatus } =
+    useSWR<
+      Record<AtsPlatform, { connected: boolean; mapping_cached_at: string | null }>
+    >("/api/integrations/ats/status", fetcher, { revalidateOnFocus: false });
+  const isAtsConnected = (p: AtsPlatform) =>
+    atsConnectionStatus?.[p]?.connected === true;
+  // Empty taxonomy dropdowns (the symptom the user just hit) almost always
+  // mean Naukri isn't connected yet.
+  const naukriConnected = isAtsConnected("naukri");
   // After all three taxonomy SWRs settle, check whether any returned data.
   // We treat "all loaded AND all empty" as the empty-state signal — partial
   // emptiness (e.g. industries [] but functional_areas non-empty) is still
@@ -735,12 +733,11 @@ export default function RequisitionDetailPage() {
           </div>
         )}
         {data.grounded === false && (
-          <div className="mt-3 rounded-xl border border-amber/30 bg-amber-tint p-3 text-sm text-amber">
-            <div className="font-bold">No company context found</div>
+          <div className="mt-3 rounded-xl border border-amber/30 bg-amber-tint p-3 text-sm text-black">
+            <div className="font-bold">No matching documents found for this role</div>
             <p className="mt-1">
-              No matching documents in your KB for this role. The JD variants
-              below are model-generated and may contain plausible-sounding but
-              fabricated comp ranges, stack, or reporting lines. Review
+              The JD variants
+              below are model-generated and may contain plausible-sounding. Review
               carefully before publishing.
             </p>
           </div>
@@ -870,6 +867,11 @@ export default function RequisitionDetailPage() {
                             />
                             <PlatformIcon platform={p.value} />
                             {p.label}
+                            {atsConnectionStatus && !isAtsConnected(p.value) && (
+                              <span className="text-[10px] font-normal opacity-70">
+                                (not connected)
+                              </span>
+                            )}
                             {active && (
                               <Check className="h-3.5 w-3.5 text-brand" aria-hidden />
                             )}
@@ -880,6 +882,33 @@ export default function RequisitionDetailPage() {
                   </div>
                 );
               })}
+              {/* Proactive nudge — catches "not connected" before the recruiter
+                  hits Publish and gets an opaque per-platform failure back. */}
+              {atsConnectionStatus &&
+                selectedAtsList.some((p) => !isAtsConnected(p)) && (
+                  <div className="rounded-xl border border-amber/30 bg-amber-tint px-3 py-2 text-sm">
+                    <p className="font-bold text-amber-ink">
+                      {selectedAtsList
+                        .filter((p) => !isAtsConnected(p))
+                        .map((p) => platformLabel(p))
+                        .join(", ")}{" "}
+                      {selectedAtsList.filter((p) => !isAtsConnected(p)).length === 1
+                        ? "isn't"
+                        : "aren't"}{" "}
+                      connected yet
+                    </p>
+                    <p className="mt-1 text-xs text-amber-ink/80">
+                      Publishing to a disconnected destination will fail. Connect
+                      it first in Settings → Integrations.
+                    </p>
+                    <a
+                      href="/settings/integrations"
+                      className="mt-2 inline-block text-xs font-bold text-amber-ink underline hover:no-underline"
+                    >
+                      Open Settings → Integrations →
+                    </a>
+                  </div>
+                )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="location-pub">Location</Label>
@@ -1082,7 +1111,7 @@ export default function RequisitionDetailPage() {
                         return;
                       }
                       toast.success("Naukri taxonomy refreshed");
-                      mutateNaukriStatus();
+                      mutateAtsConnectionStatus();
                     }}
                     className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-amber underline hover:no-underline"
                   >
@@ -1180,8 +1209,22 @@ export default function RequisitionDetailPage() {
           )}
 
           {publishError && (
-            <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm font-medium text-destructive">
-              {publishError}
+            <div className="mt-4 space-y-2 rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm">
+              {(() => {
+                const segments = parseJoinedAtsError(publishError);
+                if (segments.some((s) => s.platform === null)) {
+                  return (
+                    <p className="font-medium text-destructive">{publishError}</p>
+                  );
+                }
+                return segments.map((s, i) => (
+                  <AtsConnectFailureNotice
+                    key={i}
+                    platform={s.platform as AtsPlatform}
+                    error={s.error}
+                  />
+                ));
+              })()}
             </div>
           )}
 
@@ -1258,8 +1301,8 @@ export default function RequisitionDetailPage() {
                         {platformLabel(p.platform)} — publish failed
                       </span>
                     </div>
-                    <div className="mt-2 break-all text-sm text-destructive">
-                      {p.error}
+                    <div className="mt-2 text-sm">
+                      <AtsConnectFailureNotice platform={p.platform} error={p.error} />
                     </div>
                   </div>
                 ),
@@ -1601,6 +1644,66 @@ const PLATFORM_STYLE: Record<
 
 function platformLabel(p: PlatformKey): string {
   return PLATFORM_STYLE[p]?.label ?? p;
+}
+
+// Per-platform publish failures come back as PermissionError("<platform>_not_
+// connected") or "ats_not_connected_or_unauthorized: ..." (see
+// recruiting_agent._publish_one_ats) — both mean "no credential on file",
+// distinct from a transient failure (e.g. mock/ATS server unreachable).
+function isAtsConnectionError(errText: string | null | undefined): boolean {
+  if (!errText) return false;
+  return /not_connected|unauthorized/i.test(errText);
+}
+
+function friendlyAtsFailureMessage(
+  platform: AtsPlatform,
+  errText: string | null | undefined,
+): string {
+  return isAtsConnectionError(errText)
+    ? `${platformLabel(platform)} isn't connected yet.`
+    : `${platformLabel(platform)} couldn't be reached — the publish failed.`;
+}
+
+// Splits the backend's "; "-joined all-platforms-failed message (built in
+// recruiting_agent.publish_requisition when every ATS fails) back into
+// per-platform pieces so the UI can render friendly copy per destination
+// instead of dumping the raw "platform: code: detail" string.
+function parseJoinedAtsError(
+  msg: string,
+): { platform: AtsPlatform | null; error: string }[] {
+  return msg.split("; ").map((segment) => {
+    const idx = segment.indexOf(": ");
+    if (idx === -1) return { platform: null, error: segment };
+    const candidate = segment.slice(0, idx);
+    const known = POSTING_DESTINATIONS.some((p) => p.value === candidate);
+    return known
+      ? { platform: candidate as AtsPlatform, error: segment.slice(idx + 1) }
+      : { platform: null, error: segment };
+  });
+}
+
+function AtsConnectFailureNotice({
+  platform,
+  error,
+}: {
+  platform: AtsPlatform;
+  error: string | null | undefined;
+}) {
+  return (
+    <div>
+      <p className="font-medium text-destructive">
+        {friendlyAtsFailureMessage(platform, error)}
+      </p>
+      {isAtsConnectionError(error) && (
+        <a
+          href="/settings/integrations"
+          className="mt-1 inline-block text-xs font-bold text-destructive underline hover:no-underline"
+        >
+          Connect {platformLabel(platform)} in Settings →
+        </a>
+      )}
+    </div>
+  );
 }
 
 function PlatformIcon({ platform }: { platform: PlatformKey }) {

@@ -87,7 +87,7 @@ class UpdateArchiveSettingsRequest(BaseModel):
 class UpdateOnboardingStepsRequest(BaseModel):
     """Which optional onboarding steps this org runs. An omitted field leaves
     that step's current setting alone, so the UI can PATCH one toggle at a
-    time. LOIis absent because it is never optional."""
+    time. LOI is absent because it is never optional."""
 
     bgv: bool | None = None
     appointment_bundle: bool | None = None
@@ -520,19 +520,30 @@ async def update_org_archive_settings(
     }
 
 
-@router.get("/organizations/me/onboarding-steps")
-async def get_org_onboarding_steps(
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, bool]:
-    """Which optional steps the onboarding pipeline runs for this org."""
-    _, org_id, _ = _require_user(current_user)
-    steps = await org_config.get_onboarding_steps(org_id)
+def _steps_payload(steps: org_config.OnboardingStepConfig) -> dict[str, bool]:
+    """The wire shape both onboarding-steps endpoints return."""
     return {
         "bgv": steps.bgv,
         "appointment_bundle": steps.appointment_bundle,
         "policies": steps.policies,
         "induction": steps.induction,
+        "configured": steps.configured,
     }
+
+
+@router.get("/organizations/me/onboarding-steps")
+async def get_org_onboarding_steps(
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, bool]:
+    """Which optional steps the onboarding pipeline runs for this org.
+
+    `configured` is false until someone saves a choice, which is how the
+    onboarding page knows to show its first-run setup screen instead of the
+    runs list.
+    """
+    _, org_id, _ = _require_user(current_user)
+    steps = await org_config.get_onboarding_steps(org_id)
+    return _steps_payload(steps)
 
 
 @router.patch("/organizations/me/onboarding-steps")
@@ -570,12 +581,7 @@ async def update_org_onboarding_steps(
         policies=body.policies,
         induction=body.induction,
     )
-    return {
-        "bgv": steps.bgv,
-        "appointment_bundle": steps.appointment_bundle,
-        "policies": steps.policies,
-        "induction": steps.induction,
-    }
+    return _steps_payload(steps)
 
 
 @router.patch("/organizations/me/sharing")

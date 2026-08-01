@@ -15,7 +15,7 @@ from typing import Any
 
 
 class _Result:
-    def __init__(self, data: list[dict[str, Any]]):
+    def __init__(self, data: list[dict[str, Any]] | dict[str, Any] | None):
         self.data = data
 
 
@@ -29,6 +29,7 @@ class _Query:
         self._order: list[tuple[str, bool]] = []
         self._limit: int | None = None
         self._embed: list[str] = []
+        self._single = False
 
     # ── builders ──────────────────────────────────────────────────────────
     def select(self, columns: str = "*") -> "_Query":
@@ -76,6 +77,13 @@ class _Query:
 
     def limit(self, n: int) -> "_Query":
         self._limit = n
+        return self
+
+    def maybe_single(self) -> "_Query":
+        """PostgREST's "at most one row" mode: `.data` is the row itself
+        rather than a list, and None when nothing matched."""
+        self._single = True
+        self._limit = 1
         return self
 
     # ── execution ─────────────────────────────────────────────────────────
@@ -134,6 +142,8 @@ class _Query:
         for embed in self._embed:
             for row in out:
                 row[embed] = self._store.resolve_embed(self._table, embed, row)
+        if self._single:
+            return _Result(out[0] if out else None)
         return _Result(out)
 
 

@@ -400,3 +400,75 @@ export interface DocPreviewResult {
   used_values: Record<string, unknown>;
 }
 
+
+// ── Sales outreach agent ──────────────────────────────────────────────────
+
+export type LeadStatus =
+  | "new"
+  | "shadow_drafted"
+  | "pending_review"
+  | "awaiting_reply"
+  | "replied"
+  | "qualified"
+  | "meeting_booked"
+  | "escalated"
+  | "won"
+  | "lost";
+
+export type SalesMessageStatus = "draft" | "sent" | "edited_and_sent" | "rejected";
+export type SalesMessageKind = "first_touch" | "follow_up" | "reply";
+export type SalesTrustMode = "shadow" | "assisted" | "autonomous";
+
+export interface Lead {
+  id: string;
+  org_id: string;
+  company_name: string;
+  domain: string | null;
+  contact_name: string | null;
+  contact_email: string;
+  contact_title: string | null;
+  source: string;
+  context_note: string | null;
+  status: LeadStatus;
+  bant: Json;
+  assigned_user_id: string | null;
+  current_agent_run_id: string | null;
+  next_follow_up_at: string | null;
+  follow_up_count: number;
+  escalation_reason: string | null;
+  first_contacted_at: string | null;
+  last_contacted_at: string | null;
+  replied_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SalesMessage {
+  id: string;
+  lead_id: string;
+  org_id: string;
+  direction: "outbound" | "inbound";
+  author_type: "agent_draft" | "human" | "prospect" | "system";
+  kind: SalesMessageKind | null;
+  subject: string | null;
+  body: string;
+  sources: { document_id?: string; document_name?: string; excerpt?: string }[];
+  confidence: number | null;
+  status: SalesMessageStatus | null;
+  sent_via: string | null;
+  provider_message_id: string | null;
+  created_at: string;
+}
+
+export interface SalesSettings {
+  org_id: string;
+  enabled: boolean;
+  mode: SalesTrustMode;
+  sender_user_id: string | null;
+  tone: string | null;
+  follow_up_delay_days: number;
+  max_follow_ups: number;
+  daily_send_cap: number;
+  escalation_channel_id: string | null;
+  escalation_channel_name: string | null;
+}

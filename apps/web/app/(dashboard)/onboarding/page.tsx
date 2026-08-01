@@ -14,6 +14,10 @@ import {
   type SourcesResponse,
 } from "@/components/onboarding/onboarding-sources";
 import { TemplateReadinessPanel } from "@/components/onboarding/template-readiness-panel";
+import { pipelineSummary } from "@/components/onboarding/stage-board";
+import { OnboardingFlowSetup } from "@/components/onboarding/onboarding-flow-setup";
+import { useOnboardingSteps } from "@/hooks/use-onboarding-steps";
+import { useCurrentUser } from "@/hooks/use-user";
 
 interface OnboardingRunRow {
   id: string;
@@ -131,6 +135,14 @@ export default function OnboardingListPage() {
     }
   }
 
+  const { user } = useCurrentUser();
+  const {
+    enabledStages,
+    isConfigured,
+    isLoading: stepsLoading,
+    updateSteps,
+  } = useOnboardingSteps();
+
   const rows = data?.runs ?? [];
   const filtered = useMemo(() => {
     if (filter === "all") return rows;
@@ -150,13 +162,48 @@ export default function OnboardingListPage() {
     [rows],
   );
 
+  // Until the org has picked its steps there is nothing sensible to show —
+  // the runs list, the template panel and "New onboarding" all describe a
+  // pipeline that hasn't been decided yet. `stepsLoading` guards the flash:
+  // the hook reports `configured` optimistically while the request is open.
+  const needsSetup = !stepsLoading && !isConfigured;
+
+  if (needsSetup) {
+    return (
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mb-8">
+          <PageHeader
+            eyebrow="Talent"
+            title="Onboarding"
+            description="Choose the steps your company runs before you start onboarding anyone."
+          />
+        </div>
+        <OnboardingFlowSetup
+          isAdmin={user?.role === "admin"}
+          onSave={updateSteps}
+          onSaved={() => mutate()}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
       <div className="mb-8">
         <PageHeader
           eyebrow="Talent"
           title="Onboarding"
-          description="LOI→ BGV → Appointment + NDA → Policies → Induction — driven by the Onboarding agent."
+          description={
+            <>
+              {pipelineSummary(enabledStages)} — driven by the Onboarding agent.{" "}
+              <Link
+                href="/settings#onboarding-steps"
+                className="font-semibold text-brand underline-offset-2 hover:underline"
+              >
+                Customise steps
+              </Link>
+            </>
+          }
           actions={
             <Button onClick={() => setNewOnboardingOpen(true)}>
               <Plus className="w-4 h-4"/>

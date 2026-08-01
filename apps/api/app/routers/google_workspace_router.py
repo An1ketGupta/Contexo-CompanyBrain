@@ -153,8 +153,6 @@ async def gw_status(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
         "connected": True,
         "email_address": metadata.get("email_address"),
         "has_calendar_read": "https://www.googleapis.com/auth/calendar.readonly" in scopes,
-        "has_calendar_write": "https://www.googleapis.com/auth/calendar.events" in scopes,
-        "has_docs": "https://www.googleapis.com/auth/documents" in scopes,
         "has_gmail_send": "https://www.googleapis.com/auth/gmail.send" in scopes,
         "meet_transcript_folder_ids": metadata.get("meet_transcript_folder_ids") or [],
         "connected_at": row.data.get("created_at"),

@@ -1,7 +1,7 @@
-"""KB-backed synthesis helpers for bespoke agents (Recruiting, Sales, Exec).
+"""KB-backed synthesis helpers for bespoke agents (Recruiting, Sales, Calendar).
 
-The five "big" agents in Agent2 — Recruiting, Sales Enablement (Pre-Call,
-RFP), Executive Assistant — all share two needs:
+The "big" agents in Agent2 — Recruiting, Sales Enablement (Pre-Call, RFP),
+Calendar Intelligence, Action Tracker — all share two needs:
 
   1. Run several focused KB searches concurrently across different facets of
      the task (e.g. "competitor", "pricing", "case studies" for a pre-call

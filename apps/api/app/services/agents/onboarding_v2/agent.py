@@ -74,7 +74,7 @@ Four of these steps are optional per org (BGV, the appointment bundle,
 policies, induction — see `org_config.OnboardingStepConfig`). A disabled step
 writes the same status a real completion would and hands straight to the next
 one, so the diagram above still describes the possible states; a run just
-passes through some of them without stopping. The LOIsteps are not
+passes through some of them without stopping. The LOI steps are not
 optional — everything downstream reads state they write. Order is fixed.
 """
 from __future__ import annotations

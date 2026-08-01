@@ -538,44 +538,6 @@ async def test_generate_requires_a_template_or_a_type(gen_env):
         await gen.generate(org_id=ORG, onboarding_run_id=RUN)
 
 
-# ── Approval ──────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_approve_stamps_who_and_when(gen_env):
-    db, _ = gen_env
-    result = await gen.generate(org_id=ORG, type_key="offer_letter", onboarding_run_id=RUN)
-
-    await gen.approve(
-        org_id=ORG, document_id=result.generated_document_id, actor_user_id="user-9"
-    )
-    row = db.tables["generated_documents"][0]
-    assert row["status"] == "approved"
-    assert row["approved_by"] == "user-9"
-
-
-@pytest.mark.asyncio
-async def test_reject_records_the_reason(gen_env):
-    db, _ = gen_env
-    result = await gen.generate(org_id=ORG, type_key="offer_letter", onboarding_run_id=RUN)
-
-    await gen.reject(
-        org_id=ORG,
-        document_id=result.generated_document_id,
-        actor_user_id="user-9",
-        reason="Wrong salary band",
-    )
-    row = db.tables["generated_documents"][0]
-    assert row["status"] == "rejected"
-    assert row["rejection_reason"] == "Wrong salary band"
-
-
-@pytest.mark.asyncio
-async def test_approving_a_missing_document_raises(gen_env):
-    with pytest.raises(LookupError):
-        await gen.approve(org_id=ORG, document_id="nope", actor_user_id="user-9")
-
-
 @pytest.mark.asyncio
 async def test_generation_is_audited(gen_env):
     db, _ = gen_env

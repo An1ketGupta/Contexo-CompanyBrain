@@ -40,8 +40,6 @@ from app.services.documents.candidates.resolver import (
     resolve_profile,
 )
 from app.services.documents.constants import (
-    AUDIT_DOCUMENT_APPROVED,
-    AUDIT_DOCUMENT_REJECTED,
     AUDIT_GENERATION_COMPLETED,
     AUDIT_GENERATION_FAILED,
     AUDIT_GENERATION_STARTED,
@@ -49,10 +47,8 @@ from app.services.documents.constants import (
     ENTITY_GENERATED_DOCUMENT,
     FORMAT_DOCX,
     FORMAT_PDF,
-    GEN_APPROVED,
     GEN_GENERATED,
     GEN_GENERATION_FAILED,
-    GEN_REJECTED,
     GEN_VALIDATION_FAILED,
     MIME_DOCX,
     MIME_PDF,
@@ -466,110 +462,3 @@ def _unfilled_warnings(filled_docx: bytes) -> list[str]:
         return []
 
 
-# ── HR decisions ───────────────────────────────────────────────────────────
-
-
-async def approve(
-    *, org_id: str, document_id: str, actor_user_id: str
-) -> dict[str, Any]:
-    """Mark a generated document as approved by HR.
-
-    The end of this pipeline. What happens next — signing, sending — belongs to
-    whatever workflow asked for the document, not here.
-    """
-    patch = {
-        "status": GEN_APPROVED,
-        "approved_by": actor_user_id,
-        "approved_at": datetime.now(UTC).isoformat(),
-    }
-
-    def _update() -> dict[str, Any] | None:
-        res = (
-            _svc().table("generated_documents")
-            .update(patch)
-            .eq("id", document_id)
-            .eq("org_id", org_id)
-            .execute()
-        )
-        return (res.data or [None])[0]
-
-    row = await _run(_update)
-    if not row:
-        raise LookupError(document_id)
-
-    await audit.record(
-        org_id=org_id,
-        action=AUDIT_DOCUMENT_APPROVED,
-        entity_type=ENTITY_GENERATED_DOCUMENT,
-        entity_id=document_id,
-        actor_user_id=actor_user_id,
-    )
-    return row
-
-
-async def reject(
-    *, org_id: str, document_id: str, actor_user_id: str, reason: str | None = None
-) -> dict[str, Any]:
-    patch = {
-        "status": GEN_REJECTED,
-        "rejected_by": actor_user_id,
-        "rejected_at": datetime.now(UTC).isoformat(),
-        "rejection_reason": reason,
-    }
-
-    def _update() -> dict[str, Any] | None:
-        res = (
-            _svc().table("generated_documents")
-            .update(patch)
-            .eq("id", document_id)
-            .eq("org_id", org_id)
-            .execute()
-        )
-        return (res.data or [None])[0]
-
-    row = await _run(_update)
-    if not row:
-        raise LookupError(document_id)
-
-    await audit.record(
-        org_id=org_id,
-        action=AUDIT_DOCUMENT_REJECTED,
-        entity_type=ENTITY_GENERATED_DOCUMENT,
-        entity_id=document_id,
-        actor_user_id=actor_user_id,
-        payload={"reason": reason},
-    )
-    return row
-
-
-async def list_generated(
-    *, org_id: str, onboarding_run_id: str | None = None, limit: int = 50
-) -> list[dict[str, Any]]:
-    def _fetch() -> list[dict[str, Any]]:
-        query = (
-            _svc().table("generated_documents")
-            .select("*, doc_templates(name), generated_files(format, storage_path)")
-            .eq("org_id", org_id)
-        )
-        if onboarding_run_id:
-            query = query.eq("onboarding_run_id", onboarding_run_id)
-        return (
-            query.order("created_at", desc=True).limit(limit).execute().data or []
-        )
-
-    return await _run(_fetch)
-
-
-async def get_generated(*, org_id: str, document_id: str) -> dict[str, Any] | None:
-    def _fetch() -> dict[str, Any] | None:
-        res = (
-            _svc().table("generated_documents")
-            .select("*, doc_templates(name), generated_files(format, storage_path)")
-            .eq("id", document_id)
-            .eq("org_id", org_id)
-            .limit(1)
-            .execute()
-        )
-        return (res.data or [None])[0]
-
-    return await _run(_fetch)

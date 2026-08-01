@@ -23,9 +23,9 @@ import {
   ListChecks,
   MessageSquare,
   PieChart,
-  Presentation,
   Settings,
   Megaphone,
+  Send,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -88,7 +88,6 @@ const NAV_SECTIONS: NavSection[] = [
         label: "Document templates",
         icon: FileSignature,
       },
-      { href: "/executive/briefing", label: "Exec briefing", icon: Presentation },
     ],
   },
   {
@@ -110,6 +109,7 @@ const NAV_SECTIONS: NavSection[] = [
     adminOnly: true,
     items: [
       { href: "/admin/support", label: "Support", icon: Inbox, adminOnly: true },
+      { href: "/admin/sales", label: "Sales", icon: Send, adminOnly: true },
       { href: "/admin/moderation", label: "Moderation", icon: Shield, adminOnly: true },
       { href: "/admin/announcements", label: "Announcements", icon: Megaphone, adminOnly: true },
       { href: "/admin/feedback", label: "Flagged feedback", icon: ThumbsDown, adminOnly: true },

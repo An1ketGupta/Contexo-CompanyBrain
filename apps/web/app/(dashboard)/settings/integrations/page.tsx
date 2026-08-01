@@ -98,7 +98,6 @@ interface GoogleWorkspaceStatus {
   connected: boolean;
   email_address?: string | null;
   has_calendar_read?: boolean;
-  has_docs?: boolean;
   meet_transcript_folder_ids?: string[];
   connected_at?: string | null;
 }
@@ -1062,7 +1061,7 @@ function GoogleWorkspaceCard({
       <Card
         icon={<CalendarDays className="h-4 w-4" />}
         title="Google Workspace (Calendar + Docs)"
-        description="Syncs your calendar for meeting prep briefs and lets the assistant create Google Docs. Connect is per-user — each teammate connects their own account."
+        description="Syncs your calendar for meeting prep briefs. Connect is per-user — each teammate connects their own account."
       >
         <Button size="sm" onClick={startConnect}>Connect Google Workspace</Button>
       </Card>

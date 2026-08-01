@@ -98,17 +98,25 @@ class OnboardingStepConfig:
     `{"bgv": true, "appointment_bundle": true, "policies": true,
     "induction": true}`.
 
-    LOIis deliberately absent: it is the one mandatory step, and every
-    later step reads state the LOIstep writes. The four here can each be
+    LOI is deliberately absent: it is the one mandatory step, and every
+    later step reads state the LOI step writes. The four here can each be
     turned off independently — the agent skips straight to the next enabled
     step rather than parking on one the org doesn't run. Order is fixed;
     this is a set of on/off switches, not a workflow builder.
+
+    `configured` is not a step. It records whether the org has ever saved a
+    choice, which the UI needs to tell "we run everything because they said so"
+    apart from "we run everything because nobody has decided yet" — the two
+    look identical in the four flags. It gates a first-run setup screen only;
+    the agent ignores it and runs the flags either way, so an org that never
+    finishes setup still onboards on the defaults.
     """
 
     bgv: bool = DEFAULT_STEP_ENABLED
     appointment_bundle: bool = DEFAULT_STEP_ENABLED
     policies: bool = DEFAULT_STEP_ENABLED
     induction: bool = DEFAULT_STEP_ENABLED
+    configured: bool = False
 
     @classmethod
     def default(cls) -> OnboardingStepConfig:
@@ -192,7 +200,8 @@ def _parse_steps(meta: dict[str, Any] | None) -> OnboardingStepConfig:
     if not isinstance(raw, dict):
         return OnboardingStepConfig.default()
     return OnboardingStepConfig(
-        **{key: _as_bool(raw.get(key)) for key in STEP_KEYS}
+        **{key: _as_bool(raw.get(key)) for key in STEP_KEYS},
+        configured=True,
     )
 
 
@@ -377,4 +386,7 @@ async def update_onboarding_steps(
 
     saved_meta = await asyncio.to_thread(_run)
     invalidate(org_id)
-    return OnboardingStepConfig(**saved_meta["onboarding_v2_steps"])
+    # Writing the key is what marks the org configured — there is no separate
+    # flag on disk, so saving even an all-defaults choice dismisses the setup
+    # screen, which is the point of letting them accept the defaults.
+    return OnboardingStepConfig(**saved_meta["onboarding_v2_steps"], configured=True)

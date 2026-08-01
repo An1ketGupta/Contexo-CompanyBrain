@@ -73,6 +73,9 @@ from app.routers import (
     organizations as organizations_router,
 )
 from app.routers import (
+    sales as sales_router,
+)
+from app.routers import (
     support as support_router,
 )
 from app.routers import (
@@ -119,9 +122,6 @@ from app.routers import (
 )
 from app.routers import (
     admin_recruiting as admin_recruiting_router,
-)
-from app.routers import (
-    executive_assistant as executive_assistant_router,
 )
 from app.routers import (
     calendar_meetings as calendar_meetings_router,
@@ -263,6 +263,7 @@ app.include_router(approvals_router.router)
 app.include_router(compliance_router.router)
 app.include_router(support_router.router)
 app.include_router(support_mailbox_router.router)
+app.include_router(sales_router.router)
 app.include_router(notifications_router.router)
 app.include_router(internal_router.router)
 app.include_router(scheduled_reports_router.router)
@@ -275,7 +276,6 @@ app.include_router(document_templates_router.router)
 app.include_router(recruiting_router.router)
 app.include_router(ats_integrations_router.router)
 app.include_router(admin_recruiting_router.router)
-app.include_router(executive_assistant_router.router)
 app.include_router(calendar_meetings_router.router)
 app.include_router(action_items_router.router)
 app.include_router(admin_quality_router.router)

@@ -2,13 +2,9 @@
 
 Surface:
   list_upcoming_events(org_id, user_id, hours_ahead) -> list[event]
-  create_event(org_id, user_id, ...) -> {event_id, url}
 
-The Calendar Intelligence feature only needs to *read* events (calendar.readonly).
-The Executive Assistant's optional follow-up scheduling needs to write, which
-needs the broader `calendar.events` scope — we ship with read-only for v1 and
-return PermissionError on write so the UI can prompt for re-consent rather
-than silently failing.
+Read-only. The Calendar Intelligence feature only needs to *read* events, so
+we request calendar.readonly and never the broader calendar.events scope.
 """
 from __future__ import annotations
 
@@ -23,7 +19,6 @@ from app.services.integrations.google_workspace import get_user_token
 log = logging.getLogger(__name__)
 
 _CAL_API = "https://www.googleapis.com/calendar/v3"
-_CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 
 
 async def list_upcoming_events(
@@ -122,54 +117,3 @@ def _extract_meeting_url(event: dict[str, Any]) -> str | None:
     return m.group(0) if m else None
 
 
-async def create_event(
-    *,
-    org_id: str,
-    user_id: str,
-    title: str,
-    description: str,
-    start: datetime,
-    end: datetime,
-    attendee_emails: list[str],
-    calendar_id: str = "primary",
-) -> dict[str, Any]:
-    """POST /calendars/{calendarId}/events. Requires the broader
-    calendar.events scope; raises PermissionError if missing so the UI can
-    drive a re-consent."""
-    token = await get_user_token(org_id=org_id, user_id=user_id)
-    if not token:
-        raise PermissionError("google_workspace_not_connected")
-
-    body = {
-        "summary": title[:255],
-        "description": description,
-        "start": {"dateTime": start.isoformat()},
-        "end": {"dateTime": end.isoformat()},
-        "attendees": [{"email": e} for e in attendee_emails if e],
-    }
-
-    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
-        resp = await client.post(
-            f"{_CAL_API}/calendars/{calendar_id}/events",
-            json=body,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            params={"sendUpdates": "all"},
-        )
-
-    if resp.status_code == 401:
-        raise PermissionError("google_calendar_unauthorized")
-    if resp.status_code == 403:
-        # 403 with insufficientPermissions almost always means the user
-        # consented to calendar.readonly but not calendar.events. Distinct
-        # error code so the UI prompts re-auth instead of retrying.
-        raise PermissionError("google_calendar_scope_missing")
-    if resp.status_code >= 400:
-        raise RuntimeError(
-            f"google_calendar_create_failed: {resp.status_code} {resp.text[:200]}"
-        )
-
-    ev = resp.json() or {}
-    return {"event_id": ev.get("id"), "url": ev.get("htmlLink")}

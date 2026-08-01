@@ -1,25 +1,23 @@
-"""Google Workspace per-user OAuth (Calendar + Docs + Drive.file + Gmail.send).
+"""Google Workspace per-user OAuth (Calendar + Drive.file + Gmail.send).
 
-A single consent screen requests all four scopes so the Executive Assistant
-(#25) and Calendar Intelligence (#51) features don't each need their own
-re-consent loop. Persisted to the unified `integrations` table with
-provider='google_workspace' and scope_user_id = user's id.
+A single consent screen requests all scopes so Calendar Intelligence (#51) and
+the Meet-transcript ingest don't each need their own re-consent loop. Persisted
+to the unified `integrations` table with provider='google_workspace' and
+scope_user_id = user's id.
 
 Why a fourth Google integration (we already have drive + gmail per-provider):
     The legacy Drive integration is *org-scoped*; the legacy Gmail integration
     is per-user but only carries gmail.send. Calendar reads MUST be per-user
-    (people have private calendars), and Google Docs creation needs to land
-    in the user's own Drive. Stacking these on existing tables would force
-    schema changes; landing in the unified table keeps tomorrow's scope
+    (people have private calendars). Stacking these on existing tables would
+    force schema changes; landing in the unified table keeps tomorrow's scope
     additions to a single ALTER on `scopes`.
 
 Scope set:
     - calendar.readonly          read upcoming meetings
-    - documents                  create + edit Google Docs
     - drive.file                 limited Drive access — only files/folders the
                                   user creates through us, or explicitly grants
                                   via the Picker (see google_meet_transcripts.py)
-    - gmail.send                 send the briefing email
+    - gmail.send                 send outbound mail on the user's behalf
     - openid + email + profile   resolve the user's email
 
 We deliberately do NOT request drive.readonly (blanket "see and download all
@@ -30,9 +28,9 @@ google_meet_transcripts.py. Users who never pick a folder simply don't get
 Meet-transcript auto-ingest; everything else keeps working.
 
 This module mirrors the shape of services/integrations/gmail.py: raw httpx,
-no google-api-python-client, refresh handled inline. The Docs/Calendar API
-calls go through the dedicated google_docs.py / google_calendar.py modules
-which import `get_user_token()` from here.
+no google-api-python-client, refresh handled inline. The Calendar API calls go
+through the dedicated google_calendar.py module which imports
+`get_user_token()` from here.
 """
 from __future__ import annotations
 
@@ -53,7 +51,6 @@ PROVIDER = "google_workspace"
 
 _SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
-    "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/drive.file",
     "https://www.googleapis.com/auth/gmail.send",
     "openid",
@@ -132,8 +129,6 @@ async def store_credentials(
     granted = (token_payload.get("scope") or "").split()
     if "https://www.googleapis.com/auth/calendar.readonly" not in granted:
         raise RuntimeError("calendar_scope_not_granted")
-    if "https://www.googleapis.com/auth/documents" not in granted:
-        raise RuntimeError("docs_scope_not_granted")
 
     userinfo = await _fetch_userinfo(token_payload["access_token"])
     email_address = userinfo.get("email")

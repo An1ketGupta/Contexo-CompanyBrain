@@ -34,7 +34,7 @@ export type StageKey =
   | "induction";
 
 /**
- * The stages an org actually runs. Every stage but LOIcan be switched off in
+ * The stages an org actually runs. Every stage but LOI can be switched off in
  * settings, and a run then passes through it without stopping — so a disabled
  * stage is dropped from the board rather than shown as permanently "not
  * started". Defaults to all of them, which is what a caller that hasn't loaded
@@ -53,29 +53,40 @@ const ALL_STAGES: EnabledStages = new Set<StageKey>([
 const STAGES: {
   key: StageKey;
   label: string;
+  /** Abbreviated form, for running the pipeline inline as one line of prose. */
+  short: string;
   doneAt: (r: StageBoardRun) => string | null;
 }[] = [
   {
     key: "loi",
     label: "LOI",
+    short: "LOI",
     doneAt: (r) => r.loi_signed_at ?? r.loi_sent_to_hr_at,
   },
   {
     key: "bgv",
     label: "Background verification",
+    short: "BGV",
     doneAt: (r) => r.bgv_completed_at ?? r.bgv_sent_at,
   },
   {
     key: "appointment",
     label: "Appointment + NDA",
+    short: "Appointment + NDA",
     doneAt: (r) => r.appointment_sent_at,
   },
   {
     key: "policies",
     label: "Policies",
+    short: "Policies",
     doneAt: (r) => r.policies_acknowledged_at ?? r.policies_assigned_at,
   },
-  { key: "induction", label: "Induction", doneAt: (r) => r.induction_sent_at },
+  {
+    key: "induction",
+    label: "Induction",
+    short: "Induction",
+    doneAt: (r) => r.induction_sent_at,
+  },
 ];
 
 /** Every non-terminal status, mapped to the stage it belongs to. */
@@ -120,11 +131,18 @@ const GRID_COLUMNS: Record<number, string> = {
   5: "lg:grid-cols-5",
 };
 
-/** The stages this org runs, in pipeline order. LOIis never optional. */
+/** The stages this org runs, in pipeline order. LOI is never optional. */
 export function visibleStages(
   enabled: EnabledStages = ALL_STAGES,
 ): typeof STAGES {
   return STAGES.filter((s) => s.key === "loi" || enabled.has(s.key));
+}
+
+/** The org's pipeline as one arrow-joined line, e.g. `LOI → Policies`. */
+export function pipelineSummary(enabled: EnabledStages = ALL_STAGES): string {
+  return visibleStages(enabled)
+    .map((s) => s.short)
+    .join(" → ");
 }
 
 /**

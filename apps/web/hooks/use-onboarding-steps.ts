@@ -5,7 +5,7 @@ import useSWR, { mutate as globalMutate } from "swr";
 import type { StageKey } from "@/components/onboarding/stage-board";
 
 /**
- * Which optional steps the onboarding pipeline runs for this workspace. LOIis
+ * Which optional steps the onboarding pipeline runs for this workspace. LOI is
  * absent because it is never optional.
  */
 export interface OnboardingSteps {
@@ -13,7 +13,19 @@ export interface OnboardingSteps {
   appointment_bundle: boolean;
   policies: boolean;
   induction: boolean;
+  /** False until the org saves a choice — gates the first-run setup screen. */
+  configured: boolean;
 }
+
+/** The four togglable steps, in pipeline order. */
+export const STEP_KEYS = [
+  "bgv",
+  "appointment_bundle",
+  "policies",
+  "induction",
+] as const;
+
+export type StepKey = (typeof STEP_KEYS)[number];
 
 const KEY = "/api/organizations/me/onboarding-steps";
 
@@ -22,6 +34,7 @@ const ALL_ON: OnboardingSteps = {
   appointment_bundle: true,
   policies: true,
   induction: true,
+  configured: true,
 };
 
 const fetcher = async (url: string): Promise<OnboardingSteps> => {
@@ -47,9 +60,13 @@ export function useOnboardingSteps() {
 
   // While loading, assume the full pipeline — the same thing the board
   // defaults to, so it doesn't redraw from a wrong shape to a right one.
+  // `configured: true` in that fallback matters as much: it keeps the setup
+  // screen from flashing over the runs list on every page load.
   const steps = data ?? ALL_ON;
 
-  async function updateSteps(patch: Partial<OnboardingSteps>): Promise<OnboardingSteps> {
+  async function updateSteps(
+    patch: Partial<Record<StepKey, boolean>>,
+  ): Promise<OnboardingSteps> {
     const res = await fetch(KEY, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -60,13 +77,14 @@ export function useOnboardingSteps() {
       throw new Error(detail || `Failed (${res.status})`);
     }
     const next: OnboardingSteps = await res.json();
-    await globalMutate(KEY);
+    await globalMutate(KEY, next, { revalidate: false });
     return next;
   }
 
   return {
     steps,
     enabledStages: stagesFromSteps(steps),
+    isConfigured: steps.configured,
     isLoading,
     error,
     updateSteps,
