@@ -867,11 +867,6 @@ export default function RequisitionDetailPage() {
                             />
                             <PlatformIcon platform={p.value} />
                             {p.label}
-                            {atsConnectionStatus && !isAtsConnected(p.value) && (
-                              <span className="text-[10px] font-normal opacity-70">
-                                (not connected)
-                              </span>
-                            )}
                             {active && (
                               <Check className="h-3.5 w-3.5 text-brand" aria-hidden />
                             )}
@@ -882,33 +877,6 @@ export default function RequisitionDetailPage() {
                   </div>
                 );
               })}
-              {/* Proactive nudge — catches "not connected" before the recruiter
-                  hits Publish and gets an opaque per-platform failure back. */}
-              {atsConnectionStatus &&
-                selectedAtsList.some((p) => !isAtsConnected(p)) && (
-                  <div className="rounded-xl border border-amber/30 bg-amber-tint px-3 py-2 text-sm">
-                    <p className="font-bold text-amber-ink">
-                      {selectedAtsList
-                        .filter((p) => !isAtsConnected(p))
-                        .map((p) => platformLabel(p))
-                        .join(", ")}{" "}
-                      {selectedAtsList.filter((p) => !isAtsConnected(p)).length === 1
-                        ? "isn't"
-                        : "aren't"}{" "}
-                      connected yet
-                    </p>
-                    <p className="mt-1 text-xs text-amber-ink/80">
-                      Publishing to a disconnected destination will fail. Connect
-                      it first in Settings → Integrations.
-                    </p>
-                    <a
-                      href="/settings/integrations"
-                      className="mt-2 inline-block text-xs font-bold text-amber-ink underline hover:no-underline"
-                    >
-                      Open Settings → Integrations →
-                    </a>
-                  </div>
-                )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="location-pub">Location</Label>
@@ -1111,7 +1079,7 @@ export default function RequisitionDetailPage() {
                         return;
                       }
                       toast.success("Naukri taxonomy refreshed");
-                      mutateAtsConnectionStatus();
+                      mutateNaukriStatus();
                     }}
                     className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-amber underline hover:no-underline"
                   >
@@ -1209,22 +1177,8 @@ export default function RequisitionDetailPage() {
           )}
 
           {publishError && (
-            <div className="mt-4 space-y-2 rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm">
-              {(() => {
-                const segments = parseJoinedAtsError(publishError);
-                if (segments.some((s) => s.platform === null)) {
-                  return (
-                    <p className="font-medium text-destructive">{publishError}</p>
-                  );
-                }
-                return segments.map((s, i) => (
-                  <AtsConnectFailureNotice
-                    key={i}
-                    platform={s.platform as AtsPlatform}
-                    error={s.error}
-                  />
-                ));
-              })()}
+            <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive-soft p-3 text-sm font-medium text-destructive">
+              {publishError}
             </div>
           )}
 
@@ -1301,8 +1255,8 @@ export default function RequisitionDetailPage() {
                         {platformLabel(p.platform)} — publish failed
                       </span>
                     </div>
-                    <div className="mt-2 text-sm">
-                      <AtsConnectFailureNotice platform={p.platform} error={p.error} />
+                    <div className="mt-2 break-all text-sm text-destructive">
+                      {p.error}
                     </div>
                   </div>
                 ),
@@ -1444,12 +1398,26 @@ export default function RequisitionDetailPage() {
 
           {data.linkedin_search_urls?.length > 0 && (
             <section className="space-y-3">
-              <SectionHeading icon={Search}>
-                LinkedIn search shortcuts
-              </SectionHeading>
-              <div className="rounded-2xl border border-border bg-card p-4">
+              <div className="flex items-end justify-between gap-3">
+                <SectionHeading icon={Search}>
+                  LinkedIn search shortcuts
+                </SectionHeading>
+                <span className="rounded-full border border-brand/15 bg-brand-tint px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-brand">
+                  {data.linkedin_search_urls.length} curated links
+                </span>
+              </div>
+              <div className="rounded-3xl border border-border/70 bg-gradient-to-br from-card via-card to-muted/25 p-4 shadow-sm">
+                <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                  <span className="rounded-full border border-border bg-background/80 px-2 py-0.5 font-medium text-foreground">
+                    Prebuilt queries
+                  </span>
+                  <span>
+                    Open the exact search in LinkedIn, then copy the URL when
+                    you need to reuse it.
+                  </span>
+                </div>
                 <TooltipProvider delayDuration={150}>
-                  <ul className="space-y-1 text-sm">
+                  <ul className="grid gap-3 text-sm">
                     {data.linkedin_search_urls.map((s, i) => (
                       <LinkedinSearchRow key={i} search={s} />
                     ))}
@@ -1534,37 +1502,48 @@ function LinkedinSearchRow({ search }: { search: LinkedinSearch }) {
   };
 
   return (
-    <li className="group flex items-start gap-2 rounded border border-transparent p-2 transition hover:border-border hover:bg-accent/30">
-      <div className="min-w-0 flex-1">
-        <a
-          href={search.url}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1.5 text-sm font-semibold text-foreground hover:text-brand hover:underline"
-        >
-          {search.label}
-          <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
-        </a>
-      </div>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 shrink-0 opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100"
-            onClick={copy}
-            aria-label="Copy LinkedIn search URL"
+    <li className="group rounded-2xl border border-border/70 bg-background/80 p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/25 hover:bg-accent/20 hover:shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-brand/10 bg-brand-tint text-brand">
+          <ExternalLink className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <a
+            href={search.url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-foreground transition hover:text-brand hover:underline"
           >
-            {copied ? (
-              <Check className="h-3.5 w-3.5 text-success" />
-            ) : (
-              <Copy className="h-3.5 w-3.5" />
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{copied ? "Copied" : "Copy URL"}</TooltipContent>
-      </Tooltip>
+            {search.label}
+            <ExternalLink className="h-3.5 w-3.5 text-muted-foreground transition group-hover:text-brand" />
+          </a>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {search.description}
+          </p>
+          <p className="mt-2 truncate rounded-lg border border-border bg-muted/35 px-2.5 py-1 font-mono text-[10px] text-muted-foreground">
+            {search.url}
+          </p>
+        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 rounded-xl border border-border/70 bg-background/80 opacity-70 transition hover:border-brand/20 hover:bg-background group-hover:opacity-100 focus-visible:opacity-100"
+              onClick={copy}
+              aria-label="Copy LinkedIn search URL"
+            >
+              {copied ? (
+                <Check className="h-3.5 w-3.5 text-success" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{copied ? "Copied" : "Copy URL"}</TooltipContent>
+        </Tooltip>
+      </div>
     </li>
   );
 }
@@ -1644,66 +1623,6 @@ const PLATFORM_STYLE: Record<
 
 function platformLabel(p: PlatformKey): string {
   return PLATFORM_STYLE[p]?.label ?? p;
-}
-
-// Per-platform publish failures come back as PermissionError("<platform>_not_
-// connected") or "ats_not_connected_or_unauthorized: ..." (see
-// recruiting_agent._publish_one_ats) — both mean "no credential on file",
-// distinct from a transient failure (e.g. mock/ATS server unreachable).
-function isAtsConnectionError(errText: string | null | undefined): boolean {
-  if (!errText) return false;
-  return /not_connected|unauthorized/i.test(errText);
-}
-
-function friendlyAtsFailureMessage(
-  platform: AtsPlatform,
-  errText: string | null | undefined,
-): string {
-  return isAtsConnectionError(errText)
-    ? `${platformLabel(platform)} isn't connected yet.`
-    : `${platformLabel(platform)} couldn't be reached — the publish failed.`;
-}
-
-// Splits the backend's "; "-joined all-platforms-failed message (built in
-// recruiting_agent.publish_requisition when every ATS fails) back into
-// per-platform pieces so the UI can render friendly copy per destination
-// instead of dumping the raw "platform: code: detail" string.
-function parseJoinedAtsError(
-  msg: string,
-): { platform: AtsPlatform | null; error: string }[] {
-  return msg.split("; ").map((segment) => {
-    const idx = segment.indexOf(": ");
-    if (idx === -1) return { platform: null, error: segment };
-    const candidate = segment.slice(0, idx);
-    const known = POSTING_DESTINATIONS.some((p) => p.value === candidate);
-    return known
-      ? { platform: candidate as AtsPlatform, error: segment.slice(idx + 1) }
-      : { platform: null, error: segment };
-  });
-}
-
-function AtsConnectFailureNotice({
-  platform,
-  error,
-}: {
-  platform: AtsPlatform;
-  error: string | null | undefined;
-}) {
-  return (
-    <div>
-      <p className="font-medium text-destructive">
-        {friendlyAtsFailureMessage(platform, error)}
-      </p>
-      {isAtsConnectionError(error) && (
-        <a
-          href="/settings/integrations"
-          className="mt-1 inline-block text-xs font-bold text-destructive underline hover:no-underline"
-        >
-          Connect {platformLabel(platform)} in Settings →
-        </a>
-      )}
-    </div>
-  );
 }
 
 function PlatformIcon({ platform }: { platform: PlatformKey }) {
