@@ -80,7 +80,7 @@ const PROVIDER_COPY: Record<
     name: "Naukri.com",
     kind: "job_board",
     description:
-      "Broadcast openings to Naukri (India's largest job portal) and auto-generate Resdex candidate-search shortcuts. Requires an Info Edge HotVacancy API contract.",
+      "Broadcast openings to Naukri and get Resdex candidate-search shortcuts.",
   },
 };
 

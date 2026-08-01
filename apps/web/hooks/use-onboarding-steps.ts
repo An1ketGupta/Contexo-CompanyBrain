@@ -88,5 +88,7 @@ export function useOnboardingSteps() {
     isLoading,
     error,
     updateSteps,
+    /** Re-read after something else changed the flow — e.g. the catalog editor. */
+    refresh: () => globalMutate(KEY),
   };
 }

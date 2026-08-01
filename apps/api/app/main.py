@@ -147,6 +147,9 @@ from app.routers import (
 from app.routers import (
     onboarding_public as onboarding_public_router,
 )
+from app.routers import (
+    onboarding_catalog as onboarding_catalog_router,
+)
 from app.mcp import router as mcp_router
 
 
@@ -284,6 +287,7 @@ app.include_router(agent2_integrations_router.router)
 app.include_router(channels_router.router)
 app.include_router(onboarding_v2_router.router)
 app.include_router(onboarding_public_router.router)
+app.include_router(onboarding_catalog_router.router)
 app.include_router(mcp_router)
 
 # Inngest serve endpoint — webhook the Inngest server hits to invoke our functions.

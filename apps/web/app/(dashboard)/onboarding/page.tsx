@@ -140,7 +140,7 @@ export default function OnboardingListPage() {
     enabledStages,
     isConfigured,
     isLoading: stepsLoading,
-    updateSteps,
+    refresh: mutateSteps,
   } = useOnboardingSteps();
 
   const rows = data?.runs ?? [];
@@ -180,8 +180,10 @@ export default function OnboardingListPage() {
         </div>
         <OnboardingFlowSetup
           isAdmin={user?.role === "admin"}
-          onSave={updateSteps}
-          onSaved={() => mutate()}
+          onSaved={() => {
+            mutate();
+            mutateSteps();
+          }}
         />
       </div>
     );

@@ -251,6 +251,29 @@ async def onboarding_v2_resume(ctx: inngest.Context) -> dict[str, Any]:
     return await _drive_agent(run_id=run_id, org_id=org_id)
 
 
+@_inngest_client.create_function(
+    fn_id="onboarding-v2-collect-submitted",
+    trigger=inngest.TriggerEvent(event="onboarding_v2/collect_submitted"),
+    retries=2,
+    concurrency=[
+        inngest.Concurrency(limit=1, key="event.data.onboarding_run_id", scope="fn"),
+    ],
+)
+async def onboarding_v2_collect_submitted(ctx: inngest.Context) -> dict[str, Any]:
+    """The candidate finished a document-collection step.
+
+    Fired only once every required document is in, so this re-drives a run
+    that has been parked at that step's gate — the gate now opens and the
+    pipeline picks up wherever the status ladder left it.
+    """
+    data = ctx.event.data
+    run_id = data.get("onboarding_run_id")
+    org_id = data.get("org_id")
+    if not run_id or not org_id:
+        return {"status": "skipped"}
+    return await _drive_agent(run_id=run_id, org_id=org_id)
+
+
 # ── BGV reminders cron — runs daily, nudges references who haven't responded ──
 
 @_inngest_client.create_function(
@@ -527,6 +550,7 @@ FUNCTIONS = [
     onboarding_v2_esign_completed,
     onboarding_v2_esign_signer_turn,
     onboarding_v2_resume,
+    onboarding_v2_collect_submitted,
     onboarding_v2_bgv_reminders,
     onboarding_v2_candidate_refs_reminders,
     onboarding_v2_esign_timeout_watch,

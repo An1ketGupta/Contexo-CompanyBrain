@@ -41,7 +41,8 @@ class _Query:
                 self._embed.append(part.split("(")[0].strip())
         return self
 
-    def insert(self, row: dict[str, Any]) -> "_Query":
+    def insert(self, row: dict[str, Any] | list[dict[str, Any]]) -> "_Query":
+        """A single row or a batch, mirroring PostgREST."""
         self._op = "insert"
         self._payload = row
         return self
@@ -113,12 +114,21 @@ class _Query:
         rows = self._store.tables.setdefault(self._table, [])
 
         if self._op == "insert":
-            row = dict(self._payload)
-            row.setdefault("id", str(uuid.uuid4()))
-            for column in ("created_at", "updated_at"):
-                row.setdefault(column, "2026-01-01T00:00:00Z")
-            rows.append(row)
-            return _Result([dict(row)])
+            payload = (
+                self._payload
+                if isinstance(self._payload, list)
+                else [self._payload]
+            )
+            inserted: list[dict[str, Any]] = []
+            for candidate in payload:
+                row = dict(candidate)
+                row.setdefault("id", str(uuid.uuid4()))
+                for column in ("created_at", "updated_at"):
+                    row.setdefault(column, "2026-01-01T00:00:00Z")
+                self._store.enforce_unique(self._table, row)
+                rows.append(row)
+                inserted.append(dict(row))
+            return _Result(inserted)
 
         matched = [r for r in rows if self._matches(r)]
 
@@ -156,11 +166,36 @@ class FakeSupabase:
         ("doc_templates", "document_types"): "document_type_id",
     }
 
+    # Unique constraints worth modelling, because callers depend on them
+    # firing. The onboarding step catalog makes seeding and per-run
+    # materialization idempotent by letting the loser of a race hit the
+    # constraint and re-read; a fake that accepted duplicates would report
+    # those paths as working while the real database rejected them.
+    UNIQUE_KEYS = {
+        "onboarding_step_defs": ("org_id", "step_key"),
+        "onboarding_run_steps": ("run_id", "step_key"),
+        "onboarding_collect_items": ("step_def_id", "item_key"),
+        "onboarding_collect_submissions": ("run_step_id", "item_key"),
+    }
+
     def __init__(self, tables: dict[str, list[dict[str, Any]]] | None = None):
         self.tables: dict[str, list[dict[str, Any]]] = tables or {}
 
     def table(self, name: str) -> _Query:
         return _Query(self, name)
+
+    def enforce_unique(self, table: str, row: dict[str, Any]) -> None:
+        """Raise the way Postgres would on a duplicate key."""
+        columns = self.UNIQUE_KEYS.get(table)
+        if not columns:
+            return
+        key = tuple(row.get(c) for c in columns)
+        for existing in self.tables.get(table, []):
+            if tuple(existing.get(c) for c in columns) == key:
+                raise ValueError(
+                    f'duplicate key value violates unique constraint on '
+                    f'{table}{columns}'
+                )
 
     def resolve_embed(
         self, parent: str, embed: str, row: dict[str, Any]

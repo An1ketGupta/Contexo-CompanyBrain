@@ -40,7 +40,9 @@ from app.models.onboarding_v2 import (
     SourcesResponse,
     StartOnboardingRequest,
 )
+from app.services.agents.onboarding_v2 import catalog as ob_catalog
 from app.services.agents.onboarding_v2 import storage as ob_storage
+from app.services.agents.onboarding_v2.pre_join import ensure_pre_join_user
 from app.services.documents import schema as doc_schema
 from app.services.documents import text_edit
 from app.services.documents.constants import STATUS_CONFIRMED
@@ -170,6 +172,32 @@ async def start_onboarding(
 
     inserted = await asyncio.to_thread(_insert_run)
     run_id = inserted["id"]
+
+    # Snapshot the org's step catalog onto the run before the agent is kicked,
+    # so the run is pinned to the pipeline as it was configured at hire time —
+    # not as it looks whenever the first Inngest worker happens to pick it up.
+    await ob_catalog.materialize_run_steps(org_id=org_id, run_id=run_id)
+
+    # Give the candidate an account now rather than when the LOI goes out.
+    # A document-collection step can be positioned anywhere in the pipeline,
+    # and the portal it sends them to is authenticated — so the account has to
+    # exist before the first step that might ask them for something, not
+    # partway down a sequence the org is free to reorder.
+    #
+    # Best-effort, exactly as it was at its old call site: a mail or auth blip
+    # must not fail the hire. `ensure_pre_join_user` is idempotent, so the
+    # LOI step still retries this if it didn't take here.
+    try:
+        await ensure_pre_join_user(
+            org_id=org_id,
+            run_id=run_id,
+            candidate_email=str(body.candidate_email),
+            candidate_name=body.candidate_name,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "onboarding_v2.pre_join_provision_failed run=%s err=%s", run_id, exc
+        )
 
     # Bulk-insert references.
     ref_rows = [

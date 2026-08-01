@@ -1503,7 +1503,7 @@ export function ZoomCard({
       <Card
         icon={<Video className="h-4 w-4" />}
         title="Zoom"
-        description="Auto-ingest cloud-recording transcripts the moment Zoom finishes processing them — routed through decision/action-item extraction, not just raw text. Each teammate opts in individually; transcripts stay private to their host."
+        description="Ingest meeting transcripts the moment Zoom finishes processing them.Transcripts stay private to their host."
       >
         <Button size="sm" onClick={() => startConnect("/api/integrations/zoom/connect")}>
           Connect Zoom

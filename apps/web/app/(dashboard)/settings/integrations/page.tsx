@@ -960,7 +960,7 @@ function GmailCard({
       <Card
         icon={<Mail className="h-4 w-4" />}
         title="Gmail (send)"
-        description="Send AI-drafted emails directly from your own Gmail address. Connect is per-user — each teammate connects their own mailbox. Inbound customer support mail is handled separately, under Support settings."
+        description="Send Emails directly from your own Gmail address. Each teammate connects their own mailbox."
       >
         <Button size="sm" onClick={startConnect}>Connect Gmail</Button>
       </Card>

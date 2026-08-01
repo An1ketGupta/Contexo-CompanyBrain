@@ -58,6 +58,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCurrentUser } from "@/hooks/use-user";
 import { useOrgPersonas } from "@/hooks/use-org-personas";
+import { StepCatalogEditor } from "@/components/onboarding/step-catalog-editor";
 import { createClient } from "@/lib/supabase/client";
 import { networkError, parseApiError, reportApiError } from "@/lib/errors";
 
@@ -1830,137 +1831,18 @@ function SharingCard({ canEdit }: { canEdit: boolean }) {
 
 // ── Onboarding pipeline steps ───────────────────────────────────────────────
 
-interface OnboardingStepSettings {
-  bgv: boolean;
-  appointment_bundle: boolean;
-  policies: boolean;
-  induction: boolean;
-}
-
-const ONBOARDING_STEPS: {
-  key: keyof OnboardingStepSettings;
-  label: string;
-  description: string;
-}[] = [
-  {
-    key: "bgv",
-    label: "Background verification",
-    description:
-      "Ask the candidate for references, then email each one a verification form.",
-  },
-  {
-    key: "appointment_bundle",
-    label: "Appointment letter + NDA",
-    description:
-      "Generate both documents from your templates for HR to review and send.",
-  },
-  {
-    key: "policies",
-    label: "Policy acknowledgement",
-    description:
-      "Assign the policies that require acknowledgement and wait for the candidate to sign off.",
-  },
-  {
-    key: "induction",
-    label: "Induction",
-    description: "Generate the induction pack and send it to the candidate.",
-  },
-];
-
 function OnboardingStepsCard({ canEdit }: { canEdit: boolean }) {
-  const { data, error, isLoading, mutate } = useSWR<OnboardingStepSettings>(
-    "/api/organizations/me/onboarding-steps",
-    jsonFetcher,
-    { revalidateOnFocus: false },
-  );
-  const [busy, setBusy] = useState(false);
-
-  const toggle = async (key: keyof OnboardingStepSettings, next: boolean) => {
-    if (!data) return;
-    const previous = data;
-    await mutate({ ...data, [key]: next }, { revalidate: false });
-    setBusy(true);
-    try {
-      const res = await fetch("/api/organizations/me/onboarding-steps", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [key]: next }),
-      });
-      if (!res.ok) throw await parseApiError(res);
-      await mutate((await res.json()) as OnboardingStepSettings, {
-        revalidate: false,
-      });
-      toast.success("Onboarding steps updated.");
-    } catch (err) {
-      await mutate(previous, { revalidate: false });
-      reportApiError(err as Awaited<ReturnType<typeof parseApiError>>);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <Card
       id="onboarding-steps"
-      title="Onboarding steps"
+      title="Onboarding flow"
       description={
         canEdit
-          ? "Which steps your onboarding runs. Turning one off only affects runs that haven't reached it yet."
-          : "Which steps your onboarding runs. Only admins can change this."
+          ? "The steps your onboarding runs, in order. Changes only affect runs that haven't reached the step yet."
+          : "The steps your onboarding runs. Only admins can change this."
       }
     >
-      {isLoading ? (
-        <Skeleton className="h-40" />
-      ) : error || !data ? (
-        <p className="text-sm text-destructive-ink">
-          Couldn&apos;t load onboarding steps. Try again later.
-        </p>
-      ) : (
-        <div className="space-y-5">
-          <div className="rounded-xl border border-dashed border-border bg-muted/30 p-3">
-            <p className="text-sm font-medium text-foreground">
-              Letter of intent
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Always runs first — every later step builds on it.
-            </p>
-          </div>
-
-          {ONBOARDING_STEPS.map((step) => (
-            <div
-              key={step.key}
-              className="flex items-center justify-between gap-4"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-foreground">
-                  {step.label}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {step.description}
-                </p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={data[step.key]}
-                aria-label={step.label}
-                disabled={!canEdit || busy}
-                onClick={() => toggle(step.key, !data[step.key])}
-                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                  data[step.key] ? "bg-brand" : "bg-muted"
-                }`}
-              >
-                <span
-                  aria-hidden
-                  className={`inline-block h-5 w-5 transform rounded-full bg-background shadow ring-0 transition-transform ${
-                    data[step.key] ? "translate-x-5" : "translate-x-0"
-                  }`}
-                />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <StepCatalogEditor canEdit={canEdit} />
     </Card>
   );
 }

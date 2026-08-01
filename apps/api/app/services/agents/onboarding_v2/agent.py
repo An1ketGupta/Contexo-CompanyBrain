@@ -88,6 +88,7 @@ from app.database import get_service_client
 from app.observability import get_logger
 from app.services import org_config
 from app.services.agents.base_agent import BaseAgent
+from app.services.agents.onboarding_v2 import catalog as ob_catalog
 from app.services.agents.onboarding_v2 import storage as ob_storage
 from app.services.agents.onboarding_v2.pre_join import (
     ensure_pre_join_user,
@@ -212,6 +213,19 @@ class OnboardingV2Agent(BaseAgent):
             .execute()
         )
         self._run_row = None
+
+        # Mirror the transition onto the run's step rows. The step engine does
+        # not drive anything yet — this runs in shadow so the new model can be
+        # checked against real runs before it takes over dispatch. Every status
+        # change funnels through here, which is why the mirror lives here and
+        # not in the individual steps.
+        await ob_catalog.sync_from_legacy_status(
+            org_id=self.org_id,
+            run_id=self.onboarding_run_id,
+            status=status,
+            blocked_template_kind=payload.get("blocked_template_kind"),
+            blocked_reason=payload.get("blocked_reason"),
+        )
 
     async def _block_missing_template(
         self, template_kind: str, reason: str | None = None
@@ -450,6 +464,16 @@ class OnboardingV2Agent(BaseAgent):
         if current in ("cancelled", "completed", "failed"):
             return {"status": current, "terminal": True}
 
+        # Document-collection gates. These are steps the org added to its
+        # catalog at a position of its choosing, so they cannot live in the
+        # ladder below — the ladder is a fixed sequence and their whole point
+        # is that the org decides where they fall. Instead they hold the run
+        # at the point they were placed: the ladder decides what happens next,
+        # this decides whether it may happen yet.
+        gate = await self._check_collect_gate(current)
+        if gate is not None:
+            return gate
+
         if current in ("draft", "loi_generating"):
             return await self._step_generate_loi()
         if current == "loi_pending_hr_review":
@@ -507,6 +531,130 @@ class OnboardingV2Agent(BaseAgent):
                 return await self._step_generate_induction()
 
         return {"status": current, "no_op": True}
+
+    # ── Document collection gates ─────────────────────────────────────────
+
+    async def _check_collect_gate(self, current_status: str) -> dict[str, Any] | None:
+        """Hold the run if the candidate still owes documents from a step the
+        run has already reached.
+
+        Returns None when nothing is outstanding and the ladder should carry
+        on. Never raises: a gate that fails to evaluate must not strand a
+        hire, so a broken gate lets the run through rather than parking it
+        somewhere nobody is watching.
+        """
+        try:
+            placement = ob_catalog.resolve_legacy_placement(
+                status=current_status,
+                blocked_template_kind=(await self._load_run()).get(
+                    "blocked_template_kind"
+                ),
+            )
+            if placement is None:
+                return None
+
+            steps = await ob_catalog.materialize_run_steps(
+                org_id=self.org_id, run_id=self.onboarding_run_id
+            )
+            current_step = next(
+                (s for s in steps if s["step_key"] == placement[0]), None
+            )
+            if current_step is None:
+                return None
+
+            submissions = await ob_catalog.get_submissions(self.onboarding_run_id)
+            pending = ob_catalog.pending_collect_steps(
+                steps,
+                submissions,
+                reached_position=current_step.get("position") or 0,
+            )
+            if not pending:
+                return None
+
+            step = pending[0]
+            # First time the run reaches this step, put it in front of the
+            # candidate. Later kicks (a partial upload, an unrelated event)
+            # find it already active and stay quiet rather than re-emailing.
+            if step.get("status") != ob_catalog.STATUS_ACTIVE:
+                await ob_catalog.set_step_status(
+                    step["id"], ob_catalog.STATUS_ACTIVE
+                )
+                await self._notify_candidate_documents_due(step)
+
+            outstanding = [
+                i["item_key"]
+                for i in ob_catalog.required_items(step)
+                if i["item_key"]
+                not in {
+                    s["item_key"]
+                    for s in submissions
+                    if s.get("run_step_id") == step["id"]
+                }
+            ]
+            await self.log_step(
+                "collect_gate",
+                "waiting",
+                {"step_key": step["step_key"], "outstanding": outstanding},
+            )
+            return {
+                "status": current_status,
+                "waiting_for": "candidate_documents",
+                "step_key": step["step_key"],
+                "outstanding": outstanding,
+            }
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "onboarding_v2.collect_gate_failed run=%s err=%s",
+                self.onboarding_run_id,
+                exc,
+            )
+            return None
+
+    async def _notify_candidate_documents_due(self, step: dict[str, Any]) -> None:
+        """Ask the candidate for this step's documents.
+
+        The candidate signs in with the pre-join account provisioned at run
+        creation, so this is a link into the portal rather than a token URL or
+        a request to email attachments back.
+        """
+        run = await self._load_run()
+        settings = get_settings()
+        items = ob_catalog.required_items(step)
+        try:
+            await send_email_event(
+                event_type="onboarding_documents_requested",
+                to=run["candidate_email"],
+                user_id=run.get("pre_join_user_id"),
+                org_id=self.org_id,
+                dedupe_key=f"collect-{self.onboarding_run_id}-{step['step_key']}",
+                data={
+                    "candidate_name": run["candidate_name"],
+                    "company_name": (await self._resolve_org_branding())["name"],
+                    "step_label": step.get("label") or "Documents",
+                    "document_count": len(items),
+                    "document_labels": [i["label"] for i in items],
+                    "portal_url": (
+                        f"{settings.app_url.rstrip('/')}/candidate/onboarding"
+                        if settings.app_url
+                        else None
+                    ),
+                    "app_url": settings.app_url.rstrip("/") if settings.app_url else None,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("onboarding_v2.collect_email_failed err=%s", exc)
+
+        await ob_storage.log_onboarding_event(
+            org_id=self.org_id,
+            run_id=self.onboarding_run_id,
+            actor_kind="agent",
+            event_type="candidate_documents_requested",
+            message=(
+                f"Asked {run['candidate_name']} for {len(items)} document(s): "
+                f"{step.get('label')}."
+            ),
+            metadata={"step_key": step["step_key"]},
+        )
 
     # ── Step 1: LOI────────────────────────────────────────────────────────
 

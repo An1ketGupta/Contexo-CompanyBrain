@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill, type PillTone } from "@/components/actual/kit";
 import { LOIDraftEditor } from "@/components/onboarding/loi-draft-editor";
 import { StageBoard, currentStageKey } from "@/components/onboarding/stage-board";
+import { SubmissionsPanel } from "@/components/onboarding/submissions-panel";
 import { useOnboardingSteps } from "@/hooks/use-onboarding-steps";
 import { DOCUMENT_KIND_LABEL as DOC_LABEL } from "@/lib/onboarding-documents";
 
@@ -637,6 +638,14 @@ export default function OnboardingDetailPage() {
           value={data.work_location || "—"}
         />
       </section>
+
+      {/* Not tied to a stage. Documents can be collected at whatever point the
+          org placed the step, and reviewing them deliberately doesn't gate the
+          run — so this stays visible wherever the pipeline has got to. Renders
+          nothing until the candidate has actually filed something. */}
+      <div className="mb-8">
+        <SubmissionsPanel runId={data.id} />
+      </div>
 
       {/* Only the stage the run is actually sitting in. The other four are
           summarised in the board above — an empty panel for a stage nobody has
