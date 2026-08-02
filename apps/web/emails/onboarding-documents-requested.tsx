@@ -55,8 +55,9 @@ export function OnboardingDocumentsRequestedEmail({
 
       <Hr style={{ borderColor: "#e4e4e7", margin: "24px 0" }} />
       <Text style={muted}>
-        A clear photo or scan is fine — PDF or image, whichever is easier. Sign
-        in with this email address to see your checklist.
+        A clear photo or scan is fine — PDF or image, whichever is easier. No
+        account or password needed: the button above opens your checklist
+        directly. The link is personal to you, so please don&apos;t forward it.
       </Text>
     </EmailShell>
   );

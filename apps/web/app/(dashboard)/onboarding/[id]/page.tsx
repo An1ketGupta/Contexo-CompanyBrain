@@ -29,6 +29,7 @@ import {
   StageBoard,
   panelStageGroup,
 } from "@/components/onboarding/stage-board";
+import { StepApprovalPanel } from "@/components/onboarding/step-approval-panel";
 import { SubmissionsPanel } from "@/components/onboarding/submissions-panel";
 import {
   builtInPanelFor,
@@ -162,6 +163,7 @@ const STATUS_LABELS: Record<string, string> = {
   step_generating: "Preparing document from template",
   step_pending_hr_review: "Review draft",
   step_pending_signature: "Awaiting signature",
+  step_pending_hr_approval: "Waiting on your review",
   awaiting_candidate_documents: "Awaiting candidate documents",
 };
 
@@ -516,7 +518,14 @@ export default function OnboardingDetailPage() {
   // beyond the built-ins answers null and shows no panel.
   const currentGroup = panelStageGroup(steps);
   const currentStep = currentGroup?.[0] ?? null;
-  const panel = builtInPanelFor(currentStep);
+  // The approval gate is not one of the five built-in panels — any step can
+  // reach it, including one an org composed itself, so it is keyed off the
+  // status rather than off which document the step happens to render.
+  const awaitingReview = currentStep?.status === "pending_hr_approval";
+  // While the gate is up it is the only thing to act on. The built-in panels
+  // would render their idle state underneath it — a document row with nothing
+  // to click — which reads as a second, contradictory place to look.
+  const panel = awaitingReview ? null : builtInPanelFor(currentStep);
   const ctc =
     data.ctc_amount !== null && data.ctc_amount !== undefined
       ? `${data.ctc_currency || "INR"} ${data.ctc_amount.toLocaleString()}`
@@ -661,10 +670,33 @@ export default function OnboardingDetailPage() {
         />
       </section>
 
-      {/* Not tied to a stage. Documents can be collected at whatever point the
-          org placed the step, and reviewing them deliberately doesn't gate the
-          run — so this stays visible wherever the pipeline has got to. Renders
-          nothing until the candidate has actually filed something. */}
+      {/* The gate, first and above everything: the run is stopped here and
+          nothing else on the page can move it. Shown for any step in
+          `pending_hr_approval`, built-in or composed by the org — which is the
+          point, since the panels further down only exist for the five steps
+          the product ships. */}
+      {awaitingReview && currentGroup ? (
+        <>
+          <SectionHeader
+            icon={ShieldCheck}
+            title={`Your review: ${currentStep?.bundle_label ?? currentStep?.label}`}
+          />
+          <div className="mb-12">
+            <StepApprovalPanel
+              runId={data.id}
+              steps={currentGroup}
+              documents={data.documents}
+              references={data.references}
+              onReviewed={mutate}
+            />
+          </div>
+        </>
+      ) : null}
+
+      {/* Everything the candidate has ever filed, wherever the pipeline has
+          got to. The panel above is the decision on the step the run is
+          waiting at; this is the archive, and stays readable after the fact.
+          Renders nothing until something has actually been filed. */}
       <div className="mb-8">
         <SubmissionsPanel runId={data.id} />
       </div>

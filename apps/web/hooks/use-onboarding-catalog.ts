@@ -37,6 +37,12 @@ export interface CatalogStep {
   signer_roles: string[];
   system_action: SystemAction | null;
   locked: boolean;
+  /**
+   * Whether HR must accept what the candidate did here before the run moves
+   * on. Only meaningful where the candidate acts at all: an upload checklist,
+   * a background check, or a document they are one of the signers of.
+   */
+  requires_hr_approval: boolean;
   items: CollectItem[];
 }
 
@@ -153,6 +159,9 @@ export function useOnboardingCatalog() {
 
     setSigners: (stepKey: string, signer_roles: SignerRole[]) =>
       patch(stepKey, { signer_roles }),
+
+    setRequiresApproval: (stepKey: string, requires_hr_approval: boolean) =>
+      patch(stepKey, { requires_hr_approval }),
 
     moveStep: (stepKey: string, move: "up" | "down") =>
       patch(stepKey, { move }),

@@ -21,3 +21,15 @@ export async function PATCH(
     { method: "PATCH", body },
   );
 }
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ announcementId: string }> },
+): Promise<Response> {
+  const { announcementId } = await params;
+  return proxyJson(
+    req,
+    `/admin/announcements/${encodeURIComponent(announcementId)}`,
+    { method: "DELETE" },
+  );
+}

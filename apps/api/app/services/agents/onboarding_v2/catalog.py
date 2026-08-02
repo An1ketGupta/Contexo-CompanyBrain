@@ -82,6 +82,11 @@ STATUS_FAILED = "failed"
 # A step in one of these states needs nothing further from anyone.
 TERMINAL_STEP_STATUSES = frozenset({STATUS_DONE, STATUS_SKIPPED})
 
+# HR's verdict on the current round of candidate work. NULL until they look.
+REVIEW_APPROVED = "approved"
+REVIEW_REJECTED = "rejected"
+REVIEW_DECISIONS = (REVIEW_APPROVED, REVIEW_REJECTED)
+
 # The pipeline as it was hardcoded before the catalog existed. Migration 107
 # seeds exactly this for every org that already existed; this copy seeds orgs
 # created afterwards. Keep the two in step — they describe the same default
@@ -107,6 +112,7 @@ DEFAULT_STEP_DEFS: tuple[dict[str, Any], ...] = (
         "signer_roles": ["hr", "candidate"],
         "system_action": None,
         "locked": False,
+        "requires_hr_approval": True,
         "legacy_toggle": None,
     },
     {
@@ -123,6 +129,7 @@ DEFAULT_STEP_DEFS: tuple[dict[str, Any], ...] = (
         "signer_roles": [],
         "system_action": SYSTEM_ACTION_BGV,
         "locked": False,
+        "requires_hr_approval": True,
         "legacy_toggle": "bgv",
     },
     {
@@ -137,6 +144,7 @@ DEFAULT_STEP_DEFS: tuple[dict[str, Any], ...] = (
         "signer_roles": ["candidate"],
         "system_action": None,
         "locked": False,
+        "requires_hr_approval": True,
         "legacy_toggle": "appointment_bundle",
     },
     {
@@ -151,6 +159,7 @@ DEFAULT_STEP_DEFS: tuple[dict[str, Any], ...] = (
         "signer_roles": ["candidate"],
         "system_action": None,
         "locked": False,
+        "requires_hr_approval": True,
         "legacy_toggle": "appointment_bundle",
     },
     {
@@ -168,6 +177,7 @@ DEFAULT_STEP_DEFS: tuple[dict[str, Any], ...] = (
         "signer_roles": [],
         "system_action": SYSTEM_ACTION_POLICIES,
         "locked": False,
+        "requires_hr_approval": True,
         "legacy_toggle": "policies",
     },
     {
@@ -182,6 +192,7 @@ DEFAULT_STEP_DEFS: tuple[dict[str, Any], ...] = (
         "signer_roles": [],
         "system_action": None,
         "locked": False,
+        "requires_hr_approval": True,
         "legacy_toggle": "induction",
     },
 )
@@ -234,6 +245,7 @@ _SNAPSHOT_FIELDS = (
     "position",
     "signer_roles",
     "system_action",
+    "requires_hr_approval",
 )
 
 # What to write to `onboarding_runs.status` for a given (step_key, step status).
@@ -275,7 +287,7 @@ GENERIC_RUN_STATUS: dict[str, str] = {
     STATUS_PENDING_HR_REVIEW: "step_pending_hr_review",
     STATUS_PENDING_SIGNATURE: "step_pending_signature",
     STATUS_SUBMITTED: "step_active",
-    STATUS_PENDING_HR_APPROVAL: "step_active",
+    STATUS_PENDING_HR_APPROVAL: "step_pending_hr_approval",
     STATUS_BLOCKED_MISSING_TEMPLATE: "blocked_missing_template",
     STATUS_BLOCKED_TEMPLATE_DRIFT: "blocked_template_drift",
     STATUS_FAILED: "failed",
@@ -288,7 +300,14 @@ def run_status_for(step: dict[str, Any], step_status: str) -> str:
     Built-in steps keep their historical label so nothing downstream has to
     learn a new vocabulary; a collect step reports that it is waiting on the
     candidate; anything else falls back to a generic per-state label.
+
+    Waiting on HR outranks both. A step sitting in the approval gate is not
+    waiting on the candidate — they have done their part — and no legacy label
+    exists for a state the old ladder had no concept of, so the generic one is
+    the only honest thing the list view can say.
     """
+    if step_status == STATUS_PENDING_HR_APPROVAL:
+        return GENERIC_RUN_STATUS[STATUS_PENDING_HR_APPROVAL]
     legacy = LEGACY_STATUS_FOR_STEP.get((step.get("step_key") or "", step_status))
     if legacy:
         return legacy
@@ -316,6 +335,51 @@ def bundle_siblings(
         (s for s in steps if s.get("bundle_key") == bundle_key),
         key=lambda s: s.get("position") or 0,
     )
+
+
+# ── The HR approval gate ───────────────────────────────────────────────────
+#
+# Three kinds of step let the candidate act, and each parks in
+# `pending_hr_approval` afterwards so HR can look before the run carries on:
+# a signed document, a completed upload checklist, and the referee list a BGV
+# step gathers. The predicates below decide when the gate applies; the agent
+# decides what to do on either side of it.
+
+
+def gate_applies(step: dict[str, Any]) -> bool:
+    """Does this step stop for HR once the candidate has acted?
+
+    Off entirely when the org turned the toggle off for this step. Otherwise it
+    depends on whether the candidate does anything here at all:
+
+      collect  — always; the whole step is the candidate uploading files.
+      system   — background verification only. A policy step's acknowledgement
+                 is a signature on a record HR already wrote, not a document
+                 they need to inspect, and gating it would park every hire on a
+                 tick-box.
+      generate — only when the candidate is one of the signers. A document HR
+                 signs alone, or one sent unsigned, has nothing of the
+                 candidate's in it for HR to accept or reject; the draft review
+                 they already do is the whole check.
+    """
+    if not step.get("requires_hr_approval", False):
+        return False
+    kind = step.get("kind")
+    if kind == KIND_COLLECT:
+        return True
+    if kind == KIND_SYSTEM:
+        return step.get("system_action") == SYSTEM_ACTION_BGV
+    return SIGNER_CANDIDATE in (step.get("signer_roles") or [])
+
+
+def gate_cleared(step: dict[str, Any]) -> bool:
+    """May the run move past this step's gate?
+
+    True when the gate does not apply, or when HR has approved this round.
+    `review_decision` is reset to NULL every time the candidate acts again, so
+    an approval never carries over to work HR has not seen.
+    """
+    return not gate_applies(step) or step.get("review_decision") == REVIEW_APPROVED
 
 
 def find_document_step(
@@ -466,6 +530,7 @@ async def seed_default_step_defs(org_id: str) -> None:
             "signer_roles": d["signer_roles"],
             "system_action": d["system_action"],
             "locked": d["locked"],
+            "requires_hr_approval": d["requires_hr_approval"],
         }
         for d in DEFAULT_STEP_DEFS
     ]
@@ -596,6 +661,7 @@ async def create_step(
     document_type_keys: list[str] | None = None,
     signer_roles: list[str] | None = None,
     system_action: str | None = None,
+    requires_hr_approval: bool = True,
 ) -> list[dict[str, Any]]:
     """Add a step of any kind, positioned after an existing one.
 
@@ -623,6 +689,8 @@ async def create_step(
         rows = _generate_rows(
             org_id, label, document_type_keys, normalize_signer_roles(signer_roles), taken
         )
+    for row in rows:
+        row["requires_hr_approval"] = requires_hr_approval
 
     created = await asyncio.to_thread(
         lambda: svc.table("onboarding_step_defs").insert(rows).execute()
@@ -772,6 +840,7 @@ async def update_step(
     enabled: bool | None = None,
     label: str | None = None,
     signer_roles: list[str] | None = None,
+    requires_hr_approval: bool | None = None,
     after_step_key: str | None = None,
     move: str | None = None,
 ) -> dict[str, Any]:
@@ -811,6 +880,8 @@ async def update_step(
                 f"{step['label']} doesn't produce a document, so nobody signs it."
             )
         patch["signer_roles"] = normalize_signer_roles(signer_roles)
+    if requires_hr_approval is not None:
+        patch["requires_hr_approval"] = requires_hr_approval
 
     if after_step_key is not None or move is not None:
         await _reposition(org_id, defs, step, after_step_key=after_step_key, move=move)
@@ -1147,17 +1218,23 @@ def required_items(step: dict[str, Any]) -> list[dict[str, Any]]:
 def is_collect_satisfied(
     step: dict[str, Any], submissions: list[dict[str, Any]]
 ) -> bool:
-    """Has the candidate submitted everything this step requires?
+    """Has the candidate filed everything this step requires?
 
-    Submission, not approval. HR rejecting a blurry scan is handled out of
-    band — blocking the pipeline on a review queue would mean a hire stalls
-    because nobody opened the tab, which is not what the org asked for when
-    they added a document to the checklist.
+    A file HR sent back does not count. It used to: the row stayed in place
+    with `review_status = 'rejected'`, the checklist read as complete, and the
+    "please re-upload this" ask had nothing holding it open — the run had
+    already walked past the step by then anyway.
+
+    This says the checklist is *answered*, not that HR has accepted it. The
+    approval gate is the separate question `gate_cleared` asks.
     """
-    submitted = {
-        s["item_key"] for s in submissions if s.get("run_step_id") == step.get("id")
+    filed = {
+        s["item_key"]
+        for s in submissions
+        if s.get("run_step_id") == step.get("id")
+        and s.get("review_status") != REVIEW_REJECTED
     }
-    return all(i["item_key"] in submitted for i in required_items(step))
+    return all(i["item_key"] in filed for i in required_items(step))
 
 
 def pending_collect_steps(
@@ -1192,19 +1269,45 @@ async def set_step_status(
     status: str,
     *,
     blocked_reason: str | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> None:
-    """Move one step, stamping the timestamp its new state implies."""
+    """Move one step, stamping the timestamp its new state implies.
+
+    `extra` carries the review columns when a transition is a decision — HR
+    approving or rejecting moves the step and records who said so, and the two
+    have to land in one write or a crash between them leaves a step advanced
+    with nobody's name against it.
+    """
     payload: dict[str, Any] = {"status": status, "blocked_reason": blocked_reason}
     now = datetime.now(UTC).isoformat()
     if status in TERMINAL_STEP_STATUSES:
         payload["completed_at"] = now
     elif status not in (STATUS_PENDING,):
         payload["started_at"] = now
+    if extra:
+        payload.update(extra)
 
     svc = get_service_client()
     await asyncio.to_thread(
         lambda: svc.table("onboarding_run_steps")
         .update(payload)
+        .eq("id", run_step_id)
+        .execute()
+    )
+
+
+async def clear_step_review(run_step_id: str) -> None:
+    """Reopen the gate because the candidate has acted again.
+
+    Called when a replacement document is uploaded, a fresh referee list is
+    submitted, or a re-signed envelope completes. Without this a step HR
+    approved once would stay approved through every later resubmission, which
+    is the exact hole the gate exists to close.
+    """
+    svc = get_service_client()
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_run_steps")
+        .update({"review_decision": None, "review_note": None})
         .eq("id", run_step_id)
         .execute()
     )

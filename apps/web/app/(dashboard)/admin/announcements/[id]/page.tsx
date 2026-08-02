@@ -3,13 +3,21 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { Calendar, Loader2, Send, X } from "lucide-react";
+import { AlertTriangle, Calendar, Hash, Loader2, Lock, Send, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -36,6 +44,24 @@ interface Announcement {
 
 interface Response {
   announcement: Announcement;
+}
+
+interface SlackChannel {
+  id: string;
+  name: string;
+  is_private?: boolean;
+}
+
+interface NotionPage {
+  id: string;
+  title: string;
+  url?: string | null;
+}
+
+interface OrgMember {
+  id: string;
+  email: string;
+  display_name: string | null;
 }
 
 type TabId = "email" | "slack" | "notion";
@@ -73,12 +99,25 @@ export default function AnnouncementDetailPage() {
   const [notionTitle, setNotionTitle] = useState("");
   const [notionBody, setNotionBody] = useState("");
 
+  const [sendToAll, setSendToAll] = useState(false);
   const [recipients, setRecipients] = useState("");
   const [slackChannel, setSlackChannel] = useState("");
   const [notionParent, setNotionParent] = useState("");
   const [whenLocal, setWhenLocal] = useState("");
 
   const [working, setWorking] = useState(false);
+
+  // ── Slack channels ────────────────────────────────────────────────────
+  const { data: slackData, error: slackError, isLoading: slackLoading } = useSWR<
+    { channels: SlackChannel[] }
+  >("/api/integrations/slack/channels", fetcher, { revalidateOnFocus: false });
+  const slackChannels = slackData?.channels ?? [];
+
+  // ── Notion write-target pages ─────────────────────────────────────────
+  const { data: notionData, error: notionError, isLoading: notionLoading } = useSWR<
+    { pages: NotionPage[] }
+  >("/api/integrations/notion/write-targets", fetcher, { revalidateOnFocus: false });
+  const notionPages = notionData?.pages ?? [];
 
   useEffect(() => {
     if (!data) return;
@@ -168,10 +207,24 @@ export default function AnnouncementDetailPage() {
         }),
       });
 
-      const recipientList = recipients
-        .split(/[,\n]/)
-        .map((s) => s.trim())
-        .filter(Boolean);
+      let recipientList: string[];
+      if (sendToAll) {
+        // Fetch all org members' emails at schedule time.
+        const membersRes = await fetch("/api/organizations/members");
+        if (!membersRes.ok) throw new Error("Couldn't load employee list.");
+        const membersData: { members: OrgMember[] } = await membersRes.json();
+        recipientList = membersData.members
+          .map((m) => m.email)
+          .filter(Boolean);
+        if (recipientList.length === 0) {
+          throw new Error("No employees found with email addresses.");
+        }
+      } else {
+        recipientList = recipients
+          .split(/[,\n]/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
 
       const scheduledFor = new Date(whenLocal).toISOString();
 
@@ -181,8 +234,8 @@ export default function AnnouncementDetailPage() {
         body: JSON.stringify({
           scheduled_for: scheduledFor,
           recipients: recipientList,
-          slack_channel_id: slackChannel || null,
-          notion_parent_page_id: notionParent || null,
+          slack_channel_id: (slackChannel && slackChannel !== "__none__") ? slackChannel : null,
+          notion_parent_page_id: (notionParent && notionParent !== "__none__") ? notionParent : null,
         }),
       });
       if (!res.ok) {
@@ -221,9 +274,6 @@ export default function AnnouncementDetailPage() {
           <h1 className="text-2xl font-extrabold tracking-tight">
             {emailSubject || "Untitled announcement"}
           </h1>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Drafted from: &ldquo;{a.request_text}&rdquo;
-          </p>
         </div>
         <Badge>{a.status}</Badge>
       </header>
@@ -301,42 +351,158 @@ export default function AnnouncementDetailPage() {
       <section className="rounded-2xl border border-border bg-card p-5">
         <h2 className="text-[15px] font-bold">Channels & schedule</h2>
         <div className="mt-3 space-y-3">
+          {/* ── Email recipients ─────────────────────────────────── */}
           <div className="space-y-1.5">
-            <Label htmlFor="recipients">Email recipients</Label>
-            <Textarea
-              id="recipients"
-              value={recipients}
-              onChange={(e) => setRecipients(e.target.value)}
-              placeholder="alice@acme.com, bob@acme.com"
-              rows={2}
-              disabled={!isDraft}
-            />
-            <p className="text-xs text-muted-foreground">
-              Comma-separated. Leave empty to skip email.
-            </p>
+            <Label>Email recipients</Label>
+            <label className="flex items-center gap-2 py-1">
+              <Checkbox
+                checked={sendToAll}
+                onCheckedChange={(v) => {
+                  setSendToAll(v);
+                  if (v) setRecipients("");
+                }}
+                disabled={!isDraft}
+                aria-label="Send to all employees"
+              />
+              <span className="text-sm">Send to all employees</span>
+            </label>
+            {!sendToAll && (
+              <>
+                <Textarea
+                  id="recipients"
+                  value={recipients}
+                  onChange={(e) => setRecipients(e.target.value)}
+                  placeholder="alice@acme.com, bob@acme.com"
+                  rows={2}
+                  disabled={!isDraft}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Comma-separated.
+                </p>
+              </>
+            )}
+            {sendToAll && (
+              <p className="text-xs text-muted-foreground">
+                All employees in your organisation will receive this email.
+              </p>
+            )}
           </div>
+
+          {/* ── Slack & Notion pickers ───────────────────────────── */}
           <div className="grid gap-3 sm:grid-cols-2">
+            {/* Slack channel picker */}
             <div className="space-y-1.5">
-              <Label htmlFor="slack-channel">Slack channel ID</Label>
-              <Input
-                id="slack-channel"
-                value={slackChannel}
-                onChange={(e) => setSlackChannel(e.target.value)}
-                placeholder="C0123ABCD"
-                disabled={!isDraft}
-              />
+              <Label htmlFor="slack-channel">Slack channel</Label>
+              {slackError ? (
+                <>
+                  <div className="flex items-start gap-2 rounded border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                    <span>
+                      Slack isn&apos;t connected.{" "}
+                      <a className="underline" href="/settings/integrations" target="_blank" rel="noreferrer">
+                        Connect in Settings
+                      </a>
+                      , or paste a channel ID below.
+                    </span>
+                  </div>
+                  <Input
+                    id="slack-channel"
+                    value={slackChannel}
+                    onChange={(e) => setSlackChannel(e.target.value)}
+                    placeholder="C0123ABCD"
+                    className="font-mono text-xs"
+                    disabled={!isDraft}
+                  />
+                </>
+              ) : (
+                <Select
+                  value={slackChannel}
+                  onValueChange={setSlackChannel}
+                  disabled={!isDraft}
+                >
+                  <SelectTrigger id="slack-channel">
+                    <SelectValue placeholder={slackLoading ? "Loading channels…" : "Pick a channel"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* Allow clearing selection */}
+                    <SelectItem value="__none__">
+                      <span className="text-muted-foreground">None (skip Slack)</span>
+                    </SelectItem>
+                    {slackChannels.length === 0 && !slackLoading ? (
+                      <div className="px-2 py-3 text-center text-xs text-muted-foreground">
+                        No channels found. Invite the bot to channels and refresh.
+                      </div>
+                    ) : (
+                      slackChannels.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          <span className="inline-flex items-center gap-1.5">
+                            {c.is_private ? <Lock className="size-3" /> : <Hash className="size-3" />}
+                            {c.name}
+                          </span>
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
+
+            {/* Notion parent page picker */}
             <div className="space-y-1.5">
-              <Label htmlFor="notion-parent">Notion parent page ID</Label>
-              <Input
-                id="notion-parent"
-                value={notionParent}
-                onChange={(e) => setNotionParent(e.target.value)}
-                placeholder="32-char id"
-                disabled={!isDraft}
-              />
+              <Label htmlFor="notion-parent">Notion parent page</Label>
+              {notionError ? (
+                <>
+                  <div className="flex items-start gap-2 rounded border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                    <span>
+                      Notion isn&apos;t connected.{" "}
+                      <a className="underline" href="/settings/integrations" target="_blank" rel="noreferrer">
+                        Connect in Settings
+                      </a>
+                      , or paste a page ID below.
+                    </span>
+                  </div>
+                  <Input
+                    id="notion-parent"
+                    value={notionParent}
+                    onChange={(e) => setNotionParent(e.target.value)}
+                    placeholder="32-char id"
+                    className="font-mono text-xs"
+                    disabled={!isDraft}
+                  />
+                </>
+              ) : (
+                <Select
+                  value={notionParent}
+                  onValueChange={setNotionParent}
+                  disabled={!isDraft}
+                >
+                  <SelectTrigger id="notion-parent">
+                    <SelectValue placeholder={notionLoading ? "Loading pages…" : "Pick a parent page"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* Allow clearing selection */}
+                    <SelectItem value="__none__">
+                      <span className="text-muted-foreground">None (skip Notion)</span>
+                    </SelectItem>
+                    {notionPages.length === 0 && !notionLoading ? (
+                      <div className="px-2 py-3 text-center text-xs text-muted-foreground">
+                        No pages found. Share pages with NirnayaIQ in Notion.
+                      </div>
+                    ) : (
+                      notionPages.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          <span className="truncate">{p.title || p.id}</span>
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </div>
+
+          {/* ── Send time ────────────────────────────────────────── */}
           <div className="space-y-1.5">
             <Label htmlFor="when">Send at</Label>
             <Input

@@ -17,6 +17,18 @@ export interface RunStep {
   blocked_reason: string | null;
   started_at: string | null;
   completed_at: string | null;
+  /**
+   * Whether this step stops for HR once the candidate has acted. False on a
+   * step the candidate never touches, and on runs that started before the gate
+   * existed — those keep the behaviour they began with.
+   */
+  requires_hr_approval: boolean;
+  /** HR's verdict on the current round, or null if they haven't looked yet. */
+  review_decision: "approved" | "rejected" | null;
+  review_note: string | null;
+  reviewed_at: string | null;
+  /** How many times HR has sent this step back. 0 on the first attempt. */
+  approval_round: number;
 }
 
 /** The letter of intent's document type — see `catalog.DOCUMENT_TYPE_LOI`. */

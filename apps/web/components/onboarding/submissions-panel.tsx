@@ -33,11 +33,14 @@ function sizeLabel(bytes: number | null): string {
 }
 
 /**
- * Documents the candidate filed, for HR to check.
+ * Every document the candidate has filed on this run, wherever the pipeline
+ * has got to.
  *
- * Reviewing here never moves the run: the pipeline advanced the moment the
- * documents arrived, by design, so a hire doesn't stall behind a review queue.
- * Rejecting asks the candidate for a replacement — it doesn't rewind anything.
+ * The archive, not the decision. A step waiting on HR shows its own files in
+ * `StepApprovalPanel` above, with the accept/send-back that actually moves the
+ * run. Marking a file here records a verdict and stops it counting as filed,
+ * so it is re-asked the next time its step is; on a step already past its gate
+ * that is a note for the record, since nothing re-asks a finished step.
  */
 export function SubmissionsPanel({ runId }: { runId: string }) {
   const { data, isLoading, mutate } = useSWR<Submission[]>(
@@ -75,7 +78,9 @@ export function SubmissionsPanel({ runId }: { runId: string }) {
         throw new Error(body?.detail || body?.message || "Couldn't save that.");
       }
       await mutate();
-      toast.success(status === "approved" ? "Approved." : "Sent back.");
+      toast.success(
+        status === "approved" ? "Marked as fine." : "Marked for re-upload.",
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't save that.");
     } finally {
@@ -95,8 +100,8 @@ export function SubmissionsPanel({ runId }: { runId: string }) {
           Documents from the candidate
         </h2>
         <p className="text-xs text-muted-foreground">
-          Reviewing these doesn&apos;t hold up onboarding — the run already
-          moved on. Sending one back asks for a replacement.
+          Everything filed so far. The step the run is waiting on, if any, is
+          reviewed at the top of this page.
         </p>
       </header>
 

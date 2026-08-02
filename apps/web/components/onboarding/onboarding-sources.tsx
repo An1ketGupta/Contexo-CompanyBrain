@@ -104,6 +104,7 @@ const RUN_STATUS_BLURB: Record<string, string> = {
   bgv_complete: "BGV complete",
   appointment_bundle_generating: "Bundle generating",
   appointment_pending_hr_review: "Awaiting HR approval",
+  step_pending_hr_approval: "Waiting on HR review",
   appointment_sent_to_candidate: "Offer sent",
   policies_assigned: "Policies assigned",
   policies_acknowledged: "Policies acknowledged",

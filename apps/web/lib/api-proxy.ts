@@ -280,6 +280,47 @@ export async function proxyDownload(
 }
 
 /**
+ * Public (no-auth) variant of proxyMultipart. For uploads whose credential is
+ * the token in the path — the candidate document checklist. Same
+ * no-Content-Type rule applies: `fetch` owns the multipart boundary.
+ */
+export async function proxyPublicMultipart(
+  request: NextRequest,
+  path: string,
+): Promise<NextResponse> {
+  const requestId = coerceRequestId(request.headers.get(REQUEST_ID_HEADER));
+
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return NextResponse.json(
+      {
+        code: "bad_request",
+        message: "Invalid upload. Attach a file and try again.",
+        request_id: requestId,
+      },
+      { status: 400, headers: { [REQUEST_ID_HEADER]: requestId } },
+    );
+  }
+
+  const upstream = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: { [REQUEST_ID_HEADER]: requestId },
+    body: form,
+    cache: "no-store",
+  });
+
+  const outboundRequestId =
+    upstream.headers.get(REQUEST_ID_HEADER) ?? requestId;
+  const data = await upstream.json().catch(() => ({}));
+  return NextResponse.json(data, {
+    status: upstream.status,
+    headers: { [REQUEST_ID_HEADER]: outboundRequestId },
+  });
+}
+
+/**
  * As `proxyPostJson`, but no bearer forwarded. For token-credentialed
  * unauthenticated POSTs like invite acceptance.
  */

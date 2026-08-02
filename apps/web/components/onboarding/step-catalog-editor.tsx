@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import {
+  Check,
   ChevronDown,
   ChevronUp,
   FileSignature,
@@ -139,6 +140,7 @@ export function StepCatalogEditor({
     error,
     setStepEnabled,
     setSigners,
+    setRequiresApproval,
     moveStep,
     addStep,
     replaceItems,
@@ -238,6 +240,22 @@ export function StepCatalogEditor({
                         roles.length
                           ? `Signed by ${roles.map((r) => SIGNER_LABELS[r]).join(", then ")}.`
                           : "Sent without signatures.",
+                      )
+                    }
+                  />
+                ) : null}
+
+                {gateApplies(lead) ? (
+                  <ApprovalToggle
+                    step={lead}
+                    disabled={!canEdit || pending}
+                    onChange={(on) =>
+                      run(
+                        key,
+                        () => setRequiresApproval(lead.step_key, on),
+                        on
+                          ? "You'll review this before onboarding continues."
+                          : "This will now continue without your review.",
                       )
                     }
                   />
@@ -417,6 +435,69 @@ function Reorder({
         <ChevronDown className="h-3.5 w-3.5" />
       </button>
     </div>
+  );
+}
+
+/**
+ * Does this step let the candidate do something HR might want to check?
+ *
+ * Mirrors `catalog.gate_applies` on the backend. Only these steps have an
+ * approval to configure — a policy sign-off or a document nobody signs has
+ * nothing of the candidate's in it, and offering the switch there would
+ * promise a review that never happens.
+ */
+function gateApplies(step: CatalogStep): boolean {
+  if (step.kind === "collect") return true;
+  if (step.kind === "system") return step.system_action === "bgv";
+  return step.signer_roles.includes("candidate");
+}
+
+/** What the gate is actually checking, per kind of step. */
+const GATE_LABEL: Record<StepKind, string> = {
+  collect: "Check the uploaded documents before continuing",
+  system: "Check the referees before we email them",
+  generate: "Check the signatures before sending the final copy",
+};
+
+function ApprovalToggle({
+  step,
+  disabled,
+  onChange,
+}: {
+  step: CatalogStep;
+  disabled: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  const on = step.requires_hr_approval;
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      aria-pressed={on}
+      onClick={() => onChange(!on)}
+      className={cn(
+        "mt-2 flex items-start gap-2 rounded-lg border px-2 py-1.5 text-left text-[11px] transition-colors disabled:opacity-50",
+        on
+          ? "border-brand bg-brand-tint text-brand"
+          : "border-border text-muted-foreground hover:border-brand hover:text-brand",
+      )}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "mt-px flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[4px] border",
+          on ? "border-brand bg-brand text-white" : "border-border",
+        )}
+      >
+        {on ? <Check className="h-2.5 w-2.5" /> : null}
+      </span>
+      <span>
+        {GATE_LABEL[step.kind]}
+        {on ? null : (
+          <span className="ml-1 opacity-70">— off, the run continues on its own</span>
+        )}
+      </span>
+    </button>
   );
 }
 

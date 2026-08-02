@@ -25,15 +25,24 @@ export interface CandidateItem {
  * is wired to the internal knowledge-base ingest API, and these files are
  * candidate PII that must never be parsed, chunked or embedded. A plain
  * multipart POST per file is the whole requirement.
+ *
+ * `uploadUrl` is what lets the same row serve the signed-in portal and the
+ * emailed link: the two endpoints differ only in how they establish who is
+ * uploading, which is the caller's business, not this component's.
  */
 export function CollectUploader({
   stepKey,
   item,
   onUploaded,
+  uploadUrl,
+  locked = false,
 }: {
   stepKey: string;
   item: CandidateItem;
   onUploaded: () => void;
+  uploadUrl?: string;
+  /** True while HR is reviewing this step — nothing may be swapped under them. */
+  locked?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const dropRef = useRef<HTMLDivElement>(null);
@@ -44,14 +53,16 @@ export function CollectUploader({
   const rejected = item.review_status === "rejected";
 
   async function upload(file: File) {
+    if (locked) return;
     setBusy(true);
     setError(null);
     try {
       const form = new FormData();
       form.append("file", file);
       const res = await fetch(
-        `/api/onboarding/candidate/steps/${encodeURIComponent(stepKey)}` +
-          `/items/${encodeURIComponent(item.item_key)}/upload`,
+        uploadUrl ??
+          `/api/onboarding/candidate/steps/${encodeURIComponent(stepKey)}` +
+            `/items/${encodeURIComponent(item.item_key)}/upload`,
         { method: "POST", body: form },
       );
       if (!res.ok) {
@@ -77,6 +88,7 @@ export function CollectUploader({
     <div
       ref={dropRef}
       onDragOver={(e) => {
+        if (locked) return;
         e.preventDefault();
         highlight(true);
       }}
@@ -124,10 +136,19 @@ export function CollectUploader({
               </span>
             )}
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p
+            className={cn(
+              "text-xs",
+              rejected
+                ? "font-medium text-destructive-ink"
+                : "text-muted-foreground",
+            )}
+          >
             {rejected
               ? (item.review_note ?? "This needs to be re-uploaded.")
-              : item.submitted
+              : locked
+                ? "Being checked — nothing to do."
+                : item.submitted
                 ? (item.original_filename ?? "Uploaded")
                 : (item.help_text ??
                   `${item.accepted_formats.join(", ").toUpperCase()} · drag and drop or browse`)}
@@ -139,7 +160,7 @@ export function CollectUploader({
 
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || locked}
           onClick={() => inputRef.current?.click()}
           className={cn(
             "flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-colors",

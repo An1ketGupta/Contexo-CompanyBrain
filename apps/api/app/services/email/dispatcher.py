@@ -48,6 +48,8 @@ EventType = Literal[
     "onboarding_documents_requested",  # Candidate: upload this step's checklist
     "onboarding_references_requested", # Candidate: name your referees
     "onboarding_documents_sent",       # Candidate: documents from an org-composed step
+    "onboarding_step_approval_needed", # HR: the candidate acted, check it before the run moves on
+    "onboarding_step_rejected",        # Candidate: HR sent it back, here is what to redo
 ]
 
 

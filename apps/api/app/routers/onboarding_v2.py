@@ -182,10 +182,11 @@ async def start_onboarding(
     await ob_catalog.materialize_run_steps(org_id=org_id, run_id=run_id)
 
     # Give the candidate an account now rather than when the LOI goes out.
-    # A document-collection step can be positioned anywhere in the pipeline,
-    # and the portal it sends them to is authenticated — so the account has to
-    # exist before the first step that might ask them for something, not
-    # partway down a sequence the org is free to reorder.
+    # Policy acknowledgement is signed-in only, and a policies step can be
+    # positioned anywhere in the pipeline — so the account has to exist before
+    # the first step that might need it, not partway down a sequence the org is
+    # free to reorder. (Document collection no longer needs it: migration 112
+    # gave that ask its own link.)
     #
     # Best-effort, exactly as it was at its old call site: a mail or auth blip
     # must not fail the hire. `ensure_pre_join_user` is idempotent, so the
@@ -518,6 +519,13 @@ async def get_run(
             "blocked_reason": s.get("blocked_reason"),
             "started_at": s.get("started_at"),
             "completed_at": s.get("completed_at"),
+            # The approval gate: whether this step stops for HR once the
+            # candidate has acted, and what HR said last time it did.
+            "requires_hr_approval": bool(s.get("requires_hr_approval", False)),
+            "review_decision": s.get("review_decision"),
+            "review_note": s.get("review_note"),
+            "reviewed_at": s.get("reviewed_at"),
+            "approval_round": s.get("approval_round") or 0,
         }
         for s in await ob_catalog.materialize_run_steps(org_id=org_id, run_id=run_id)
     ]

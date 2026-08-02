@@ -66,6 +66,7 @@ const STATUS_LABELS: Record<string, string> = {
   step_generating: "Preparing document from template",
   step_pending_hr_review: "Review draft",
   step_pending_signature: "Awaiting signature",
+  step_pending_hr_approval: "Waiting on HR review",
   awaiting_candidate_documents: "Awaiting candidate documents",
 };
 

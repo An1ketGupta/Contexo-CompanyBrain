@@ -1,8 +1,11 @@
 """Public Onboarding endpoints — no JWT auth.
 
-The BGV reference form needs to be accessible to people outside the org
-(literally anyone the candidate listed as a reference). We can't sit them
-behind a Supabase login because they don't have an account.
+Three forms live here, all filled by someone who should not need an account to
+fill them: the BGV reference form (a referee, who has no relationship with us
+at all), the candidate's own list of referees, and the candidate's document
+upload checklist. The last one used to require a login — the candidate had one,
+provisioned at run creation, but reaching it meant still having the magic-link
+email from weeks earlier, which is exactly the email people lose.
 
 The credential lives in the URL as `/bgv/<UUID>`. The token is single-use
 in spirit (we mark `submitted` and the form refuses replay) and time-bounded
@@ -27,10 +30,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 import inngest
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.database import get_service_client
 from app.inngest.client import get_inngest_client
+from app.models.onboarding_catalog import PublicCandidateDocumentsRead
 from app.models.onboarding_v2 import (
     BgvFormPrefill,
     BgvFormSubmit,
@@ -306,6 +310,24 @@ async def get_candidate_references_prefill(token: str) -> dict[str, Any]:
     }
 
 
+async def _reopen_bgv_review(run_id: str) -> None:
+    """Clear the HR approval on this run's background-verification step.
+
+    Best-effort. A run whose BGV step has no approval to clear — the common
+    case, a first submission — is a no-op, and a failure here must not lose
+    references the candidate just spent ten minutes typing.
+    """
+    from app.services.agents.onboarding_v2 import catalog as ob_catalog
+
+    try:
+        steps = await ob_catalog.get_run_steps(run_id)
+        for step in steps:
+            if step.get("system_action") == ob_catalog.SYSTEM_ACTION_BGV:
+                await ob_catalog.clear_step_review(step["id"])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("onboarding_public.bgv_review_reset_failed err=%s", exc)
+
+
 @router.post("/references/{token}")
 async def submit_candidate_references(
     token: str, body: CandidateReferencesSubmit
@@ -374,6 +396,12 @@ async def submit_candidate_references(
         .execute()
     )
 
+    # A second list, submitted because HR sent the first one back, is work they
+    # have not seen. Withdrawing the step's approval is what closes the gate
+    # again behind it — otherwise the agent would read the earlier approval as
+    # covering referees nobody has looked at.
+    await _reopen_bgv_review(row["id"])
+
     try:
         await asyncio.to_thread(
             lambda: svc.table("onboarding_events").insert(
@@ -404,3 +432,97 @@ async def submit_candidate_references(
         )
     )
     return {"status": "submitted", "count": len(body.references)}
+
+
+# ── Candidate document upload ─────────────────────────────────────────────
+#
+# The checklist a `collect` step asks for, and a place to answer it, without a
+# login. Same token shape as the two forms above and the same expiry handling;
+# what differs is that this one is not single-use — a candidate comes back to a
+# document ask over days, replaces a scan HR rejected, and is asked for a second
+# batch later in the pipeline, all on the one link.
+#
+# What may be uploaded, and when, is not decided here: both endpoints delegate
+# to `onboarding_catalog`, which serves the signed-in version of this same
+# screen. A step the run hasn't reached is refused identically on both paths.
+
+
+async def _load_run_by_documents_token(token: str) -> dict[str, Any] | None:
+    svc = get_service_client()
+    res = await asyncio.to_thread(
+        lambda: svc.table("onboarding_runs")
+        .select("*")
+        .eq("documents_token", token)
+        .maybe_single()
+        .execute()
+    )
+    return res.data if res else None
+
+
+async def _open_documents_run(token: str) -> tuple[dict[str, Any], datetime | None]:
+    """The run behind a document link, or the reason it can't be opened.
+
+    Expiry is checked here rather than in each endpoint so a link that has
+    lapsed cannot still be uploaded against by someone who kept the tab open.
+    """
+    token = _validate_token(token)
+    row = await _load_run_by_documents_token(token)
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Link not recognised.")
+
+    if row.get("status") in ("cancelled", "failed"):
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            detail="This onboarding has been cancelled by the hiring company.",
+        )
+
+    expires_at: datetime | None = None
+    expires_at_iso = row.get("documents_token_expires_at")
+    if expires_at_iso:
+        try:
+            expires_at = datetime.fromisoformat(expires_at_iso.replace("Z", "+00:00"))
+        except ValueError:
+            expires_at = None
+        if expires_at and expires_at < datetime.now(UTC):
+            raise HTTPException(
+                status.HTTP_410_GONE,
+                detail=(
+                    "This upload link has expired. Ask your HR contact to send "
+                    "you a fresh one."
+                ),
+            )
+    return row, expires_at
+
+
+@router.get("/documents/{token}", response_model=PublicCandidateDocumentsRead)
+async def get_candidate_documents(token: str) -> PublicCandidateDocumentsRead:
+    """The checklist this candidate has been asked for, and what's already in."""
+    from app.routers.onboarding_catalog import build_candidate_view
+
+    row, expires_at = await _open_documents_run(token)
+    view = await build_candidate_view(row)
+    return PublicCandidateDocumentsRead(
+        **view.model_dump(),
+        expires_at=expires_at.isoformat() if expires_at else None,
+    )
+
+
+@router.post("/documents/{token}/steps/{step_key}/items/{item_key}")
+async def upload_candidate_document_public(
+    token: str,
+    step_key: str,
+    item_key: str,
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    """File one document against one checklist item, on the link alone."""
+    from app.routers.onboarding_catalog import store_candidate_upload
+
+    row, _expires_at = await _open_documents_run(token)
+    return await store_candidate_upload(
+        run=row,
+        step_key=step_key,
+        item_key=item_key,
+        file=file,
+        # No session, so no user to attribute this to. The run is the candidate.
+        submitted_by=None,
+    )

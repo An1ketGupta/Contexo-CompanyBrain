@@ -25,6 +25,7 @@ from app.auth import verify_jwt
 from app.database import get_service_client
 from app.errors import NoOrganization
 from app.inngest.client import get_inngest_client
+from app.models.onboarding_catalog import ReviewStepRequest
 from app.observability import get_logger
 from app.services.agents.onboarding_v2 import catalog as ob_catalog
 from app.services.agents.onboarding_v2 import storage as ob_storage
@@ -202,6 +203,34 @@ async def _kick(run_id: str, org_id: str) -> None:
     )
 
 
+# Where a candidate answers each kind of ask, and the run column holding the
+# token that gets them in without a login. `/candidate/documents` rather than
+# `/documents` because the latter is a protected dashboard route and the proxy
+# would bounce them to /login — the one thing these links exist to avoid.
+_CANDIDATE_PORTALS = {
+    "documents": ("documents_token", "/candidate/documents"),
+    "references": ("references_form_token", "/references"),
+}
+
+
+def _candidate_link(run: dict[str, Any], portal: str) -> str | None:
+    """A link the candidate can open without signing in, if there is one.
+
+    The tokens are minted by the agent when it first asks. By the time HR is
+    rejecting something the relevant one exists; if it somehow does not, the
+    email still goes out without a button, which is better than not telling
+    them their document was sent back.
+    """
+    from app.config import get_settings
+
+    column, path = _CANDIDATE_PORTALS[portal]
+    token = run.get(column)
+    settings = get_settings()
+    if not token or not settings.app_url:
+        return None
+    return f"{settings.app_url.rstrip('/')}{path}/{token}"
+
+
 @router.post("/runs/{run_id}/steps/{step_key}/approve")
 async def approve_step(
     run_id: str,
@@ -372,6 +401,479 @@ async def approve_step(
         "envelope_id": envelope["envelope_id"],
         "signers": [{"role": s["role"], "email": s["email"]} for s in signers],
     }
+
+
+@router.post("/runs/{run_id}/steps/{step_key}/review")
+async def review_step(
+    run_id: str,
+    step_key: str,
+    body: ReviewStepRequest,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """HR accepts or rejects what the candidate did at this step.
+
+    The gate the whole feature is about. Three kinds of step reach it — a
+    signed document, a finished upload checklist, a list of referees — and the
+    accept path is the same for all three: record the decision, and let the
+    agent carry on from a step it now considers cleared.
+
+    Rejecting is where they differ, because "ask them again" means something
+    different in each case, and each is handled by its own `_reject_*` below.
+    What they share is that none of them rewinds the run. The step stays where
+    it is in the pipeline and re-opens in place, so a document sent back on
+    Friday does not undo the two steps that ran on Thursday.
+    """
+    user_id, org_id, _ = _require_user(current_user)
+    run, step, bundle = await _load_step(run_id, org_id, step_key)
+
+    if step["status"] != ob_catalog.STATUS_PENDING_HR_APPROVAL:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"'{step['label']}' is {step['status'].replace('_', ' ')}, "
+            "not waiting for your review.",
+        )
+
+    label = step.get("bundle_label") or step["label"]
+    if body.decision == ob_catalog.REVIEW_APPROVED:
+        return await _approve_step(
+            run=run,
+            step=step,
+            bundle=bundle,
+            org_id=org_id,
+            user_id=user_id,
+            label=label,
+            note=body.note,
+        )
+    return await _reject_step(
+        run=run,
+        step=step,
+        bundle=bundle,
+        org_id=org_id,
+        user_id=user_id,
+        label=label,
+        note=body.note,
+    )
+
+
+async def _approve_step(
+    *,
+    run: dict[str, Any],
+    step: dict[str, Any],
+    bundle: list[dict[str, Any]],
+    org_id: str,
+    user_id: str,
+    label: str,
+    note: str | None,
+) -> dict[str, Any]:
+    """Accept the candidate's work and hand the step back to the agent.
+
+    A collect step is finished by this — there is nothing after the documents.
+    The other two have work left (deliver the signed copies, email the
+    referees), so they go to `active` and the agent picks them up.
+    """
+    run_id = run["id"]
+    finished = step["kind"] == ob_catalog.KIND_COLLECT
+    next_status = (
+        ob_catalog.STATUS_DONE if finished else ob_catalog.STATUS_ACTIVE
+    )
+    decided = {
+        "review_decision": ob_catalog.REVIEW_APPROVED,
+        "review_note": note,
+        "reviewed_by": user_id,
+        "reviewed_at": datetime.now(UTC).isoformat(),
+    }
+    for member in bundle:
+        await ob_catalog.set_step_status(member["id"], next_status, extra=decided)
+
+    await ob_storage.log_onboarding_event(
+        org_id=org_id,
+        run_id=run_id,
+        actor_kind="hr",
+        event_type="step_approved_by_hr",
+        message=f"HR accepted {label}.",
+        actor_user_id=user_id,
+        metadata={"step_key": step["step_key"], "note": note},
+    )
+    await _kick(run_id, org_id)
+    return {"status": next_status, "step_key": step["step_key"], "decision": "approved"}
+
+
+async def _reject_step(
+    *,
+    run: dict[str, Any],
+    step: dict[str, Any],
+    bundle: list[dict[str, Any]],
+    org_id: str,
+    user_id: str,
+    label: str,
+    note: str | None,
+) -> dict[str, Any]:
+    """Send the ask back to the candidate, at this step, with a reason."""
+    if not (note or "").strip():
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Say what's wrong — the candidate only sees this note, and it's the "
+            "only instruction they get about what to fix.",
+        )
+    note = note.strip()
+    run_id = run["id"]
+    rejected = {
+        "review_decision": ob_catalog.REVIEW_REJECTED,
+        "review_note": note,
+        "reviewed_by": user_id,
+        "reviewed_at": datetime.now(UTC).isoformat(),
+        "approval_round": (step.get("approval_round") or 0) + 1,
+    }
+
+    if step["kind"] == ob_catalog.KIND_COLLECT:
+        outcome = await _reject_collect(
+            run=run, step=step, org_id=org_id, note=note, extra=rejected
+        )
+    elif step["kind"] == ob_catalog.KIND_SYSTEM:
+        outcome = await _reject_references(
+            run=run, step=step, org_id=org_id, note=note, extra=rejected
+        )
+    else:
+        outcome = await _reject_signature(
+            run=run,
+            step=step,
+            bundle=bundle,
+            org_id=org_id,
+            user_id=user_id,
+            label=label,
+            note=note,
+            extra=rejected,
+        )
+
+    await ob_storage.log_onboarding_event(
+        org_id=org_id,
+        run_id=run_id,
+        actor_kind="hr",
+        event_type="step_rejected_by_hr",
+        message=f"HR sent {label} back to {run['candidate_name']}: {note}",
+        actor_user_id=user_id,
+        metadata={
+            "step_key": step["step_key"],
+            "round": rejected["approval_round"],
+            "note": note,
+        },
+    )
+    await _kick(run_id, org_id)
+    return {"decision": "rejected", "step_key": step["step_key"], **outcome}
+
+
+async def _reject_collect(
+    *,
+    run: dict[str, Any],
+    step: dict[str, Any],
+    org_id: str,
+    note: str,
+    extra: dict[str, Any],
+) -> dict[str, Any]:
+    """Re-open an upload checklist.
+
+    HR may have already marked individual files rejected in the submissions
+    panel — those are the ones being sent back, and the rest stand. When they
+    have marked none, the whole checklist is what they are rejecting, so all of
+    it is re-asked. Rejecting the step while implicitly approving every file in
+    it is not a state anyone means.
+
+    A rejected submission stops counting as filed (`is_collect_satisfied`), so
+    the step re-opens with exactly those items outstanding.
+    """
+    svc = get_service_client()
+    res = await asyncio.to_thread(
+        lambda: svc.table("onboarding_collect_submissions")
+        .select("id, item_key, label, review_status, review_note")
+        .eq("run_step_id", step["id"])
+        .execute()
+    )
+    rows = res.data or []
+    already = [r for r in rows if r.get("review_status") == ob_catalog.REVIEW_REJECTED]
+    targets = already or rows
+
+    now = datetime.now(UTC).isoformat()
+    for row in targets:
+        patch = {
+            "review_status": ob_catalog.REVIEW_REJECTED,
+            # Keep a per-file note HR already wrote; the step-level note is the
+            # fallback for the ones they rejected wholesale.
+            "review_note": row.get("review_note") or note,
+            "reviewed_by": extra["reviewed_by"],
+            "reviewed_at": now,
+        }
+        await asyncio.to_thread(
+            lambda rid=row["id"], p=patch: svc.table("onboarding_collect_submissions")
+            .update(p)
+            .eq("id", rid)
+            .execute()
+        )
+
+    await ob_catalog.set_step_status(
+        step["id"], ob_catalog.STATUS_ACTIVE, extra=extra
+    )
+    await _email_candidate_rejection(
+        run=run,
+        org_id=org_id,
+        step=step,
+        note=note,
+        round_number=extra["approval_round"],
+        what=(
+            f"{len(targets)} document{'' if len(targets) == 1 else 's'} "
+            "needs re-uploading"
+        ),
+        action_url=_candidate_link(run, "documents"),
+        action_label="Upload again",
+    )
+    return {
+        "status": ob_catalog.STATUS_ACTIVE,
+        "reopened_items": [r["item_key"] for r in targets],
+    }
+
+
+async def _reject_references(
+    *,
+    run: dict[str, Any],
+    step: dict[str, Any],
+    org_id: str,
+    note: str,
+    extra: dict[str, Any],
+) -> dict[str, Any]:
+    """Ask the candidate for a different set of referees.
+
+    The rows are marked `superseded` rather than deleted: HR turning down a
+    referee is a thing that happened to this hire, and the timeline should be
+    able to show it. Clearing `references_submitted_at` is what re-opens the
+    form the candidate already filled — the public endpoint refuses a second
+    submission while it is set.
+
+    Reachable only before the verification emails go out. The agent parks on
+    this gate the moment the list arrives, so nothing has been sent to anyone
+    at the point HR can reject it.
+    """
+    svc = get_service_client()
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_bgv_references")
+        .update({"status": "superseded"})
+        .eq("run_id", run["id"])
+        .in_("status", ["pending", "sent", "opened"])
+        .execute()
+    )
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_runs")
+        .update({"references_submitted_at": None})
+        .eq("id", run["id"])
+        .execute()
+    )
+    await ob_catalog.set_step_status(
+        step["id"], ob_catalog.STATUS_ACTIVE, extra=extra
+    )
+    await _email_candidate_rejection(
+        run=run,
+        org_id=org_id,
+        step=step,
+        note=note,
+        round_number=extra["approval_round"],
+        what="your references need to be re-submitted",
+        action_url=_candidate_link(run, "references"),
+        action_label="Submit references again",
+    )
+    return {"status": ob_catalog.STATUS_ACTIVE, "references_reset": True}
+
+
+async def _reject_signature(
+    *,
+    run: dict[str, Any],
+    step: dict[str, Any],
+    bundle: list[dict[str, Any]],
+    org_id: str,
+    user_id: str,
+    label: str,
+    note: str,
+    extra: dict[str, Any],
+) -> dict[str, Any]:
+    """Ask the candidate to sign the same document again.
+
+    The document itself was fine — HR approved that draft already. What failed
+    is the signature, so the same PDF goes into a fresh envelope rather than
+    being regenerated: re-rendering it would re-run the template against
+    whatever the field values say today, and a candidate asked to re-sign
+    should be re-signing the letter they were shown.
+
+    The old envelope is left alone rather than voided. It is necessarily
+    complete — the gate only opens once every signer has finished, which is
+    what `_signatures_complete` means — so there is no live link to close, and
+    `void_envelopes_for_run` works per *run*, not per step: calling it here
+    would take down a signing link belonging to some other step that happens to
+    be in flight. The document rows are detached from it below, which is what
+    actually decides which envelope counts.
+    """
+    run_id = run["id"]
+    svc = get_service_client()
+    kinds = [m["step_key"] for m in bundle]
+
+    from app.services.integrations.inhouse_sign import (
+        InhouseSignError,
+        InhouseSignUnavailable,
+        create_envelope,
+    )
+    from app.services.integrations.inhouse_sign import is_configured as _esign_ready
+
+    # The signed copy is no longer the document of record — clearing it is what
+    # stops `_signatures_complete` seeing the rejected signature and treating
+    # the next kick as ready to deliver.
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_documents")
+        .update(
+            {
+                "signed_pdf_path": None,
+                "signed_uploaded_at": None,
+                "signed_uploaded_by": None,
+                "esign_envelope_id": None,
+                "esign_status": None,
+                "esign_signing_url": None,
+                "esign_completed_at": None,
+                "sign_status": "draft",
+            }
+        )
+        .eq("run_id", run_id)
+        .in_("kind", kinds)
+        .execute()
+    )
+
+    roles = list(step.get("signer_roles") or [])
+    for member in bundle:
+        await ob_catalog.set_step_status(
+            member["id"], ob_catalog.STATUS_PENDING_SIGNATURE, extra=extra
+        )
+
+    if not _esign_ready():
+        # Print-and-scan: HR uploads a fresh scan through the same endpoint the
+        # first attempt used. Nothing to email the candidate about a document
+        # that never leaves the office.
+        await _email_candidate_rejection(
+            run=run,
+            org_id=org_id,
+            step=step,
+            note=note,
+            round_number=extra["approval_round"],
+            what=f"{label} has to be signed again",
+            action_url=None,
+            action_label=None,
+        )
+        return {"status": ob_catalog.STATUS_PENDING_SIGNATURE, "envelope_id": None}
+
+    signers = await _build_signers(run, roles, user_id)
+    source_path, envelope_kinds = await _source_pdf(run_id, org_id, bundle)
+    try:
+        envelope = await create_envelope(
+            org_id=org_id,
+            run_id=run_id,
+            document_kinds=envelope_kinds,
+            storage_path=source_path,
+            signers=signers,
+            completion_event="onboarding_v2/esign_completed",
+        )
+    except (InhouseSignError, InhouseSignUnavailable) as exc:
+        log.warning(
+            "onboarding_v2.resign_envelope_failed run=%s step=%s err=%s",
+            run_id,
+            step["step_key"],
+            exc,
+        )
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Couldn't create the new signing envelope: {exc}",
+        ) from exc
+
+    await asyncio.to_thread(
+        lambda: svc.table("onboarding_documents")
+        .update(
+            {
+                "esign_envelope_id": envelope["envelope_id"],
+                "esign_status": "sent",
+                "sign_status": (
+                    "sent_to_hr"
+                    if envelope["signers"][0]["role"] == ob_catalog.SIGNER_HR
+                    else "sent_to_candidate"
+                ),
+            }
+        )
+        .eq("run_id", run_id)
+        .in_("kind", envelope_kinds)
+        .execute()
+    )
+
+    first = envelope["signers"][0]
+    await _email_candidate_rejection(
+        run=run,
+        org_id=org_id,
+        step=step,
+        note=note,
+        round_number=extra["approval_round"],
+        what=f"{label} has to be signed again",
+        action_url=first.get("signing_url"),
+        action_label="Sign again",
+        # The first signer in the routing order is who gets the new link, and
+        # it is not always the candidate — an HR-then-candidate document starts
+        # over from the top.
+        to=first["email"],
+        recipient_name=first.get("name"),
+    )
+    return {
+        "status": ob_catalog.STATUS_PENDING_SIGNATURE,
+        "envelope_id": envelope["envelope_id"],
+        "signers": [{"role": s["role"], "email": s["email"]} for s in signers],
+    }
+
+
+async def _email_candidate_rejection(
+    *,
+    run: dict[str, Any],
+    org_id: str,
+    step: dict[str, Any],
+    note: str,
+    round_number: int,
+    what: str,
+    action_url: str | None,
+    action_label: str | None,
+    to: str | None = None,
+    recipient_name: str | None = None,
+) -> None:
+    """Tell whoever has to redo it that it was sent back, and why.
+
+    Best-effort: the step has already re-opened in the database by the time
+    this runs, and a bounced email must not undo that. The run page shows the
+    same note, and HR can nudge from there.
+
+    Keyed by round so the second rejection of the same step is a new email
+    rather than a duplicate the worker drops.
+    """
+    from app.config import get_settings
+    from app.services.email import send_email_event
+
+    settings = get_settings()
+    try:
+        await send_email_event(
+            event_type="onboarding_step_rejected",
+            to=to or run["candidate_email"],
+            user_id=run.get("pre_join_user_id"),
+            org_id=org_id,
+            dedupe_key=(
+                f"rejected-{run['id']}-{step['step_key']}-{round_number}"
+            ),
+            data={
+                "candidate_name": recipient_name or run["candidate_name"],
+                "step_label": step.get("bundle_label") or step.get("label"),
+                "what_happened": what,
+                "reason": note,
+                "action_url": action_url,
+                "action_label": action_label,
+                "app_url": settings.app_url.rstrip("/") if settings.app_url else None,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("onboarding_v2.rejection_email_failed run=%s err=%s", run["id"], exc)
 
 
 @router.post("/runs/{run_id}/steps/{step_key}/upload-signed")

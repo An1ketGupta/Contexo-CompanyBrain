@@ -14,10 +14,8 @@ Steps come in three kinds.
             to the candidate. Steps sharing a `bundle_key` are generated,
             approved and signed as one unit.
 
-  collect   Ask the candidate to upload a checklist of documents. Completes on
-            submission — HR approving or rejecting a scan happens afterwards
-            and never moves the pipeline, so a hire cannot stall on a review
-            queue nobody opened.
+  collect   Ask the candidate to upload a checklist of documents, then hold the
+            step while HR opens each one.
 
   system    Behaviour that lives here rather than in a template: `bgv` (ask the
             candidate for referees, then email each one a verification form)
@@ -30,9 +28,16 @@ label derived from it — built-in steps keep writing their historical values
 (`loi_pending_hr_review`, `bgv_pending`, …) so the dashboards built against
 that vocabulary go on working, and org-composed steps write generic ones.
 
-Every wait is a park, not an error: HR reviewing a draft, a candidate
-uploading, a referee replying. Inngest re-kicks the run when they act, `run()`
-finds the same step and moves it on.
+Wherever the candidate acts, the step then parks in `pending_hr_approval` and
+waits for HR to accept what they did — a signed document, a finished upload
+checklist, a list of referees. Accepting advances the run; rejecting sends the
+same ask back to the candidate at the same step, so nothing downstream has to
+be unwound. `requires_hr_approval` on the step turns the gate off for an org
+that would rather move faster than check.
+
+Every wait is a park, not an error: HR reviewing a draft or a signature, a
+candidate uploading, a referee replying. Inngest re-kicks the run when they
+act, `run()` finds the same step and moves it on.
 
 This replaced a twenty-branch if/elif over `onboarding_runs.status` that could
 only express the one sequence it was written for — LOI → BGV → appointment
@@ -537,14 +542,133 @@ class OnboardingV2Agent(BaseAgent):
             return await self._advance_system(step)
         return await self._advance_generate(steps, step)
 
+    # ── The HR approval gate ──────────────────────────────────────────────
+
+    async def _park_for_approval(
+        self,
+        step: dict[str, Any],
+        *,
+        detail: str,
+        siblings: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Hold the step until HR accepts or rejects what the candidate did.
+
+        Idempotent: a step already sitting in the gate is left alone. Every
+        unrelated kick — a second run event, a cron sweep — walks the pipeline
+        and arrives here again, and re-announcing would mail HR the same review
+        request once a day until they opened it.
+
+        Nothing here decides what happens next. HR answers through
+        `/steps/{key}/review`, which either advances the step or sends the ask
+        back to the candidate.
+        """
+        if step.get("status") == ob_catalog.STATUS_PENDING_HR_APPROVAL:
+            return {
+                "status": (await self._load_run()).get("status"),
+                "waiting_for": "hr_to_approve_candidate_work",
+                "step_key": step["step_key"],
+            }
+
+        await self._set_step(
+            step, ob_catalog.STATUS_PENDING_HR_APPROVAL, siblings=siblings
+        )
+        await self.log_step(
+            "approval", "waiting", {"step_key": step["step_key"]}
+        )
+        await ob_storage.log_onboarding_event(
+            org_id=self.org_id,
+            run_id=self.onboarding_run_id,
+            actor_kind="agent",
+            event_type="step_pending_hr_approval",
+            message=f"{detail} Review it and either accept it or send it back.",
+            metadata={
+                "step_key": step["step_key"],
+                "round": step.get("approval_round") or 0,
+            },
+        )
+        await self._notify_hr_approval_needed(step, detail=detail)
+        return {
+            "status": (await self._load_run()).get("status"),
+            "waiting_for": "hr_to_approve_candidate_work",
+            "step_key": step["step_key"],
+        }
+
+    async def _notify_hr_approval_needed(
+        self, step: dict[str, Any], *, detail: str
+    ) -> None:
+        """Email the HR user who started the run that something needs checking.
+
+        Dedupe is keyed by round, not just by step: HR sending a document back
+        and the candidate re-signing it produces a second, genuinely different
+        review request, and a step-only key would suppress it as a replay of
+        the first.
+        """
+        run = await self._load_run()
+        hr_email = await self._hr_email()
+        if not hr_email:
+            await self.log_step("notify_hr", "skipped", {"reason": "no_hr_email"})
+            return
+
+        settings = get_settings()
+        label = step.get("bundle_label") or step.get("label") or step["step_key"]
+        try:
+            await send_email_event(
+                event_type="onboarding_step_approval_needed",
+                to=hr_email,
+                user_id=run.get("triggered_by_user_id"),
+                org_id=self.org_id,
+                dedupe_key=(
+                    f"approval-{self.onboarding_run_id}-{step['step_key']}-"
+                    f"{step.get('approval_round') or 0}"
+                ),
+                data={
+                    "candidate_name": run["candidate_name"],
+                    "role_title": run["role_title"],
+                    "step_label": label,
+                    "summary": detail,
+                    "run_url": (
+                        f"{settings.app_url.rstrip('/')}/onboarding/"
+                        f"{self.onboarding_run_id}"
+                        if settings.app_url
+                        else None
+                    ),
+                    "app_url": (
+                        settings.app_url.rstrip("/") if settings.app_url else None
+                    ),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("onboarding_v2.approval_email_failed err=%s", exc)
+
+    async def _hr_email(self) -> str | None:
+        """The address of the HR user who started this run, if resolvable."""
+        run = await self._load_run()
+        triggered_by = run.get("triggered_by_user_id")
+        if not triggered_by:
+            return None
+        svc = get_service_client()
+        try:
+            au = await asyncio.to_thread(
+                lambda: svc.auth.admin.get_user_by_id(triggered_by)
+            )
+            return getattr(getattr(au, "user", None), "email", None)
+        except Exception:  # noqa: BLE001
+            return None
+
     # ── Collect steps ─────────────────────────────────────────────────────
 
     async def _advance_collect(self, step: dict[str, Any]) -> dict[str, Any]:
         """Ask the candidate for documents, and wait until they are all in.
 
-        Submitted, not approved: HR rejecting a blurry scan re-opens the ask
-        without rewinding the run, because a hire should not stall on a review
-        queue nobody has opened.
+        Everything in does not mean the step is finished. Unless the org turned
+        the gate off, the checklist then parks in `pending_hr_approval` so HR
+        can open each file before the run moves on — a marksheet photographed
+        at an angle nobody can read is worth catching here rather than two
+        steps later, when asking again means unwinding the pipeline.
+
+        A file HR sent back stops counting as filed, which is what re-opens the
+        ask: `outstanding` picks it up again on the next kick exactly as if it
+        had never been uploaded.
         """
         submissions = await ob_catalog.get_submissions(self.onboarding_run_id)
         outstanding = [
@@ -555,10 +679,20 @@ class OnboardingV2Agent(BaseAgent):
                 s["item_key"]
                 for s in submissions
                 if s.get("run_step_id") == step["id"]
+                and s.get("review_status") != ob_catalog.REVIEW_REJECTED
             }
         ]
 
         if not outstanding:
+            if not ob_catalog.gate_cleared(step):
+                return await self._park_for_approval(
+                    step,
+                    detail=(
+                        f"{step.get('label') or step['step_key']}: "
+                        f"{len(ob_catalog.required_items(step))} document(s) "
+                        "received from the candidate."
+                    ),
+                )
             await self._set_step(step, ob_catalog.STATUS_DONE)
             await self.log_step(
                 "collect", "completed", {"step_key": step["step_key"]}
@@ -609,11 +743,16 @@ class OnboardingV2Agent(BaseAgent):
     async def _advance_bgv(self, step: dict[str, Any]) -> dict[str, Any]:
         """Ask the candidate for references, then each referee for a reply.
 
-        Three waits in one step: for the candidate to name their referees, for
-        the verification emails to go out, and for the referees to answer. The
-        references form token is minted here rather than inherited from the LOI
-        email, which is what lets background verification run first, or without
-        an LOI at all.
+        Four waits in one step: for the candidate to name their referees, for
+        HR to accept that list, for the verification emails to go out, and for
+        the referees to answer. The references form token is minted here rather
+        than inherited from the LOI email, which is what lets background
+        verification run first, or without an LOI at all.
+
+        HR's look comes before the emails, not after, and that ordering is the
+        whole value of it. A referee who is the candidate's flatmate, or a
+        personal address where a manager was asked for, can be sent back and
+        replaced; once the verification form has gone out, it has gone out.
         """
         run = await self._refresh_run()
 
@@ -641,7 +780,22 @@ class OnboardingV2Agent(BaseAgent):
             .eq("run_id", self.onboarding_run_id)
             .execute()
         )
-        rows: list[dict[str, Any]] = refs.data or []
+        # A referee HR rejected is kept for the timeline and ignored here, so a
+        # superseded list neither holds the step open nor gets re-mailed.
+        rows: list[dict[str, Any]] = [
+            r for r in (refs.data or []) if r.get("status") != "superseded"
+        ]
+
+        if rows and not ob_catalog.gate_cleared(step):
+            return await self._park_for_approval(
+                step,
+                detail=(
+                    f"{run['candidate_name']} named {len(rows)} "
+                    f"reference{'' if len(rows) == 1 else 's'}. Nothing has been "
+                    "emailed to them yet."
+                ),
+            )
+
         if not rows:
             # The candidate submitted the form without naming anyone, or HR
             # overrode it empty. Nothing to verify, and blocking here would
@@ -946,13 +1100,52 @@ class OnboardingV2Agent(BaseAgent):
         except Exception as exc:  # noqa: BLE001
             log.warning("onboarding_v2.policy_email_failed err=%s", exc)
 
+    async def _ensure_documents_token(self) -> str:
+        """The candidate's upload link, minted on the first ask and kept alive.
+
+        One token per run, not per step: a run may ask for documents at two
+        points, and a candidate who bookmarked the first link should find the
+        second batch there rather than needing a new URL. Re-issuing on every
+        ask would also invalidate a link the candidate is mid-way through.
+
+        The expiry is pushed forward on each ask instead. 30 days rather than
+        the 14 the reference forms use — joining paperwork gets chased across a
+        notice period, and a candidate coming back in week three should not
+        find a dead link and have to email HR for another one.
+        """
+        from datetime import timedelta
+        from uuid import uuid4
+
+        run = await self._load_run()
+        token = run.get("documents_token") or str(uuid4())
+        expires_at = (datetime.now(UTC) + timedelta(days=30)).isoformat()
+
+        svc = get_service_client()
+        await asyncio.to_thread(
+            lambda: svc.table("onboarding_runs")
+            .update(
+                {
+                    "documents_token": token,
+                    "documents_token_expires_at": expires_at,
+                }
+            )
+            .eq("id", self.onboarding_run_id)
+            .execute()
+        )
+        if self._run_row is not None:
+            self._run_row["documents_token"] = token
+            self._run_row["documents_token_expires_at"] = expires_at
+        return token
+
     async def _notify_candidate_documents_due(self, step: dict[str, Any]) -> None:
         """Ask the candidate for this step's documents.
 
-        The candidate signs in with the pre-join account provisioned at run
-        creation, so this is a link into the portal rather than a token URL or
-        a request to email attachments back.
+        The link carries its own credential, so the candidate uploads straight
+        from the email without signing in — they are given an account at run
+        creation, but the magic-link email that reaches it is weeks old by the
+        time the first document is asked for and is the one people lose.
         """
+        token = await self._ensure_documents_token()
         run = await self._load_run()
         settings = get_settings()
         items = ob_catalog.required_items(step)
@@ -969,8 +1162,11 @@ class OnboardingV2Agent(BaseAgent):
                     "step_label": step.get("label") or "Documents",
                     "document_count": len(items),
                     "document_labels": [i["label"] for i in items],
+                    # Not /documents/{token}: that prefix is a protected
+                    # dashboard route, so the proxy would bounce the candidate
+                    # to /login — the exact thing this link exists to avoid.
                     "portal_url": (
-                        f"{settings.app_url.rstrip('/')}/candidate/onboarding"
+                        f"{settings.app_url.rstrip('/')}/candidate/documents/{token}"
                         if settings.app_url
                         else None
                     ),
@@ -1003,6 +1199,12 @@ class OnboardingV2Agent(BaseAgent):
         HR, one approval covers all of them, and they go into a single signing
         envelope. That was hardcoded for appointment-letter-plus-NDA; it is now
         whatever documents an org grouped together.
+
+        HR sees the documents twice when the candidate signs them: once as a
+        draft, before anyone signs, and again afterwards, to check the
+        signature actually landed where it was meant to. The second look is the
+        approval gate, and it is the only thing between a signed PDF and the
+        copy the candidate keeps.
         """
         bundle = ob_catalog.bundle_siblings(steps, step)
         status = step.get("status")
@@ -1024,6 +1226,15 @@ class OnboardingV2Agent(BaseAgent):
 
         if status == ob_catalog.STATUS_PENDING_SIGNATURE:
             if await self._signatures_complete(bundle):
+                if not ob_catalog.gate_cleared(step):
+                    return await self._park_for_approval(
+                        step,
+                        siblings=bundle,
+                        detail=(
+                            f"{step.get('bundle_label') or step.get('label')} "
+                            "has been signed and is ready for you to check."
+                        ),
+                    )
                 return await self._deliver_bundle(bundle)
             return {
                 "status": (await self._load_run()).get("status"),
@@ -1031,8 +1242,15 @@ class OnboardingV2Agent(BaseAgent):
                 "step_key": step["step_key"],
             }
 
+        if status == ob_catalog.STATUS_PENDING_HR_APPROVAL:
+            return {
+                "status": (await self._load_run()).get("status"),
+                "waiting_for": "hr_to_approve_candidate_work",
+                "step_key": step["step_key"],
+            }
+
         if status == ob_catalog.STATUS_ACTIVE:
-            # Signed and uploaded, or approved with nobody to sign. Either way
+            # Signed and checked, or approved with nobody to sign. Either way
             # the documents are final and the candidate should have them.
             return await self._deliver_bundle(bundle)
 
@@ -1287,18 +1505,7 @@ class OnboardingV2Agent(BaseAgent):
         lead = bundle[0]
         run = await self._load_run()
         triggered_by = run.get("triggered_by_user_id")
-        if not triggered_by:
-            await self.log_step("notify_hr", "skipped", {"reason": "no_hr"})
-            return
-
-        svc = get_service_client()
-        try:
-            au = await asyncio.to_thread(
-                lambda: svc.auth.admin.get_user_by_id(triggered_by)
-            )
-            hr_email = getattr(getattr(au, "user", None), "email", None)
-        except Exception:
-            hr_email = None
+        hr_email = await self._hr_email()
         if not hr_email:
             await self.log_step("notify_hr", "skipped", {"reason": "no_hr_email"})
             return

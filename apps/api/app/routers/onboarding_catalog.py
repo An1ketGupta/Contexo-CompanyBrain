@@ -5,12 +5,12 @@ the candidate sees and answers the document asks it produces
 (`/onboarding/candidate/*`); HR reviews what came back
 (`/onboarding/runs/{id}/submissions/*`).
 
-The candidate routes are authenticated like any other, not token-gated like
-`onboarding_public.py`. A candidate already has a real account by the time
-they are asked for anything: `ensure_pre_join_user` provisions one at run
-creation and mails them a magic link. Reusing it means no second credential to
-mint, expire, resend and leak — and the existing policy-acknowledgement screen
-already works this way.
+The candidate routes here are authenticated, for a candidate who does have a
+session — they land on the same screen from the dashboard once they have signed
+in. The identical view and upload served against a URL token, for the candidate
+who has not, lives in `onboarding_public.py`; both call `build_candidate_view`
+and `store_candidate_upload` below, so a rule about what may be uploaded when is
+written once and holds on either path.
 """
 from __future__ import annotations
 
@@ -178,6 +178,7 @@ async def update_catalog_step(
             enabled=body.enabled,
             label=body.label,
             signer_roles=body.signer_roles,
+            requires_hr_approval=body.requires_hr_approval,
             after_step_key=body.after_step_key,
             move=body.move,
         )
@@ -218,6 +219,7 @@ async def create_catalog_step(
             document_type_keys=body.document_type_keys,
             signer_roles=body.signer_roles,
             system_action=body.system_action,
+            requires_hr_approval=body.requires_hr_approval,
         )
     except ob_catalog.CatalogError as exc:
         raise _catalog_error(exc) from exc
@@ -318,30 +320,14 @@ async def _active_run_for_candidate(user_id: str) -> dict[str, Any] | None:
     return run
 
 
-@router.get("/candidate", response_model=CandidateOnboardingRead)
-async def get_candidate_onboarding(
-    current_user: dict = Depends(verify_jwt),
-) -> CandidateOnboardingRead:
-    """What this candidate has been asked for, and what they've already filed.
+async def build_candidate_view(run: dict[str, Any]) -> CandidateOnboardingRead:
+    """What this run has asked the candidate for, and what they've filed.
 
     Only steps the run has actually reached are returned. A step further down
     the pipeline is not merely hidden in the UI — it is absent from the
     response, so an early-provisioned candidate cannot pre-empt an ask that
     hasn't been made.
     """
-    user_id = current_user.get("user_id")
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Sign in to continue."
-        )
-
-    run = await _active_run_for_candidate(user_id)
-    if not run:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="You don't have an onboarding in progress.",
-        )
-
     steps = await ob_catalog.get_run_steps(run["id"])
     submissions = await ob_catalog.get_submissions(run["id"])
     by_step: dict[str, list[dict[str, Any]]] = {}
@@ -400,19 +386,11 @@ async def get_candidate_onboarding(
     )
 
 
-@router.post("/candidate/steps/{step_key}/items/{item_key}/upload")
-async def upload_candidate_document(
-    step_key: str,
-    item_key: str,
-    file: UploadFile = File(...),
+@router.get("/candidate", response_model=CandidateOnboardingRead)
+async def get_candidate_onboarding(
     current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """File one document against one checklist item.
-
-    Re-uploading replaces the previous file: correcting a blurry scan is not an
-    audit event, and the storage path is deterministic so the bytes are
-    overwritten rather than accumulating orphans.
-    """
+) -> CandidateOnboardingRead:
+    """The signed-in candidate's checklist."""
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(
@@ -425,7 +403,28 @@ async def upload_candidate_document(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="You don't have an onboarding in progress.",
         )
+    return await build_candidate_view(run)
 
+
+async def store_candidate_upload(
+    *,
+    run: dict[str, Any],
+    step_key: str,
+    item_key: str,
+    file: UploadFile,
+    submitted_by: str | None,
+) -> dict[str, Any]:
+    """File one document against one checklist item.
+
+    Re-uploading replaces the previous file: correcting a blurry scan is not an
+    audit event, and the storage path is deterministic so the bytes are
+    overwritten rather than accumulating orphans.
+
+    `submitted_by` is the candidate's user id when they came in signed in, and
+    None when they came in on a link — the run and the step already say whose
+    document this is, and the column is a provenance note rather than the
+    authorisation.
+    """
     steps = await ob_catalog.get_run_steps(run["id"])
     step = next((s for s in steps if s["step_key"] == step_key), None)
     if step is None or step.get("kind") != ob_catalog.KIND_COLLECT:
@@ -439,6 +438,18 @@ async def upload_candidate_document(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This document hasn't been requested yet.",
+        )
+    # Mid-review is a bad moment to swap a file: HR is looking at the version
+    # that was there when they opened it, and accepting would then accept
+    # something they never saw. The way back in is HR sending it back, which
+    # re-opens exactly the items they named.
+    if step.get("status") == ob_catalog.STATUS_PENDING_HR_APPROVAL:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "These documents are being checked right now. You'll get an "
+                "email if anything needs re-uploading."
+            ),
         )
 
     items = (step.get("config") or {}).get("items") or []
@@ -502,7 +513,7 @@ async def upload_candidate_document(
         "original_filename": filename,
         "mime_type": file.content_type,
         "file_bytes": len(body),
-        "submitted_by": user_id,
+        "submitted_by": submitted_by,
         "submitted_at": datetime.now(UTC).isoformat(),
         # A replacement is a fresh document, so an earlier rejection must not
         # cling to it.
@@ -540,16 +551,22 @@ async def upload_candidate_document(
         actor_kind="candidate",
         event_type="candidate_document_submitted",
         message=f"{run['candidate_name']} uploaded {item['label']}.",
-        actor_user_id=user_id,
+        actor_user_id=submitted_by,
         metadata={"step_key": step_key, "item_key": item_key},
     )
 
-    # Re-drive the run: this upload may have been the last required document,
-    # in which case the gate opens and the pipeline carries on.
+    # A replacement for something HR sent back is new work they have not seen,
+    # so the step's approval is withdrawn. Without this an approved step would
+    # stay approved through every later resubmission — the exact hole the gate
+    # exists to close.
+    await ob_catalog.clear_step_review(step["id"])
+
+    # Re-drive the run: this upload may have been the last required document.
+    # What happens then is the agent's call — it either parks the step for HR
+    # to check or, when the org turned that off, completes it.
     submissions = await ob_catalog.get_submissions(run["id"])
     satisfied = ob_catalog.is_collect_satisfied(step, submissions)
     if satisfied:
-        await ob_catalog.set_step_status(step["id"], ob_catalog.STATUS_DONE)
         await ob_storage.log_onboarding_event(
             org_id=run["org_id"],
             run_id=run["id"],
@@ -570,6 +587,35 @@ async def upload_candidate_document(
         )
 
     return {"ok": True, "item_key": item_key, "step_complete": satisfied}
+
+
+@router.post("/candidate/steps/{step_key}/items/{item_key}/upload")
+async def upload_candidate_document(
+    step_key: str,
+    item_key: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """The signed-in candidate files one document."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Sign in to continue."
+        )
+
+    run = await _active_run_for_candidate(user_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="You don't have an onboarding in progress.",
+        )
+    return await store_candidate_upload(
+        run=run,
+        step_key=step_key,
+        item_key=item_key,
+        file=file,
+        submitted_by=user_id,
+    )
 
 
 # ── HR: reviewing what came back ────────────────────────────────────────────
@@ -620,11 +666,15 @@ async def review_submission(
 ) -> dict[str, Any]:
     """Approve or reject one filed document.
 
-    Never moves the run. The pipeline advanced when the document arrived, by
-    design — a hire should not stall because a review queue went unattended.
-    Rejecting re-opens the ask so the candidate can replace the file, and if
-    the run has since finished that is a conversation to have with them, not
-    something to express by rewinding a completed pipeline.
+    A per-file note, not a decision about the step. It is how HR marks which
+    documents in a checklist are wrong before sending the whole step back
+    through `/steps/{key}/review`, which is what actually moves the run and
+    emails the candidate.
+
+    Marking one rejected does stop it counting as filed, so the item re-opens
+    when the step is next asked. On a step already past its gate that is a
+    record rather than an instruction — nothing re-asks a finished step, and
+    unwinding a completed pipeline is not what "this scan is blurry" means.
     """
     user_id, org_id, _ = _require_user(current_user)
     svc = get_service_client()

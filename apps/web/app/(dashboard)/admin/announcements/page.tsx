@@ -1,8 +1,11 @@
 "use client";
 
+import { useState } from "react";
+
 import Link from "next/link";
 import useSWR from "swr";
-import { Plus } from "lucide-react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -37,11 +40,33 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function AnnouncementsPage() {
-  const { data, error, isLoading } = useSWR<ListResponse>(
+  const { data, error, isLoading, mutate } = useSWR<ListResponse>(
     "/api/admin/announcements",
     fetcher,
     { revalidateOnFocus: false },
   );
+
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const handleDelete = async (e: React.MouseEvent, a: AnnouncementRow) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm(`Delete this announcement?\n\n"${a.request_text.slice(0, 100)}…"`)) return;
+    setDeleting(a.id);
+    try {
+      const res = await fetch(`/api/admin/announcements/${a.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || body.message || `Failed (${res.status})`);
+      }
+      toast.success("Announcement deleted.");
+      mutate();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setDeleting(null);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
@@ -51,7 +76,7 @@ export default function AnnouncementsPage() {
             Internal announcements
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            One prompt → email + Slack + Notion versions, scheduled to fire together.
+            One Announcements → Email + Slack + Notion.
           </p>
         </div>
         <Button asChild className="rounded-full">
@@ -94,9 +119,26 @@ export default function AnnouncementsPage() {
                         : `Drafted ${new Date(a.created_at).toLocaleString()}`}
                   </p>
                 </div>
-                <Badge className={STATUS_COLORS[a.status] ?? "bg-muted text-muted-foreground"}>
-                  {a.status}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <Badge className={STATUS_COLORS[a.status] ?? "bg-muted text-muted-foreground"}>
+                    {a.status}
+                  </Badge>
+                  {["draft", "cancelled", "failed"].includes(a.status) && (
+                    <button
+                      type="button"
+                      onClick={(e) => handleDelete(e, a)}
+                      disabled={deleting === a.id}
+                      className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-destructive-soft hover:text-destructive-ink disabled:opacity-50"
+                      aria-label="Delete announcement"
+                    >
+                      {deleting === a.id ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-4" />
+                      )}
+                    </button>
+                  )}
+                </div>
               </Link>
             </li>
           ))}

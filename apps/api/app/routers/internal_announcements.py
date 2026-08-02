@@ -219,3 +219,42 @@ async def cancel_announcement_endpoint(
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.delete("/admin/announcements/{announcement_id}")
+async def delete_announcement_endpoint(
+    announcement_id: str,
+    current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    org_id, user_id, token = _require_org(current_user)
+    await _require_admin(token, user_id)
+    svc = get_service_client()
+
+    def _delete() -> None:
+        row = (
+            svc.table("internal_announcements")
+            .select("status")
+            .eq("id", announcement_id)
+            .eq("org_id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        if not row or not row.data:
+            raise ValueError("Announcement not found.")
+        row_status = row.data.get("status", "")
+        if row_status not in ("draft", "cancelled", "failed"):
+            raise PermissionError(
+                f"Cannot delete an announcement with status '{row_status}'. "
+                "Cancel it first."
+            )
+        svc.table("internal_announcements").delete().eq(
+            "id", announcement_id
+        ).eq("org_id", org_id).execute()
+
+    try:
+        await asyncio.to_thread(_delete)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return {"deleted": True}

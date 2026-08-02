@@ -118,6 +118,16 @@ import {
   type OnboardingDocumentsRequestedEmailProps,
 } from "@/emails/onboarding-documents-requested";
 import {
+  OnboardingStepApprovalNeededEmail,
+  onboardingStepApprovalNeededSubject,
+  type OnboardingStepApprovalNeededEmailProps,
+} from "@/emails/onboarding-step-approval-needed";
+import {
+  OnboardingStepRejectedEmail,
+  onboardingStepRejectedSubject,
+  type OnboardingStepRejectedEmailProps,
+} from "@/emails/onboarding-step-rejected";
+import {
   OnboardingReferencesRequestedEmail,
   onboardingReferencesRequestedSubject,
   type OnboardingReferencesRequestedEmailProps,
@@ -292,6 +302,14 @@ const TEMPLATES = {
     Component: OnboardingDocumentsRequestedEmail,
     subject: onboardingDocumentsRequestedSubject,
   } satisfies Template<OnboardingDocumentsRequestedEmailProps>,
+  onboarding_step_approval_needed: {
+    Component: OnboardingStepApprovalNeededEmail,
+    subject: onboardingStepApprovalNeededSubject,
+  } satisfies Template<OnboardingStepApprovalNeededEmailProps>,
+  onboarding_step_rejected: {
+    Component: OnboardingStepRejectedEmail,
+    subject: onboardingStepRejectedSubject,
+  } satisfies Template<OnboardingStepRejectedEmailProps>,
   onboarding_references_requested: {
     Component: OnboardingReferencesRequestedEmail,
     subject: onboardingReferencesRequestedSubject,

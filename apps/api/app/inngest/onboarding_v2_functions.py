@@ -286,9 +286,9 @@ async def onboarding_v2_resume(ctx: inngest.Context) -> dict[str, Any]:
 async def onboarding_v2_collect_submitted(ctx: inngest.Context) -> dict[str, Any]:
     """The candidate finished a document-collection step.
 
-    Fired only once every required document is in, so this re-drives a run
-    that has been parked at that step's gate — the gate now opens and the
-    pipeline picks up wherever the status ladder left it.
+    Fired only once every required document is in. The agent decides what that
+    earns: the step parks for HR to open each file, or — where the org turned
+    that check off — completes and the pipeline carries on.
     """
     data = ctx.event.data
     run_id = data.get("onboarding_run_id")
