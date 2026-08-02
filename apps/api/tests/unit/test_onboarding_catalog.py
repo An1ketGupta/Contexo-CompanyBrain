@@ -71,6 +71,86 @@ def test_an_unbundled_step_is_a_bundle_of_one():
     assert catalog.bundle_siblings(PIPELINE, step) == [step]
 
 
+# ── Finding a document's step ──────────────────────────────────────────────
+#
+# The LOI review endpoints used to address the letter by the literal step key
+# `loi`. An org that renames or rebuilds the step renders the same document
+# under its own key, and every one of those lookups silently missed.
+
+
+def _generates(*specs: tuple[str, str | None, int]) -> list[dict[str, object]]:
+    """Generate-kind rows: (step_key, document_type_key, position)."""
+    return [
+        {
+            "id": f"rs-{key}",
+            "step_key": key,
+            "kind": catalog.KIND_GENERATE,
+            "document_type_key": type_key,
+            "position": position,
+            "status": catalog.STATUS_PENDING,
+        }
+        for key, type_key, position in specs
+    ]
+
+
+def test_document_step_is_found_by_type_not_by_step_key():
+    steps = _generates(
+        ("offer_letter_2", catalog.DOCUMENT_TYPE_LOI, 0),
+        ("nda", "nda", 10),
+    )
+    found = catalog.find_document_step(steps, catalog.DOCUMENT_TYPE_LOI)
+    assert found is not None
+    assert found["step_key"] == "offer_letter_2"
+
+
+def test_a_pipeline_without_the_document_returns_none():
+    """An org that composed a pipeline with no LOI has no LOI step, and the
+    caller shows nothing rather than an empty panel."""
+    steps = _generates(("nda", "nda", 0))
+    assert catalog.find_document_step(steps, catalog.DOCUMENT_TYPE_LOI) is None
+
+
+def test_the_earliest_step_wins_when_a_type_is_rendered_twice():
+    """A catalog may legitimately send the same document twice. Refusing to
+    choose would break the panel for a pipeline that is merely unusual."""
+    steps = _generates(
+        ("nda_reissue", "nda", 40),
+        ("nda", "nda", 10),
+    )
+    found = catalog.find_document_step(steps, "nda")
+    assert found is not None
+    assert found["step_key"] == "nda"
+
+
+def test_collect_and_system_steps_are_never_document_steps():
+    """`document_type_key` is nullable and only meaningful on generate steps —
+    a None on both sides must not match."""
+    steps = [
+        {
+            "id": "rs-docs",
+            "step_key": "docs",
+            "kind": catalog.KIND_COLLECT,
+            "document_type_key": None,
+            "position": 0,
+            "status": catalog.STATUS_ACTIVE,
+        }
+    ]
+    assert catalog.find_document_step(steps, catalog.DOCUMENT_TYPE_LOI) is None
+    assert catalog.find_document_step(steps, None) is None  # type: ignore[arg-type]
+
+
+def test_the_seeded_catalog_still_resolves_its_letter_of_intent():
+    """The default every org is seeded with has to keep working — this is the
+    fallback path the rename fix must not regress."""
+    defaults = [
+        {**d, "kind": d["kind"], "id": f"rs-{d['step_key']}"}
+        for d in catalog.DEFAULT_STEP_DEFS
+    ]
+    found = catalog.find_document_step(defaults, catalog.DOCUMENT_TYPE_LOI)
+    assert found is not None
+    assert found["step_key"] == "loi"
+
+
 # ── Next actionable ────────────────────────────────────────────────────────
 
 
@@ -217,6 +297,15 @@ def test_placement_on_an_unknown_step_changes_nothing():
 def fake(monkeypatch):
     store = FakeSupabase({})
     monkeypatch.setattr(catalog, "get_service_client", lambda: store)
+
+    # Catalog edits write through to the four legacy booleans on
+    # `organizations.metadata`, which lives behind its own client. These tests
+    # are about the catalog, so the write-through is stubbed out; the mapping
+    # itself is covered by test_legacy_toggles_follow_the_catalog.
+    async def _noop(**_kwargs):
+        return None
+
+    monkeypatch.setattr(catalog.org_config, "update_onboarding_steps", _noop)
     return store
 
 
@@ -230,7 +319,12 @@ async def test_a_cold_org_is_seeded_on_first_read(fake):
         "policies",
         "induction",
     ]
-    assert defs[0]["locked"] is True, "the LOI must not be removable"
+    # Nothing is pinned. The default catalog is the pipeline the product
+    # shipped with, not a set of steps an org is stuck with — the LOI became
+    # ordinary once run creation took over the candidate account and the BGV
+    # step took over the references token.
+    assert all(d["locked"] is False for d in defs)
+    assert next(d for d in defs if d["step_key"] == "bgv")["system_action"] == "bgv"
 
 
 async def test_seeding_is_idempotent(fake):
@@ -483,9 +577,12 @@ async def test_a_collect_step_lands_where_it_was_asked_for(fake):
     ]
 
 
-async def test_an_unanchored_collect_step_never_displaces_the_loi(fake):
-    """The pipeline requires the LOI to run first — everything downstream
-    reads state it writes."""
+async def test_an_unanchored_step_opens_the_pipeline(fake):
+    """"What is the first step?" has to be answerable with anything.
+
+    An org that opens by asking for documents rather than sending an LOI says
+    so by adding a step with nothing before it.
+    """
     await catalog.create_collect_step(
         org_id=ORG,
         label="Joining documents",
@@ -493,18 +590,171 @@ async def test_an_unanchored_collect_step_never_displaces_the_loi(fake):
         items=[{"label": "PAN card"}],
     )
     defs = await catalog.get_step_defs(ORG)
-    assert defs[0]["step_key"] == "loi"
-    assert defs[1]["step_key"] == "joining_documents"
+    assert defs[0]["step_key"] == "joining_documents"
+    assert defs[1]["step_key"] == "loi"
 
 
-async def test_the_loi_cannot_be_turned_off(fake):
+async def test_the_loi_can_be_turned_off(fake):
+    """Nothing downstream reads state only the LOI writes any more."""
+    await catalog.update_step(org_id=ORG, step_key="loi", enabled=False)
+    defs = {d["step_key"]: d for d in await catalog.get_step_defs(ORG)}
+    assert defs["loi"]["enabled"] is False
+
+
+async def test_any_step_can_be_deleted(fake):
+    """An org that doesn't run background checks should not have to look at a
+    switched-off background check row forever."""
+    await catalog.delete_step(org_id=ORG, step_key="bgv")
+    assert all(d["step_key"] != "bgv" for d in await catalog.get_step_defs(ORG))
+
+
+async def test_deleting_one_document_removes_its_whole_bundle(fake):
+    """Half a bundle is not a state anyone asked for: the remaining member
+    would be generated, reviewed and signed as a bundle of one."""
+    await catalog.delete_step(org_id=ORG, step_key="nda")
+    keys = [d["step_key"] for d in await catalog.get_step_defs(ORG)]
+    assert "nda" not in keys
+    assert "appointment_letter" not in keys
+
+
+async def test_one_document_makes_one_step(fake):
+    steps = await catalog.create_step(
+        org_id=ORG,
+        kind=catalog.KIND_GENERATE,
+        label="Offer letter",
+        after_step_key="loi",
+        document_type_keys=["offer_letter"],
+        signer_roles=["hr", "candidate"],
+    )
+    assert len(steps) == 1
+    assert steps[0]["document_type_key"] == "offer_letter"
+    assert steps[0]["bundle_key"] is None
+    assert steps[0]["signer_roles"] == ["hr", "candidate"]
+
+
+async def test_several_documents_make_a_bundle(fake):
+    steps = await catalog.create_step(
+        org_id=ORG,
+        kind=catalog.KIND_GENERATE,
+        label="Joining paperwork",
+        after_step_key="loi",
+        document_type_keys=["offer_letter", "nda"],
+        signer_roles=["candidate"],
+    )
+    assert len(steps) == 2
+    assert len({s["bundle_key"] for s in steps}) == 1
+    assert all(s["bundle_label"] == "Joining paperwork" for s in steps)
+
+
+async def test_a_second_step_on_the_same_template_keeps_the_type_key(fake):
+    """Step keys are unique per org, so a second NDA step gets a suffixed key.
+
+    The document type it renders must not be derived from that key — `nda_2` is
+    not a template anyone uploaded.
+    """
+    steps = await catalog.create_step(
+        org_id=ORG,
+        kind=catalog.KIND_GENERATE,
+        label="Second NDA",
+        after_step_key="nda",
+        document_type_keys=["nda"],
+    )
+    assert steps[0]["step_key"] != "nda"
+    assert steps[0]["document_type_key"] == "nda"
+
+
+async def test_signer_roles_keep_the_order_they_were_given(fake):
+    """Order is routing order — whoever is listed first signs first."""
+    steps = await catalog.create_step(
+        org_id=ORG,
+        kind=catalog.KIND_GENERATE,
+        label="Contract",
+        document_type_keys=["nda"],
+        signer_roles=["candidate", "hr"],
+    )
+    assert steps[0]["signer_roles"] == ["candidate", "hr"]
+
+
+async def test_an_unknown_signer_is_refused(fake):
+    """Dropping it silently would produce a document nobody was asked to sign,
+    which looks exactly like one deliberately sent unsigned."""
+    with pytest.raises(catalog.CatalogError, match="can't sign"):
+        await catalog.create_step(
+            org_id=ORG,
+            kind=catalog.KIND_GENERATE,
+            label="Contract",
+            document_type_keys=["nda"],
+            signer_roles=["legal"],
+        )
+
+
+async def test_only_generate_steps_can_have_signers(fake):
+    with pytest.raises(catalog.CatalogError, match="doesn't produce a document"):
+        await catalog.update_step(
+            org_id=ORG, step_key="bgv", signer_roles=["hr"]
+        )
+
+
+async def test_a_system_step_needs_to_know_what_it_does(fake):
+    with pytest.raises(catalog.CatalogError, match="background check"):
+        await catalog.create_step(
+            org_id=ORG, kind=catalog.KIND_SYSTEM, label="Some check"
+        )
+
+
+async def test_a_system_step_records_its_action(fake):
+    steps = await catalog.create_step(
+        org_id=ORG,
+        kind=catalog.KIND_SYSTEM,
+        label="Reference checks",
+        system_action=catalog.SYSTEM_ACTION_BGV,
+    )
+    assert steps[0]["system_action"] == catalog.SYSTEM_ACTION_BGV
+    assert steps[0]["step_key"] == "reference_checks"
+
+
+async def test_moving_a_step_reorders_the_pipeline(fake):
+    await catalog.update_step(org_id=ORG, step_key="induction", move="up")
+    keys = [d["step_key"] for d in await catalog.get_step_defs(ORG)]
+    assert keys == ["loi", "bgv", "appointment_letter", "nda", "induction", "policies"]
+
+
+async def test_a_bundle_moves_as_one_unit(fake):
+    """Reordering one member past its own sibling would split the bundle."""
+    await catalog.update_step(org_id=ORG, step_key="appointment_letter", move="up")
+    keys = [d["step_key"] for d in await catalog.get_step_defs(ORG)]
+    assert keys == ["loi", "appointment_letter", "nda", "bgv", "policies", "induction"]
+
+
+async def test_moving_past_the_end_is_a_no_op(fake):
+    before = [d["step_key"] for d in await catalog.get_step_defs(ORG)]
+    await catalog.update_step(org_id=ORG, step_key="loi", move="up")
+    await catalog.update_step(org_id=ORG, step_key="induction", move="down")
+    assert [d["step_key"] for d in await catalog.get_step_defs(ORG)] == before
+
+
+async def test_signers_apply_to_the_whole_bundle(fake):
+    await catalog.update_step(
+        org_id=ORG, step_key="appointment_letter", signer_roles=["hr"]
+    )
+    defs = {d["step_key"]: d for d in await catalog.get_step_defs(ORG)}
+    assert defs["appointment_letter"]["signer_roles"] == ["hr"]
+    assert defs["nda"]["signer_roles"] == ["hr"]
+
+
+async def test_a_locked_step_is_still_protected(fake):
+    """`locked` is unused today but must keep working — it is the mechanism if
+    a step ever again has to lead."""
+    fake.tables["onboarding_step_defs"] = []
+    await catalog.get_step_defs(ORG)
+    for row in fake.tables["onboarding_step_defs"]:
+        if row["step_key"] == "loi":
+            row["locked"] = True
+
     with pytest.raises(catalog.CatalogError, match="can't be turned off"):
         await catalog.update_step(org_id=ORG, step_key="loi", enabled=False)
-
-
-async def test_a_built_in_step_cannot_be_deleted(fake):
-    with pytest.raises(catalog.CatalogError, match="not removed"):
-        await catalog.delete_step(org_id=ORG, step_key="bgv")
+    with pytest.raises(catalog.CatalogError, match="can't be removed"):
+        await catalog.delete_step(org_id=ORG, step_key="loi")
 
 
 async def test_a_collect_step_can_be_deleted(fake):

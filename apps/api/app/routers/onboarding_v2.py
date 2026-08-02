@@ -42,7 +42,10 @@ from app.models.onboarding_v2 import (
 )
 from app.services.agents.onboarding_v2 import catalog as ob_catalog
 from app.services.agents.onboarding_v2 import storage as ob_storage
-from app.services.agents.onboarding_v2.pre_join import ensure_pre_join_user
+from app.services.agents.onboarding_v2.pre_join import (
+    ensure_pre_join_user,
+    send_magic_link,
+)
 from app.services.documents import schema as doc_schema
 from app.services.documents import text_edit
 from app.services.documents.constants import STATUS_CONFIRMED
@@ -186,13 +189,27 @@ async def start_onboarding(
     #
     # Best-effort, exactly as it was at its old call site: a mail or auth blip
     # must not fail the hire. `ensure_pre_join_user` is idempotent, so the
-    # LOI step still retries this if it didn't take here.
+    # policy step still retries this if it didn't take here.
     try:
         await ensure_pre_join_user(
             org_id=org_id,
             run_id=run_id,
             candidate_email=str(body.candidate_email),
             candidate_name=body.candidate_name,
+        )
+        # The sign-in link travels with the account for the same reason: any
+        # step may be the one that asks the candidate for something, and a
+        # portal they cannot sign into is not a portal.
+        from app.config import get_settings
+
+        settings = get_settings()
+        await send_magic_link(
+            email=str(body.candidate_email),
+            redirect_to=(
+                f"{settings.app_url.rstrip('/')}/candidate/onboarding"
+                if settings.app_url
+                else None
+            ),
         )
     except Exception as exc:  # noqa: BLE001
         log.warning(
@@ -483,6 +500,27 @@ async def get_run(
     fresh_urls = await ob_storage.refresh_signed_urls_for_run(run_id)
 
     detail = _run_to_read(row)
+    # The pipeline this run is actually walking. Materialized rather than read
+    # so a run created before the step engine still reports one.
+    detail["steps"] = [
+        {
+            "id": s["id"],
+            "step_key": s["step_key"],
+            "kind": s["kind"],
+            "label": s["label"],
+            "document_type_key": s.get("document_type_key"),
+            "bundle_key": s.get("bundle_key"),
+            "bundle_label": s.get("bundle_label"),
+            "position": s.get("position") or 0,
+            "status": s.get("status") or "pending",
+            "signer_roles": s.get("signer_roles") or [],
+            "system_action": s.get("system_action"),
+            "blocked_reason": s.get("blocked_reason"),
+            "started_at": s.get("started_at"),
+            "completed_at": s.get("completed_at"),
+        }
+        for s in await ob_catalog.materialize_run_steps(org_id=org_id, run_id=run_id)
+    ]
     detail["references"] = [
         {
             "id": r["id"],
@@ -558,7 +596,10 @@ async def get_run(
     return detail
 
 
-# ── Upload signed LOI───────────────────────────────────────────────────────
+# ── Legacy per-document endpoints ──────────────────────────────────────────
+# Superseded by the step-keyed routes in `onboarding_steps.py`, which read who
+# signs from the step's `signer_roles` instead of hardcoding it per document.
+# Kept because the frontend and the Chrome extension still call them.
 
 
 @router.post("/runs/{run_id}/loi/upload-signed")
@@ -567,127 +608,15 @@ async def upload_signed_loi(
     file: UploadFile = File(...),
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
-    user_id, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
+    from app.routers.onboarding_steps import upload_signed_step
 
-    run = await asyncio.to_thread(
-        lambda: svc.table("onboarding_runs")
-        .select("id, status, candidate_name")
-        .eq("id", run_id)
-        .eq("org_id", org_id)
-        .maybe_single()
-        .execute()
-    )
-    if not run or not run.data:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found.")
-    if run.data["status"] != "loi_pending_hr_sign":
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Run is in '{run.data['status']}', expected 'loi_pending_hr_sign'.",
-        )
-
-    body = await file.read()
-    if not body or not body.startswith(b"%PDF"):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Upload must be a PDF file."
-        )
-    if len(body) > 25 * 1024 * 1024:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "PDF too large (>25MB)."
-        )
-
-    # Soft sanity checks: page count + "did HR actually sign it?" heuristic.
-    # We don't reject on these — they're advisory warnings returned in the
-    # response so the UI can show a "Looks like you forgot to sign" prompt.
-    warnings: list[str] = []
-    try:
-        import pymupdf  # type: ignore[import-not-found]
-        with pymupdf.open(stream=body, filetype="pdf") as pdf:
-            if pdf.page_count < 1:
-                raise HTTPException(
-                    status.HTTP_400_BAD_REQUEST, "PDF has no pages."
-                )
-            if pdf.page_count > 50:
-                warnings.append(
-                    f"PDF has {pdf.page_count} pages — that's unusually long for an LOI."
-                )
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        log.warning("onboarding_v2.pdf_inspect_failed run=%s err=%s", run_id, exc)
-
-    # Byte-identical-to-draft check: if HR uploads the exact bytes we
-    # generated, they almost certainly forgot to sign + scan it.
-    try:
-        existing_doc = await asyncio.to_thread(
-            lambda: svc.table("onboarding_documents")
-            .select("storage_path, file_bytes")
-            .eq("run_id", run_id).eq("kind", "loi").maybe_single().execute()
-        )
-        if existing_doc and existing_doc.data:
-            draft_path = existing_doc.data.get("storage_path")
-            if draft_path:
-                def _dl() -> bytes:
-                    return svc.storage.from_(ob_storage.STORAGE_BUCKET).download(draft_path)
-                draft_bytes = await asyncio.to_thread(_dl)
-                if draft_bytes and draft_bytes == body:
-                    warnings.append(
-                        "This file is byte-identical to the unsigned draft — did "
-                        "you forget to sign and scan it?"
-                    )
-    except Exception as exc:  # noqa: BLE001
-        log.warning("onboarding_v2.draft_compare_failed run=%s err=%s", run_id, exc)
-
-    storage_path = f"orgs/{org_id}/onboarding/{run_id}/loi_signed.pdf"
-
-    def _upload() -> None:
-        svc.storage.from_(ob_storage.STORAGE_BUCKET).upload(
-            path=storage_path,
-            file=body,
-            file_options={"content-type": "application/pdf", "upsert": "true"},
-        )
-
-    await asyncio.to_thread(_upload)
-
-    now = datetime.now(UTC).isoformat()
-    await asyncio.to_thread(
-        lambda: svc.table("onboarding_documents")
-        .update(
-            {
-                "signed_pdf_path": storage_path,
-                "sign_status": "signed_by_hr",
-                "signed_uploaded_by": user_id,
-                "signed_uploaded_at": now,
-            }
-        )
-        .eq("run_id", run_id)
-        .eq("kind", "loi")
-        .execute()
-    )
-    await asyncio.to_thread(
-        lambda: svc.table("onboarding_runs")
-        .update({"status": "loi_signed_uploaded", "loi_signed_at": now})
-        .eq("id", run_id)
-        .execute()
-    )
-    await ob_storage.log_onboarding_event(
-        org_id=org_id,
+    step = await _loi_step(run_id)
+    return await upload_signed_step(
         run_id=run_id,
-        actor_kind="hr",
-        event_type="loi_signed_uploaded",
-        message="HR uploaded the signed LOI.",
-        actor_user_id=user_id,
+        step_key=step["step_key"],
+        file=file,
+        current_user=current_user,
     )
-
-    # Kick the agent to email the candidate.
-    inngest_client = get_inngest_client()
-    await inngest_client.send(
-        inngest.Event(
-            name="onboarding_v2/loi_signed_uploaded",
-            data={"onboarding_run_id": run_id, "org_id": org_id},
-        )
-    )
-    return {"status": "loi_signed_uploaded", "warnings": warnings}
 
 
 # ── Approve AL+NDA bundle ───────────────────────────────────────────────────
@@ -698,216 +627,12 @@ async def approve_offer_bundle(
     run_id: str,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
-    user_id, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
+    """Legacy alias. The bundle is now approved by the key of its lead step."""
+    from app.routers.onboarding_steps import approve_step
 
-    run = await asyncio.to_thread(
-        lambda: svc.table("onboarding_runs")
-        .select("id, status, candidate_email, candidate_name, role_title")
-        .eq("id", run_id)
-        .eq("org_id", org_id)
-        .maybe_single()
-        .execute()
+    return await approve_step(
+        run_id=run_id, step_key="appointment_letter", current_user=current_user
     )
-    if not run or not run.data:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found.")
-    if run.data["status"] != "appointment_pending_hr_review":
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Run is in '{run.data['status']}', expected 'appointment_pending_hr_review'.",
-        )
-
-    docs = await asyncio.to_thread(
-        lambda: svc.table("onboarding_documents")
-        .select("id, kind, storage_path, render_context")
-        .eq("run_id", run_id)
-        .in_("kind", ["appointment_letter", "nda"])
-        .execute()
-    )
-    if not docs.data or len(docs.data) < 2:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "Offer bundle incomplete — both AL and NDA must exist before approval.",
-        )
-
-    from app.config import get_settings
-    from app.services.email import send_email_event
-    settings = get_settings()
-
-    esign_envelope_id: str | None = None
-    esign_signing_url: str | None = None
-
-    # Prefer e-sign when apps/esign is configured; fall back to plain email
-    # with signed-link PDFs. The fallback path is what a customer uses on
-    # their first day before ESIGN_SERVICE_URL/ESIGN_API_KEY are wired.
-    from app.services.integrations.inhouse_sign import (
-        create_envelope,
-        merge_pdfs,
-    )
-    from app.services.integrations.inhouse_sign import (
-        is_configured as _esign_ready,
-    )
-
-    use_esign = _esign_ready()
-
-    if use_esign:
-        try:
-            def _download(path: str) -> bytes:
-                return svc.storage.from_(ob_storage.STORAGE_BUCKET).download(path)
-
-            pdf_bytes_by_kind = {
-                d["kind"]: await asyncio.to_thread(_download, d["storage_path"])
-                for d in docs.data
-            }
-            # Deterministic order (appointment_letter, nda) so the merged
-            # bundle always reads the same way regardless of query order.
-            merged = merge_pdfs(
-                [pdf_bytes_by_kind[k] for k in ("appointment_letter", "nda") if k in pdf_bytes_by_kind]
-            )
-            merged_path = f"orgs/{org_id}/onboarding/{run_id}/offer_bundle.pdf"
-
-            def _upload() -> None:
-                svc.storage.from_(ob_storage.STORAGE_BUCKET).upload(
-                    path=merged_path,
-                    file=merged,
-                    file_options={"content-type": "application/pdf", "upsert": "true"},
-                )
-
-            await asyncio.to_thread(_upload)
-
-            envelope = await create_envelope(
-                org_id=org_id,
-                run_id=run_id,
-                document_kinds=["appointment_letter", "nda"],
-                storage_path=merged_path,
-                signers=[
-                    {
-                        "role": "candidate",
-                        "email": run.data["candidate_email"],
-                        "name": run.data["candidate_name"],
-                        "routing_order": 1,
-                    }
-                ],
-                completion_event="onboarding_v2/esign_completed",
-            )
-            esign_envelope_id = envelope["envelope_id"]
-            esign_signing_url = envelope["signers"][0]["signing_url"]
-
-            await asyncio.to_thread(
-                lambda: svc.table("onboarding_documents")
-                .update(
-                    {
-                        "esign_envelope_id": esign_envelope_id,
-                        "esign_status": "sent",
-                        "esign_signing_url": esign_signing_url,
-                    }
-                )
-                .eq("run_id", run_id)
-                .in_("kind", ["appointment_letter", "nda"])
-                .execute()
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "onboarding_v2.esign_failed run=%s err=%s — falling back to email",
-                run_id, exc,
-            )
-            use_esign = False
-
-    if not use_esign:
-        def _signed_url(path: str) -> str | None:
-            try:
-                res = svc.storage.from_(ob_storage.STORAGE_BUCKET).create_signed_url(
-                    path=path, expires_in=ob_storage.SIGNED_URL_TTL_SECONDS
-                )
-                return res.get("signedURL") or res.get("signed_url")
-            except Exception:
-                return None
-
-        appointment_url: str | None = None
-        nda_url: str | None = None
-        for d in docs.data:
-            url = await asyncio.to_thread(lambda p=d["storage_path"]: _signed_url(p))
-            if d["kind"] == "appointment_letter":
-                appointment_url = url
-            elif d["kind"] == "nda":
-                nda_url = url
-
-        await send_email_event(
-            event_type="onboarding_offer_to_candidate",
-            to=run.data["candidate_email"],
-            user_id=None,
-            org_id=org_id,
-            dedupe_key=f"offer-{run_id}",
-            data={
-                "candidate_name": run.data["candidate_name"],
-                "role_title": run.data["role_title"],
-                "appointment_letter_url": appointment_url,
-                "nda_url": nda_url,
-                "app_url": settings.app_url.rstrip("/"),
-            },
-        )
-    else:
-        # Email the one-click signing link.
-        await send_email_event(
-            event_type="onboarding_offer_to_candidate",
-            to=run.data["candidate_email"],
-            user_id=None,
-            org_id=org_id,
-            dedupe_key=f"offer-{run_id}",
-            data={
-                "candidate_name": run.data["candidate_name"],
-                "role_title": run.data["role_title"],
-                "signing_url": esign_signing_url,
-                "app_url": settings.app_url.rstrip("/"),
-            },
-        )
-
-    now = datetime.now(UTC).isoformat()
-    await asyncio.to_thread(
-        lambda: svc.table("onboarding_documents")
-        .update({"sign_status": "sent_to_candidate"})
-        .eq("run_id", run_id)
-        .in_("kind", ["appointment_letter", "nda"])
-        .execute()
-    )
-    await asyncio.to_thread(
-        lambda: svc.table("onboarding_runs")
-        .update(
-            {
-                "status": "appointment_sent_to_candidate",
-                "appointment_sent_at": now,
-            }
-        )
-        .eq("id", run_id)
-        .execute()
-    )
-    await ob_storage.log_onboarding_event(
-        org_id=org_id,
-        run_id=run_id,
-        actor_kind="hr",
-        event_type="offer_bundle_approved",
-        message="HR approved and sent the offer bundle (AL + NDA) to the candidate.",
-        actor_user_id=user_id,
-    )
-
-    # Kick the agent forward (policy assignment is next).
-    inngest_client = get_inngest_client()
-    await inngest_client.send(
-        inngest.Event(
-            name="onboarding_v2/resume",
-            data={"onboarding_run_id": run_id, "org_id": org_id},
-        )
-    )
-    return {"status": "appointment_sent_to_candidate"}
-
-
-# ── LOIdraft review: edit in place, replace, approve ──────────────────────
-#
-# Two ways to change the draft, both landing as the same thing — a new
-# `loi_hr_edit_r{n}.docx` + its PDF, with `hr_edited_*` stamped on the document
-# row. Editing the lines in the browser is the everyday path; the .docx
-# round-trip stays for edits a flat-text editor can't express (new clauses,
-# tables, layout).
 
 
 def _loi_docx_path(doc_row: dict[str, Any]) -> str:
@@ -924,12 +649,41 @@ def _loi_docx_path(doc_row: dict[str, Any]) -> str:
     return pdf_path[:-4] + ".docx" if pdf_path.endswith(".pdf") else pdf_path
 
 
+async def _loi_step(run_id: str) -> dict[str, Any]:
+    """The step that renders this run's letter of intent.
+
+    These endpoints were written when the LOI was step `loi` and nothing else
+    could be, so they addressed it by that literal everywhere — the document
+    row's `kind`, the envelope's `document_kinds`, the run status. A catalog an
+    org renamed or rebuilt renders the same letter under its own key, so it is
+    found by document type and its key read off the step.
+    """
+    steps = await ob_catalog.get_run_steps(run_id)
+    step = ob_catalog.find_document_step(steps, ob_catalog.DOCUMENT_TYPE_LOI)
+    if step is None:
+        # A run that predates `document_type_key` being populated, or one whose
+        # step really is the seeded default.
+        step = next((s for s in steps if s["step_key"] == "loi"), None)
+    if step is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "This run's pipeline has no letter-of-intent step.",
+        )
+    return step
+
+
 async def _load_loi_for_review(
     *, run_id: str, org_id: str, svc: Any
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Fetch the run and its LOIdocument row, asserting the run is parked in
-    review. Every mutation below is only legal in that window: once an envelope
-    exists, the bytes HR is looking at are the bytes someone is signing.
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Fetch the run, the LOI step and its document row, asserting the step is
+    parked in review. Every mutation below is only legal in that window: once an
+    envelope exists, the bytes HR is looking at are the bytes someone is signing.
+
+    The gate reads the step's own status rather than the run's. `onboarding_runs
+    .status` is a derived label since 108 and only spells `loi_pending_hr_review`
+    while the step happens to be keyed `loi` — for any other key it reads
+    `step_pending_hr_review`, and gating on that string locked HR out of editing
+    their own draft.
     """
     run = await asyncio.to_thread(
         lambda: svc.table("onboarding_runs")
@@ -941,17 +695,20 @@ async def _load_loi_for_review(
     )
     if not run or not run.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found.")
-    if run.data["status"] != "loi_pending_hr_review":
+
+    step = await _loi_step(run_id)
+    if step["status"] != ob_catalog.STATUS_PENDING_HR_REVIEW:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"Run is in '{run.data['status']}', expected 'loi_pending_hr_review'.",
+            f"'{step['label']}' is {step['status'].replace('_', ' ')}, "
+            "not waiting for your review.",
         )
 
     doc = await asyncio.to_thread(
         lambda: svc.table("onboarding_documents")
         .select("id, storage_path, hr_edited_storage_path, hr_edit_revision")
         .eq("run_id", run_id)
-        .eq("kind", "loi")
+        .eq("kind", step["step_key"])
         .maybe_single()
         .execute()
     )
@@ -959,7 +716,7 @@ async def _load_loi_for_review(
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, "LOIdocument not found for this run."
         )
-    return run.data, doc.data
+    return run.data, doc.data, step
 
 
 async def _download_loi_docx(*, doc_row: dict[str, Any], svc: Any) -> bytes:
@@ -988,6 +745,7 @@ async def _store_loi_revision(
     org_id: str,
     run_id: str,
     user_id: str,
+    step_key: str,
     docx_bytes: bytes,
     revision: int,
     event_type: str,
@@ -1002,8 +760,12 @@ async def _store_loi_revision(
     The PDF is rendered before anything is stamped, so a conversion failure
     leaves the previous revision intact rather than pointing the document row
     at a PDF that doesn't exist.
+
+    `step_key` addresses both the storage path and the document row, so a run
+    whose LOI step the org renamed writes its revisions beside its own draft
+    rather than over a `loi_*` path no document on this run points at.
     """
-    prefix = f"orgs/{org_id}/onboarding/{run_id}/loi_hr_edit_r{revision}"
+    prefix = f"orgs/{org_id}/onboarding/{run_id}/{step_key}_hr_edit_r{revision}"
     docx_path = f"{prefix}.docx"
     pdf_path = f"{prefix}.pdf"
 
@@ -1049,7 +811,7 @@ async def _store_loi_revision(
             }
         )
         .eq("run_id", run_id)
-        .eq("kind", "loi")
+        .eq("kind", step_key)
         .execute()
     )
     await asyncio.to_thread(
@@ -1086,7 +848,7 @@ async def get_loi_draft_text(
     _user_id, org_id, _ = _require_user(current_user)
     svc = get_service_client()
 
-    run_row, doc_row = await _load_loi_for_review(
+    run_row, doc_row, _step = await _load_loi_for_review(
         run_id=run_id, org_id=org_id, svc=svc
     )
     docx_bytes = await _download_loi_docx(doc_row=doc_row, svc=svc)
@@ -1130,7 +892,7 @@ async def edit_loi_draft_text(
     user_id, org_id, _ = _require_user(current_user)
     svc = get_service_client()
 
-    run_row, doc_row = await _load_loi_for_review(
+    run_row, doc_row, step = await _load_loi_for_review(
         run_id=run_id, org_id=org_id, svc=svc
     )
     docx_bytes = await _download_loi_docx(doc_row=doc_row, svc=svc)
@@ -1168,6 +930,7 @@ async def edit_loi_draft_text(
         org_id=org_id,
         run_id=run_id,
         user_id=user_id,
+        step_key=step["step_key"],
         docx_bytes=new_docx,
         revision=revision,
         event_type="loi_draft_edited",
@@ -1217,7 +980,7 @@ async def replace_loi_draft(
     user_id, org_id, _ = _require_user(current_user)
     svc = get_service_client()
 
-    run_row, _doc_row = await _load_loi_for_review(
+    run_row, _doc_row, step = await _load_loi_for_review(
         run_id=run_id, org_id=org_id, svc=svc
     )
 
@@ -1237,6 +1000,7 @@ async def replace_loi_draft(
         org_id=org_id,
         run_id=run_id,
         user_id=user_id,
+        step_key=step["step_key"],
         docx_bytes=body,
         revision=revision,
         event_type="loi_draft_edited",
@@ -1255,240 +1019,26 @@ async def approve_loi_draft(
     run_id: str,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
-    """HR clicks 'Send for signature' on the LOIreview screen.
+    """Legacy alias for approving the LOI draft.
 
-    Two paths depending on whether apps/esign is configured:
+    The routing it used to hardcode — HR first, then the candidate — is now the
+    `signer_roles` the LOI step is seeded with, so an org that wants it signed
+    differently changes it in Settings rather than needing a code change here.
+    """
+    from app.routers.onboarding_steps import approve_step
 
-    * **apps/esign configured** — create a routed envelope with HR signing
-      first, then the candidate. Both get a direct /sign/{token} link (HR's
-      emailed immediately here; the candidate's is emailed by the
-      esign/signer_turn Inngest function once HR completes). Run parks in
-      `loi_pending_esign_signature` until apps/esign writes completion and
-      fires `onboarding_v2/loi_signed_uploaded`.
-
-    * **apps/esign not configured** — fall back to the legacy print/scan
-      flow: transition to `loi_pending_hr_sign`, agent emails HR the PDF to
-      sign offline."""
-    from app.config import get_settings
-    from app.services.email import send_email_event
-
-    user_id, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    run = await asyncio.to_thread(
-        lambda: svc.table("onboarding_runs")
-        .select(
-            "id, status, candidate_email, candidate_name, triggered_by_user_id"
-        )
-        .eq("id", run_id)
-        .eq("org_id", org_id)
-        .maybe_single()
-        .execute()
+    step = await _loi_step(run_id)
+    result = await approve_step(
+        run_id=run_id, step_key=step["step_key"], current_user=current_user
     )
-    if not run or not run.data:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found.")
-    if run.data["status"] != "loi_pending_hr_review":
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Run is in '{run.data['status']}', expected 'loi_pending_hr_review'.",
-        )
-
-    doc = await asyncio.to_thread(
-        lambda: svc.table("onboarding_documents")
-        .select("id, storage_path, hr_edited_pdf_path, render_context")
-        .eq("run_id", run_id)
-        .eq("kind", "loi")
-        .maybe_single()
-        .execute()
-    )
-    if not doc or not doc.data:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "LOIdocument row not found for this run.",
-        )
-
-    # Gate on apps/esign being configured; a half-wired setup falls back to
-    # the print/scan flow instead of stranding the run mid-signature. Unlike
-    # DocuSeal, no per-org template binding is needed — apps/esign signs the
-    # rendered PDF directly.
-    from app.services.integrations.inhouse_sign import (
-        InhouseSignError,
-        InhouseSignUnavailable,
-        create_envelope,
-    )
-    from app.services.integrations.inhouse_sign import (
-        is_configured as _esign_ready,
-    )
-
-    use_esign = _esign_ready()
-
-    if use_esign:
-        # Resolve HR's email from Supabase auth admin (mirrors agent.py:514).
-        triggered_by = run.data.get("triggered_by_user_id") or user_id
-        try:
-            au = await asyncio.to_thread(
-                lambda: svc.auth.admin.get_user_by_id(triggered_by)
-            )
-            hr_email = getattr(getattr(au, "user", None), "email", None)
-        except Exception:
-            hr_email = None
-        if not hr_email:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Couldn't resolve the HR user's email for the signing flow. "
-                "Sign out and back in, or contact support.",
-            )
-        # Display name comes from our users table; fall back to email prefix.
-        hr_profile = await asyncio.to_thread(
-            lambda: svc.table("users")
-            .select("display_name")
-            .eq("id", triggered_by)
-            .maybe_single()
-            .execute()
-        )
-        hr_name = (
-            (hr_profile.data or {}).get("display_name")
-            or hr_email.split("@", 1)[0]
-        )
-
-        # HR's edited PDF (if any) is what gets signed — apps/esign signs
-        # whatever storage_path we hand it, unlike DocuSeal's pre-built
-        # template which always signed the template body regardless of edits.
-        source_path = doc.data.get("hr_edited_pdf_path") or doc.data["storage_path"]
-
-        try:
-            envelope = await create_envelope(
-                org_id=org_id,
-                run_id=run_id,
-                document_kinds=["loi"],
-                storage_path=source_path,
-                signers=[
-                    {
-                        "role": "hr",
-                        "email": hr_email,
-                        "name": hr_name,
-                        "routing_order": 1,
-                    },
-                    {
-                        "role": "candidate",
-                        "email": run.data["candidate_email"],
-                        "name": run.data["candidate_name"],
-                        "routing_order": 2,
-                    },
-                ],
-                completion_event="onboarding_v2/loi_signed_uploaded",
-            )
-        except (InhouseSignError, InhouseSignUnavailable) as exc:
-            log.warning(
-                "onboarding_v2.loi_esign_create_failed run=%s err=%s",
-                run_id, exc,
-            )
-            raise HTTPException(
-                status.HTTP_502_BAD_GATEWAY,
-                f"Couldn't create the signing envelope: {exc}",
-            ) from exc
-
-        hr_signing_url = next(
-            s["signing_url"] for s in envelope["signers"] if s["role"] == "hr"
-        )
-        settings = get_settings()
-        try:
-            await send_email_event(
-                event_type="onboarding_sign_your_turn",
-                to=hr_email,
-                user_id=triggered_by,
-                org_id=org_id,
-                dedupe_key=f"sign-your-turn-{envelope['envelope_id']}-hr",
-                data={
-                    "recipient_name": hr_name,
-                    "document_label": "LOI",
-                    "signing_url": hr_signing_url,
-                    "app_url": settings.app_url.rstrip("/"),
-                },
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning("onboarding_v2.loi_esign_hr_email_failed run=%s err=%s", run_id, exc)
-
-        now = datetime.now(UTC).isoformat()
-        await asyncio.to_thread(
-            lambda: svc.table("onboarding_documents")
-            .update(
-                {
-                    "esign_envelope_id": envelope["envelope_id"],
-                    "esign_status": "sent",
-                    "sign_status": "sent_to_hr",
-                }
-            )
-            .eq("run_id", run_id)
-            .eq("kind", "loi")
-            .execute()
-        )
-        await asyncio.to_thread(
-            lambda: svc.table("onboarding_runs")
-            .update(
-                {
-                    "status": "loi_pending_esign_signature",
-                    "loi_approved_for_signing_at": now,
-                    "loi_sent_to_hr_at": now,
-                }
-            )
-            .eq("id", run_id)
-            .execute()
-        )
-        await ob_storage.log_onboarding_event(
-            org_id=org_id,
-            run_id=run_id,
-            actor_kind="hr",
-            event_type="loi_esign_envelope_created",
-            message=(
-                f"Signing envelope created for LOI. Routing: HR "
-                f"({hr_email}) → candidate ({run.data['candidate_email']})."
-            ),
-            metadata={"envelope_id": envelope["envelope_id"]},
-            actor_user_id=user_id,
-        )
-        return {
-            "status": "loi_pending_esign_signature",
-            "document_id": doc.data["id"],
-        }
-
-    # Fallback: legacy print/scan flow (apps/esign not configured).
-    now = datetime.now(UTC).isoformat()
-    await asyncio.to_thread(
-        lambda: svc.table("onboarding_runs")
-        .update(
-            {
-                "status": "loi_pending_hr_sign",
-                "loi_approved_for_signing_at": now,
-                "loi_sent_to_hr_at": now,
-            }
-        )
-        .eq("id", run_id)
-        .execute()
-    )
-    await ob_storage.log_onboarding_event(
-        org_id=org_id,
-        run_id=run_id,
-        actor_kind="hr",
-        event_type="loi_draft_approved",
-        message=(
-            "HR approved the LOIdraft and triggered the signature-request "
-            "email."
-        ),
-        actor_user_id=user_id,
-    )
-
-    inngest_client = get_inngest_client()
-    await inngest_client.send(
-        inngest.Event(
-            name="onboarding_v2/resume",
-            data={"onboarding_run_id": run_id, "org_id": org_id},
-        )
-    )
-    return {
-        "status": "loi_pending_hr_sign",
-        "document_id": doc.data["id"],
-    }
+    # The old response named the run status; callers branch on it to decide
+    # whether to show the signing panel or the print-and-scan prompt.
+    legacy = {
+        "pending_signature": "loi_pending_esign_signature",
+        "awaiting_manual_signature": "loi_pending_hr_sign",
+        "sending": "loi_signed_uploaded",
+    }.get(result["status"], result["status"])
+    return {"status": legacy, "document_id": None}
 
 
 @router.get("/runs/{run_id}/loi/signing-url")
@@ -1504,12 +1054,13 @@ async def get_loi_signing_url(
     user_id, org_id, _ = _require_user(current_user)
     svc = get_service_client()
 
+    loi_key = (await _loi_step(run_id))["step_key"]
     env = await asyncio.to_thread(
         lambda: svc.table("onboarding_signing_envelopes")
         .select("envelope_id, signers, status")
         .eq("run_id", run_id)
         .eq("org_id", org_id)
-        .contains("document_kinds", ["loi"])
+        .contains("document_kinds", [loi_key])
         .order("created_at", desc=True)
         .limit(1)
         .maybe_single()
@@ -2262,11 +1813,12 @@ async def get_loi_docx_url(
     _user_id, org_id, _ = _require_user(current_user)
     svc = get_service_client()
 
+    loi_key = (await _loi_step(run_id))["step_key"]
     doc = await asyncio.to_thread(
         lambda: svc.table("onboarding_documents")
         .select("storage_path, hr_edited_storage_path")
         .eq("run_id", run_id)
-        .eq("kind", "loi")
+        .eq("kind", loi_key)
         .maybe_single()
         .execute()
     )

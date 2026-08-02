@@ -179,8 +179,8 @@ AGENT_REGISTRY: dict[str, AgentSpec] = {
     "weekly_digest": AgentSpec(
         agent_type="weekly_digest",
         description=(
-            "Generate the weekly admin digest (usage stats, top queries, "
-            "coverage gaps) and email it. By default sends to all admins; "
+            "Generate the weekly admin digest (usage stats, top queries) "
+            "and email it. By default sends to all admins; "
             "specify `send_to_email` to override."
         ),
         required=(),

@@ -2,7 +2,6 @@ import asyncio
 import logging
 import re
 import uuid
-from datetime import UTC
 from typing import Any, Literal
 
 import inngest
@@ -693,7 +692,7 @@ async def list_documents(
 
     def _run() -> Any:
         q = client.table("documents").select(
-            "id, name, file_type, file_size_bytes, status, chunk_count, tags, metadata, created_at, health_score, health_label, last_accessed_at, review_frequency_days, review_due_at, last_reviewed_at, current_version_id, source, visibility, created_by",
+            "id, name, file_type, file_size_bytes, status, chunk_count, tags, metadata, created_at, health_score, health_label, last_accessed_at, current_version_id, source, visibility, created_by",
             count="exact",
         )
         if status_filter:
@@ -1158,126 +1157,6 @@ async def bulk_add_tags(
 
 class TagsPatchBody(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=TAG_MAX_PER_DOC)
-
-
-class ReviewFrequencyBody(BaseModel):
-    # None clears the cadence; integer values are clamped to the 7-730 range
-    # the DB CHECK constraint expects.
-    review_frequency_days: int | None = Field(default=None, ge=7, le=730)
-
-
-@router.patch("/{doc_id}/review")
-async def update_document_review(
-    doc_id: str,
-    body: ReviewFrequencyBody,
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Set or clear the review cadence on a document (Day 13 / #38).
-
-    When `review_frequency_days` is set, we precompute `review_due_at` from
-    `last_reviewed_at` (or `created_at` for never-reviewed docs). This stays
-    in sync with `mark_document_reviewed` — both paths set the same field
-    rather than relying on a generated column the cron has to evaluate.
-    """
-    org_id: str | None = current_user["org_id"]
-    if not org_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No organization found.")
-    try:
-        uuid.UUID(doc_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(status_code=400, detail="Invalid document id.")
-
-    client = get_user_client(current_user["token"])
-
-    if body.review_frequency_days is None:
-        update = {
-            "review_frequency_days": None,
-            "review_due_at": None,
-        }
-    else:
-        # Pull the baseline timestamp first — last_reviewed_at, falling back
-        # to created_at — so a fresh cadence on a doc uploaded 100 days ago
-        # doesn't mark it instantly overdue (review_due_at = 100d ago + 90d
-        # would still be in the past).
-        existing = await asyncio.to_thread(
-            lambda: client.table("documents")
-            .select("last_reviewed_at, created_at")
-            .eq("id", doc_id)
-            .maybe_single()
-            .execute()
-        )
-        if not existing or not existing.data:
-            raise HTTPException(status_code=404, detail="Document not found.")
-        # Always anchor to "now" so the FIRST review window starts today.
-        # Anchoring to created_at would email the admin on Monday for a doc
-        # they uploaded an hour earlier — surprising and annoying.
-        from datetime import datetime as _dt
-        from datetime import timedelta as _td
-        next_due = _dt.now(UTC) + _td(days=body.review_frequency_days)
-        update = {
-            "review_frequency_days": body.review_frequency_days,
-            "review_due_at": next_due.isoformat(),
-        }
-
-    result = await asyncio.to_thread(
-        lambda: client.table("documents")
-        .update(update)
-        .eq("id", doc_id)
-        .execute()
-    )
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Document not found.")
-    await invalidate_document_caches(org_id)
-    return {"document": result.data[0]}
-
-
-@router.post("/{doc_id}/mark-reviewed")
-async def mark_document_reviewed(
-    doc_id: str,
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Reset the review timer (Day 13 / #38).
-
-    Delegates to the SECURITY DEFINER RPC `mark_document_reviewed` so the
-    cadence + last_reviewed_at + review_due_at recompute happens atomically
-    against concurrent admin clicks. We still gate access by checking org
-    ownership via the user-scoped client before calling the RPC.
-    """
-    org_id: str | None = current_user["org_id"]
-    if not org_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No organization found.")
-    try:
-        uuid.UUID(doc_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(status_code=400, detail="Invalid document id.")
-
-    user_client = get_user_client(current_user["token"])
-    owned = await asyncio.to_thread(
-        lambda: user_client.table("documents")
-        .select("id")
-        .eq("id", doc_id)
-        .maybe_single()
-        .execute()
-    )
-    if not owned or not owned.data:
-        raise HTTPException(status_code=404, detail="Document not found.")
-
-    svc = get_service_client()
-    try:
-        result = await asyncio.to_thread(
-            lambda: svc.rpc(
-                "mark_document_reviewed", {"target_doc_id": doc_id}
-            ).execute()
-        )
-    except Exception as exc:
-        log.error("mark_reviewed_failed: %s", exc)
-        raise HTTPException(
-            status_code=500, detail="Could not mark document reviewed."
-        ) from exc
-
-    next_due = result.data if result else None
-    await invalidate_document_caches(org_id)
-    return {"status": "ok", "next_due_at": next_due}
 
 
 class PolicyFlagBody(BaseModel):

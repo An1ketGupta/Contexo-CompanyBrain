@@ -29,6 +29,7 @@ from app.database import get_service_client
 from app.inngest.client import get_inngest_client
 from app.observability import get_logger
 from app.services.agents.onboarding_v2 import OnboardingV2Agent
+from app.services.agents.onboarding_v2 import catalog as ob_catalog
 from app.services.email import send_email_event
 
 log = get_logger(__name__)
@@ -174,10 +175,24 @@ async def onboarding_v2_esign_completed(ctx: inngest.Context) -> dict[str, Any]:
     return await _drive_agent(run_id=run_id, org_id=org_id)
 
 
-_SIGN_DOCUMENT_LABELS: dict[tuple[str, ...], str] = {
-    ("loi",): "LOI",
-    ("appointment_letter", "nda"): "Appointment Letter + NDA",
-}
+async def _sign_document_label(run_id: str | None, kinds: tuple[str, ...]) -> str:
+    """What to call the thing a signer is being asked to sign.
+
+    Read from the run's own steps, because the documents in an envelope are
+    whatever the org bundled together — a fixed map of kind-tuples to labels
+    could only ever name the two combinations that used to be possible.
+    """
+    if not run_id or not kinds:
+        return "your document"
+    try:
+        steps = await ob_catalog.get_run_steps(run_id)
+        matched = [s for s in steps if s["step_key"] in kinds]
+        if matched:
+            lead = min(matched, key=lambda s: s.get("position") or 0)
+            return lead.get("bundle_label") or lead.get("label") or "your document"
+    except Exception as exc:  # noqa: BLE001
+        log.warning("onboarding_v2.sign_label_lookup_failed run=%s err=%s", run_id, exc)
+    return "your document"
 
 
 @_inngest_client.create_function(
@@ -196,6 +211,7 @@ async def onboarding_v2_esign_signer_turn(ctx: inngest.Context) -> dict[str, Any
     data = ctx.event.data
     signer_email = data.get("signer_email")
     signer_name = data.get("signer_name")
+    signer_role = data.get("signer_role") or "signer"
     envelope_id = data.get("envelope_id")
     signing_url = data.get("signing_url")
     if not signer_email or not envelope_id or not signing_url:
@@ -203,27 +219,35 @@ async def onboarding_v2_esign_signer_turn(ctx: inngest.Context) -> dict[str, Any
 
     settings = get_settings()
     kinds = tuple(data.get("document_kinds") or ())
-    document_label = _SIGN_DOCUMENT_LABELS.get(kinds, "your document")
+    document_label = await _sign_document_label(data.get("run_id"), kinds)
 
     # Resolve HR's user_id from onboarding_runs for dedupe/analytics — the
     # candidate signer has none, which send_email_event already handles.
+    # Decided by role rather than by comparing addresses: HR and the candidate
+    # are often the same mailbox, and an address comparison read HR's own turn
+    # as the candidate's and dropped their user_id.
     svc = get_service_client()
     run_row = await asyncio.to_thread(
         lambda: svc.table("onboarding_runs")
-        .select("triggered_by_user_id, candidate_email")
+        .select("triggered_by_user_id")
         .eq("id", data.get("run_id"))
         .maybe_single()
         .execute()
     )
-    is_hr = (run_row.data or {}).get("triggered_by_user_id") if run_row else None
-    user_id = is_hr if signer_email != (run_row.data or {}).get("candidate_email") else None
+    user_id = (
+        (run_row.data or {}).get("triggered_by_user_id")
+        if run_row and signer_role == "hr"
+        else None
+    )
 
     await send_email_event(
         event_type="onboarding_sign_your_turn",
         to=signer_email,
         user_id=user_id,
         org_id=data.get("org_id"),
-        dedupe_key=f"sign-your-turn-{envelope_id}-{signer_email}",
+        # Role is part of the key for the same reason: a shared mailbox made
+        # the second signer's turn indistinguishable from the first's.
+        dedupe_key=f"sign-your-turn-{envelope_id}-{signer_role}-{signer_email}",
         data={
             "recipient_name": signer_name or signer_email,
             "document_label": document_label,

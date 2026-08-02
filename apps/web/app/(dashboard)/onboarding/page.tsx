@@ -14,7 +14,6 @@ import {
   type SourcesResponse,
 } from "@/components/onboarding/onboarding-sources";
 import { TemplateReadinessPanel } from "@/components/onboarding/template-readiness-panel";
-import { pipelineSummary } from "@/components/onboarding/stage-board";
 import { OnboardingFlowSetup } from "@/components/onboarding/onboarding-flow-setup";
 import { useOnboardingSteps } from "@/hooks/use-onboarding-steps";
 import { useCurrentUser } from "@/hooks/use-user";
@@ -59,8 +58,15 @@ const STATUS_LABELS: Record<string, string> = {
   induction_sent: "Induction sent",
   completed: "Completed",
   blocked_missing_template: "Blocked — missing template",
+  blocked_template_drift: "Blocked — template changed",
   failed: "Failed",
   cancelled: "Cancelled",
+  // Written by a step an org composed, which has no legacy label to reuse.
+  step_active: "In progress",
+  step_generating: "Preparing document from template",
+  step_pending_hr_review: "Review draft",
+  step_pending_signature: "Awaiting signature",
+  awaiting_candidate_documents: "Awaiting candidate documents",
 };
 
 const TERMINAL = new Set(["completed", "cancelled", "failed"]);
@@ -137,7 +143,6 @@ export default function OnboardingListPage() {
 
   const { user } = useCurrentUser();
   const {
-    enabledStages,
     isConfigured,
     isLoading: stepsLoading,
     refresh: mutateSteps,
@@ -197,7 +202,6 @@ export default function OnboardingListPage() {
           title="Onboarding"
           description={
             <>
-              {pipelineSummary(enabledStages)} — driven by the Onboarding agent.{" "}
               <Link
                 href="/settings#onboarding-steps"
                 className="font-semibold text-brand underline-offset-2 hover:underline"

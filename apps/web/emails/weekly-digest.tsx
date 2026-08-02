@@ -5,7 +5,7 @@ import { EmailShell, button, muted, p } from "./_layout";
  * Weekly admin digest (Day 11).
  *
  * The hero stat is **time saved** — that's the metric admins actually care
- * about and it sets the framing for everything else (gaps, low-confidence
+ * about and it sets the framing for everything else (low-confidence
  * answers, ack compliance). Backwards-compatible with the old shape —
  * legacy `query_count`/`doc_count`/`active_users` props are still
  * rendered, just below the new hero.
@@ -29,10 +29,6 @@ export interface WeeklyDigestEmailProps {
   negative_feedback_count?: number;
   positive_feedback_count?: number;
   low_confidence_count?: number;
-
-  // Knowledge health.
-  knowledge_gaps_count?: number;
-  top_gap_topics?: { topic: string; count: number }[];
 
   // Compliance roll-up (Day 10 surface).
   ack_pending_count?: number;
@@ -58,8 +54,6 @@ export function WeeklyDigestEmail(props: WeeklyDigestEmailProps) {
     negative_feedback_count = 0,
     positive_feedback_count = 0,
     low_confidence_count = 0,
-    knowledge_gaps_count = 0,
-    top_gap_topics = [],
     ack_pending_count = 0,
     ack_completion_pct,
     top_intents = [],
@@ -70,7 +64,6 @@ export function WeeklyDigestEmail(props: WeeklyDigestEmailProps) {
 
   // Three concrete recommendations based on what the data says.
   const actions = recommendActions({
-    knowledge_gaps_count,
     low_confidence_count,
     ack_pending_count,
     negative_feedback_count,
@@ -102,9 +95,6 @@ export function WeeklyDigestEmail(props: WeeklyDigestEmailProps) {
         {new_document_count > 0 && (
           <Stat label="New documents added" value={new_document_count} />
         )}
-        {knowledge_gaps_count > 0 && (
-          <Stat label="Knowledge gaps surfaced" value={knowledge_gaps_count} />
-        )}
         {low_confidence_count > 0 && (
           <Stat label="Low-confidence answers" value={low_confidence_count} />
         )}
@@ -125,21 +115,6 @@ export function WeeklyDigestEmail(props: WeeklyDigestEmailProps) {
           />
         )}
       </Section>
-
-      {/* Knowledge gaps callout */}
-      {top_gap_topics.length > 0 && (
-        <Section style={callout}>
-          <Text style={calloutHeading}>Topics your team asked but Contexo couldn&apos;t answer</Text>
-          {top_gap_topics.map((t) => (
-            <Text key={t.topic} style={listItem}>
-              • <strong>{t.topic}</strong> — asked {t.count}×
-            </Text>
-          ))}
-          <Button href={`${baseUrl}/admin/knowledge-gaps`} style={{ ...button, marginTop: 12 }}>
-            Review gaps
-          </Button>
-        </Section>
-      )}
 
       {/* New documents */}
       {new_document_titles.length > 0 && (
@@ -208,26 +183,17 @@ function formatTimeSaved(hours: number, minutes: number): string {
 }
 
 function recommendActions({
-  knowledge_gaps_count,
   low_confidence_count,
   ack_pending_count,
   negative_feedback_count,
   new_document_count,
 }: {
-  knowledge_gaps_count: number;
   low_confidence_count: number;
   ack_pending_count: number;
   negative_feedback_count: number;
   new_document_count: number;
 }): { text: string; cta?: string; href?: string }[] {
   const out: { text: string; cta?: string; href?: string }[] = [];
-  if (knowledge_gaps_count > 0) {
-    out.push({
-      text: `Fill ${knowledge_gaps_count} knowledge gap${knowledge_gaps_count === 1 ? "" : "s"} — AI drafts ready to review.`,
-      cta: "Open knowledge gaps →",
-      href: "/admin/knowledge-gaps",
-    });
-  }
   if (ack_pending_count > 0) {
     out.push({
       text: `Chase ${ack_pending_count} outstanding policy acknowledgement${ack_pending_count === 1 ? "" : "s"}.`,

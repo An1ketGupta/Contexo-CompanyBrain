@@ -31,7 +31,8 @@ from app.models.onboarding_catalog import (
     CandidateOnboardingRead,
     CandidateStepRead,
     CatalogRead,
-    CreateCollectStepRequest,
+    CreateStepRequest,
+    DocumentTypeRead,
     ReplaceItemsRequest,
     ReviewSubmissionRequest,
     StepRead,
@@ -43,6 +44,7 @@ from app.observability import get_logger
 from app.services import org_config
 from app.services.agents.onboarding_v2 import catalog as ob_catalog
 from app.services.agents.onboarding_v2 import storage as ob_storage
+from app.services.documents import templates as doc_templates
 
 log = get_logger(__name__)
 
@@ -93,7 +95,44 @@ async def _read_catalog(org_id: str) -> CatalogRead:
         )
         steps.append(catalog_step_to_read(d, items))
     configured = (await org_config.get_onboarding_steps(org_id)).configured
-    return CatalogRead(steps=steps, configured=configured)
+    return CatalogRead(
+        steps=steps,
+        configured=configured,
+        document_types=await _document_types(org_id),
+    )
+
+
+async def _document_types(org_id: str) -> list[DocumentTypeRead]:
+    """What an org can pick from when adding a "send official documents" step.
+
+    The system types plus the org's own, each flagged with whether a default
+    template actually exists — configuring the flow before uploading the
+    paperwork is a normal order to work in, but a step whose template is
+    missing blocks the run when it reaches it, so the picker says so up front.
+    """
+    try:
+        types = await doc_templates.list_document_types(org_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("onboarding_catalog.document_types_failed err=%s", exc)
+        return []
+
+    out: list[DocumentTypeRead] = []
+    for t in types:
+        try:
+            resolved = await doc_templates.resolve_default_version(
+                org_id=org_id, type_key=t["key"]
+            )
+        except Exception:  # noqa: BLE001
+            resolved = None
+        out.append(
+            DocumentTypeRead(
+                key=t["key"],
+                label=t.get("label") or t["key"],
+                description=t.get("description"),
+                has_template=resolved is not None,
+            )
+        )
+    return out
 
 
 # ── HR: the catalog ─────────────────────────────────────────────────────────
@@ -129,7 +168,7 @@ async def update_catalog_step(
     body: UpdateStepRequest,
     current_user: dict = Depends(verify_jwt),
 ) -> CatalogRead:
-    """Admin-only. Rename a step, or turn one on or off."""
+    """Admin-only. Rename a step, move it, change who signs it, or switch it off."""
     user_id, org_id, token = _require_user(current_user)
     await _require_admin(user_id, token)
     try:
@@ -138,6 +177,9 @@ async def update_catalog_step(
             step_key=step_key,
             enabled=body.enabled,
             label=body.label,
+            signer_roles=body.signer_roles,
+            after_step_key=body.after_step_key,
+            move=body.move,
         )
     except ob_catalog.CatalogError as exc:
         raise _catalog_error(exc) from exc
@@ -149,22 +191,33 @@ async def update_catalog_step(
     response_model=CatalogRead,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_collect_step(
-    body: CreateCollectStepRequest,
+async def create_catalog_step(
+    body: CreateStepRequest,
     current_user: dict = Depends(verify_jwt),
 ) -> CatalogRead:
-    """Admin-only. Add a document-collection step at a chosen point."""
+    """Admin-only. Add a step of any kind at a chosen point in the pipeline."""
     user_id, org_id, token = _require_user(current_user)
     await _require_admin(user_id, token)
 
     items = [i.model_dump() for i in body.items]
-    _validate_formats(items)
+    if body.kind == ob_catalog.KIND_COLLECT:
+        if not items:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Add at least one document to ask the candidate for.",
+            )
+        _validate_formats(items)
+
     try:
-        await ob_catalog.create_collect_step(
+        await ob_catalog.create_step(
             org_id=org_id,
+            kind=body.kind,
             label=body.label,
             after_step_key=body.after_step_key,
             items=items,
+            document_type_keys=body.document_type_keys,
+            signer_roles=body.signer_roles,
+            system_action=body.system_action,
         )
     except ob_catalog.CatalogError as exc:
         raise _catalog_error(exc) from exc

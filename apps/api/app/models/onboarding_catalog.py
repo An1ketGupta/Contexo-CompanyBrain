@@ -45,8 +45,24 @@ class StepRead(BaseModel):
     position: int
     enabled: bool
     signer_roles: list[str] = Field(default_factory=list)
+    # 'bgv' or 'policies' on system steps; what the step does, as opposed to
+    # what it is called. Null on every other kind.
+    system_action: str | None = None
     locked: bool = False
     items: list[CollectItemRead] = Field(default_factory=list)
+
+
+class DocumentTypeRead(BaseModel):
+    """A template an org can put in a "send official documents" step."""
+
+    key: str
+    label: str
+    description: str | None = None
+    # False when the org has no active default template for this type. The
+    # picker still offers it — you configure the flow before you upload the
+    # paperwork — but says so, because a step whose template is missing blocks
+    # the run when it gets there.
+    has_template: bool = False
 
 
 class CatalogRead(BaseModel):
@@ -54,12 +70,32 @@ class CatalogRead(BaseModel):
     # False until the org saves a choice — drives the first-run setup screen,
     # the same way the four-boolean endpoint it replaces did.
     configured: bool
+    document_types: list[DocumentTypeRead] = Field(default_factory=list)
+
+
+class CreateStepRequest(BaseModel):
+    """Add a step of any kind.
+
+    Which of the optional fields matter depends on `kind`:
+      collect   — `items`, the checklist the candidate answers
+      generate  — `document_type_keys` (more than one makes a bundle) and
+                  `signer_roles`
+      system    — `system_action`
+    """
+
+    kind: str = Field(..., pattern="^(generate|collect|system)$")
+    label: str = Field(..., min_length=1, max_length=200)
+    # Position expressed the way an org thinks about it: "ask for these right
+    # after the letter of intent". None puts the step first.
+    after_step_key: str | None = Field(default=None, max_length=64)
+    items: list[CollectItemInput] = Field(default_factory=list, max_length=40)
+    document_type_keys: list[str] = Field(default_factory=list, max_length=10)
+    signer_roles: list[str] = Field(default_factory=list, max_length=2)
+    system_action: str | None = Field(default=None, pattern="^(bgv|policies)$")
 
 
 class CreateCollectStepRequest(BaseModel):
     label: str = Field(..., min_length=1, max_length=200)
-    # Position expressed the way an org thinks about it: "ask for these right
-    # after the letter of intent". None places it first among unlocked steps.
     after_step_key: str | None = Field(default=None, max_length=64)
     items: list[CollectItemInput] = Field(..., min_length=1, max_length=40)
 
@@ -67,6 +103,10 @@ class CreateCollectStepRequest(BaseModel):
 class UpdateStepRequest(BaseModel):
     enabled: bool | None = None
     label: str | None = Field(default=None, min_length=1, max_length=200)
+    # Order in the list is routing order — whoever is first signs first.
+    signer_roles: list[str] | None = Field(default=None, max_length=2)
+    after_step_key: str | None = Field(default=None, max_length=64)
+    move: str | None = Field(default=None, pattern="^(up|down)$")
 
 
 class ReplaceItemsRequest(BaseModel):
@@ -139,6 +179,7 @@ def catalog_step_to_read(
         position=step.get("position") or 0,
         enabled=bool(step.get("enabled", True)),
         signer_roles=list(step.get("signer_roles") or []),
+        system_action=step.get("system_action"),
         locked=bool(step.get("locked", False)),
         items=[
             CollectItemRead(

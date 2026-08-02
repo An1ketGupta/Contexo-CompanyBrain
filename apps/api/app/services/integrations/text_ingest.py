@@ -91,11 +91,6 @@ async def ingest_text_document(
 
         stats = {"embedded": embedded, "failed": failed, "total": len(persisted)} if failed else None
         await mark_status(doc_id, "ready", chunk_count=len(persisted), embedding_stats=stats)
-        # Drop the coverage cache: a freshly-ingested Notion/email/webpage doc
-        # may close a category gap, and we don't want the admin page to lag.
-        # Lazy import dodges a cycle (coverage → embedder → ingestion).
-        from app.services.coverage import invalidate_coverage
-        await invalidate_coverage(org_id, client=svc)
         return {
             "status": "ok",
             "embedded": embedded,

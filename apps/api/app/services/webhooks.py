@@ -14,7 +14,6 @@ the UI's ALL_EVENTS array in apps/web/app/(dashboard)/settings/webhooks:
     approval.requested       — an approval row was created (preview + approver)
     approval.decided         — an approval was approved/rejected
     compliance.acknowledged  — a user acknowledged a policy doc
-    knowledge_gap.detected   — a topic crossed the gap threshold; stub drafted
     agent.completed / .failed — terminal status of an agent_runs row
 
 Signature: when `secret` is set, the worker computes
@@ -46,12 +45,11 @@ ALLOWED_EVENTS: tuple[str, ...] = (
     # external system without setting up the public API trigger first.
     "agent.completed",
     "agent.failed",
-    # Workflow events — fired from approvals.py / compliance.py / the
-    # knowledge-gap pipeline. See module docstring for payload shapes.
+    # Workflow events — fired from approvals.py / compliance.py.
+    # See module docstring for payload shapes.
     "approval.requested",
     "approval.decided",
     "compliance.acknowledged",
-    "knowledge_gap.detected",
     # Day 3-4 hardening: terminal status of every outbound write (Slack post,
     # Gmail send, Notion create-page, Gdocs export). Lets customers route
     # delivery telemetry into their own analytics stack. Payload carries

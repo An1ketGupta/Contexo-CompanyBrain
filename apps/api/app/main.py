@@ -21,9 +21,6 @@ from app.routers import (
     admin_intake as admin_intake_router,
 )
 from app.routers import (
-    knowledge_health as knowledge_health_router,
-)
-from app.routers import (
     internal_announcements as internal_announcements_router,
 )
 from app.routers import (
@@ -150,6 +147,9 @@ from app.routers import (
 from app.routers import (
     onboarding_catalog as onboarding_catalog_router,
 )
+from app.routers import (
+    onboarding_steps as onboarding_steps_router,
+)
 from app.mcp import router as mcp_router
 
 
@@ -273,7 +273,6 @@ app.include_router(scheduled_reports_router.router)
 app.include_router(billing_router.router)
 app.include_router(webhooks_stripe_router.router)
 app.include_router(admin_intake_router.router)
-app.include_router(knowledge_health_router.router)
 app.include_router(internal_announcements_router.router)
 app.include_router(document_templates_router.router)
 app.include_router(recruiting_router.router)
@@ -288,6 +287,7 @@ app.include_router(channels_router.router)
 app.include_router(onboarding_v2_router.router)
 app.include_router(onboarding_public_router.router)
 app.include_router(onboarding_catalog_router.router)
+app.include_router(onboarding_steps_router.router)
 app.include_router(mcp_router)
 
 # Inngest serve endpoint — webhook the Inngest server hits to invoke our functions.

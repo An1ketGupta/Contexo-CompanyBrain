@@ -33,16 +33,6 @@ import {
   type WeeklyDigestEmailProps,
 } from "@/emails/weekly-digest";
 import {
-  KnowledgeRefreshEmail,
-  knowledgeRefreshSubject,
-  type KnowledgeRefreshEmailProps,
-} from "@/emails/knowledge-refresh";
-import {
-  KnowledgeGapAlertEmail,
-  knowledgeGapAlertSubject,
-  type KnowledgeGapAlertEmailProps,
-} from "@/emails/knowledge-gap-alert";
-import {
   ApprovalRequestEmail,
   approvalRequestSubject,
   type ApprovalRequestEmailProps,
@@ -123,10 +113,30 @@ import {
   type OnboardingCandidateRefsReminderEmailProps,
 } from "@/emails/onboarding-candidate-refs-reminder";
 import {
+  OnboardingDocumentsRequestedEmail,
+  onboardingDocumentsRequestedSubject,
+  type OnboardingDocumentsRequestedEmailProps,
+} from "@/emails/onboarding-documents-requested";
+import {
+  OnboardingReferencesRequestedEmail,
+  onboardingReferencesRequestedSubject,
+  type OnboardingReferencesRequestedEmailProps,
+} from "@/emails/onboarding-references-requested";
+import {
+  OnboardingDocumentsSentEmail,
+  onboardingDocumentsSentSubject,
+  type OnboardingDocumentsSentEmailProps,
+} from "@/emails/onboarding-documents-sent";
+import {
   OnboardingOfferBundleReadyEmail,
   onboardingOfferBundleReadySubject,
   type OnboardingOfferBundleReadyEmailProps,
 } from "@/emails/onboarding-offer-bundle-ready";
+import {
+  OnboardingStepReviewReadyEmail,
+  onboardingStepReviewReadySubject,
+  type OnboardingStepReviewReadyEmailProps,
+} from "@/emails/onboarding-step-review-ready";
 import {
   OnboardingOfferToCandidateEmail,
   onboardingOfferToCandidateSubject,
@@ -194,14 +204,6 @@ const TEMPLATES = {
     Component: WeeklyDigestEmail,
     subject: weeklyDigestSubject,
   } satisfies Template<WeeklyDigestEmailProps>,
-  knowledge_refresh: {
-    Component: KnowledgeRefreshEmail,
-    subject: knowledgeRefreshSubject,
-  } satisfies Template<KnowledgeRefreshEmailProps>,
-  knowledge_gap_alert: {
-    Component: KnowledgeGapAlertEmail,
-    subject: knowledgeGapAlertSubject,
-  } satisfies Template<KnowledgeGapAlertEmailProps>,
   approval_request: {
     Component: ApprovalRequestEmail,
     subject: approvalRequestSubject,
@@ -270,6 +272,10 @@ const TEMPLATES = {
     Component: OnboardingOfferBundleReadyEmail,
     subject: onboardingOfferBundleReadySubject,
   } satisfies Template<OnboardingOfferBundleReadyEmailProps>,
+  onboarding_step_review_ready: {
+    Component: OnboardingStepReviewReadyEmail,
+    subject: onboardingStepReviewReadySubject,
+  } satisfies Template<OnboardingStepReviewReadyEmailProps>,
   onboarding_offer_to_candidate: {
     Component: OnboardingOfferToCandidateEmail,
     subject: onboardingOfferToCandidateSubject,
@@ -282,6 +288,18 @@ const TEMPLATES = {
     Component: OnboardingInductionReadyEmail,
     subject: onboardingInductionReadySubject,
   } satisfies Template<OnboardingInductionReadyEmailProps>,
+  onboarding_documents_requested: {
+    Component: OnboardingDocumentsRequestedEmail,
+    subject: onboardingDocumentsRequestedSubject,
+  } satisfies Template<OnboardingDocumentsRequestedEmailProps>,
+  onboarding_references_requested: {
+    Component: OnboardingReferencesRequestedEmail,
+    subject: onboardingReferencesRequestedSubject,
+  } satisfies Template<OnboardingReferencesRequestedEmailProps>,
+  onboarding_documents_sent: {
+    Component: OnboardingDocumentsSentEmail,
+    subject: onboardingDocumentsSentSubject,
+  } satisfies Template<OnboardingDocumentsSentEmailProps>,
   onboarding_esign_stalled: {
     Component: OnboardingEsignStalledEmail,
     subject: onboardingEsignStalledSubject,

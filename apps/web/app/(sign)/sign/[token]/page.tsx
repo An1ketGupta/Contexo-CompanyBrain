@@ -223,11 +223,6 @@ export default function SignDocumentPage() {
             </span>
           </p>
         </div>
-
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-[11px] text-muted-foreground">
-          <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-brand" />
-          Legally binding e-signature — no account needed
-        </span>
       </div>
 
       {/* Documenso's signer, embedded on our domain. `host` targets the

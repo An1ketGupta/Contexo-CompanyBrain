@@ -2,8 +2,6 @@
 
 import useSWR, { mutate as globalMutate } from "swr";
 
-import type { StageKey } from "@/components/onboarding/stage-board";
-
 /**
  * Which optional steps the onboarding pipeline runs for this workspace. LOI is
  * absent because it is never optional.
@@ -43,16 +41,6 @@ const fetcher = async (url: string): Promise<OnboardingSteps> => {
   return res.json();
 };
 
-/** The stage keys the board uses, derived from the settings shape. */
-export function stagesFromSteps(steps: OnboardingSteps): Set<StageKey> {
-  const enabled = new Set<StageKey>(["loi"]);
-  if (steps.bgv) enabled.add("bgv");
-  if (steps.appointment_bundle) enabled.add("appointment");
-  if (steps.policies) enabled.add("policies");
-  if (steps.induction) enabled.add("induction");
-  return enabled;
-}
-
 export function useOnboardingSteps() {
   const { data, error, isLoading } = useSWR(KEY, fetcher, {
     revalidateOnFocus: false,
@@ -83,7 +71,6 @@ export function useOnboardingSteps() {
 
   return {
     steps,
-    enabledStages: stagesFromSteps(steps),
     isConfigured: steps.configured,
     isLoading,
     error,

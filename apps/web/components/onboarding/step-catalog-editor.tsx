@@ -1,7 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { GripVertical, Loader2, Lock, Plus, Trash2, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  FileSignature,
+  Loader2,
+  Lock,
+  Plus,
+  ShieldCheck,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -10,7 +21,12 @@ import { cn } from "@/lib/utils";
 import {
   type CatalogStep,
   type CollectItem,
-  type NewCollectStep,
+  type DocumentType,
+  type DraftItem,
+  type NewStep,
+  type SignerRole,
+  type StepKind,
+  type SystemAction,
   useOnboardingCatalog,
 } from "@/hooks/use-onboarding-catalog";
 
@@ -36,7 +52,60 @@ const COMMON_DOCUMENTS = [
   "Passport-size photo",
 ];
 
-type DraftItem = Omit<CollectItem, "item_key"> & { item_key?: string };
+const SIGNER_LABELS: Record<SignerRole, string> = {
+  hr: "HR",
+  candidate: "Candidate",
+};
+
+/** What you can add to the pipeline, in the order the chooser offers it. */
+const STEP_TYPES: Array<{
+  id: string;
+  kind: StepKind;
+  system_action?: SystemAction;
+  title: string;
+  blurb: string;
+  Icon: typeof Upload;
+  defaultLabel: string;
+}> = [
+  {
+    id: "collect",
+    kind: "collect",
+    title: "Ask for documents",
+    blurb:
+      "The candidate uploads a checklist you define — marksheets, PAN, relieving letter.",
+    Icon: Upload,
+    defaultLabel: "Joining documents",
+  },
+  {
+    id: "generate",
+    kind: "generate",
+    title: "Send official documents",
+    blurb:
+      "Render your templates — offer letter, appointment letter, NDA — and choose who signs.",
+    Icon: FileSignature,
+    defaultLabel: "Offer paperwork",
+  },
+  {
+    id: "bgv",
+    kind: "system",
+    system_action: "bgv",
+    title: "Run a background check",
+    blurb:
+      "Ask the candidate for referees, then email each one a verification form.",
+    Icon: ShieldCheck,
+    defaultLabel: "Background verification",
+  },
+  {
+    id: "policies",
+    kind: "system",
+    system_action: "policies",
+    title: "Get policy sign-off",
+    blurb:
+      "Assign the policies that need acknowledging and wait for the candidate.",
+    Icon: ShieldCheck,
+    defaultLabel: "Policy acknowledgement",
+  },
+];
 
 function newItem(label = ""): DraftItem {
   return {
@@ -48,15 +117,12 @@ function newItem(label = ""): DraftItem {
 }
 
 /**
- * The org's onboarding pipeline, as a list it can edit.
+ * The org's onboarding pipeline, as a list it composes.
  *
- * Replaces the four on/off switches this started as. What an org can change
- * here is deliberately narrower than what the data model supports: steps can
- * be enabled, disabled, and — for document collection — added, edited and
- * placed. Reordering the built-in document steps and choosing who signs them
- * are not offered yet, because the agent still runs those in a fixed order
- * with fixed signers; a control that silently did nothing would be worse than
- * its absence.
+ * Every step is addable, movable and removable — including the letter of
+ * intent, which stopped being special once run creation took over the
+ * candidate's account and the background-check step took over the references
+ * token. What the list says is what the agent runs.
  */
 export function StepCatalogEditor({
   canEdit,
@@ -68,10 +134,13 @@ export function StepCatalogEditor({
   const {
     steps,
     bundles,
+    documentTypes,
     isLoading,
     error,
     setStepEnabled,
-    addCollectStep,
+    setSigners,
+    moveStep,
+    addStep,
     replaceItems,
     removeStep,
   } = useOnboardingCatalog();
@@ -106,11 +175,16 @@ export function StepCatalogEditor({
 
   return (
     <div className="space-y-3">
-      {bundles.map((group) => {
+      {bundles.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+          Your onboarding runs nothing yet. Add a first step below.
+        </p>
+      ) : null}
+
+      {bundles.map((group, index) => {
         const lead = group[0];
         const key = lead.bundle_key ?? lead.step_key;
         const label = lead.bundle_label ?? lead.label;
-        const isCollect = lead.kind === "collect";
         const pending = busy === key;
 
         return (
@@ -124,40 +198,52 @@ export function StepCatalogEditor({
             )}
           >
             <div className="flex items-start gap-3">
-              <span aria-hidden className="mt-0.5 text-muted-foreground">
-                {lead.locked ? (
+              {lead.locked ? (
+                <span
+                  aria-hidden
+                  className="mt-0.5 text-muted-foreground"
+                  title="This step always runs first"
+                >
                   <Lock className="h-4 w-4" />
-                ) : (
-                  <GripVertical className="h-4 w-4 opacity-40" />
-                )}
-              </span>
+                </span>
+              ) : (
+                <Reorder
+                  disabled={!canEdit || pending}
+                  isFirst={index === 0}
+                  isLast={index === bundles.length - 1}
+                  onMove={(dir) =>
+                    run(key, () => moveStep(lead.step_key, dir), "Step moved.")
+                  }
+                />
+              )}
 
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-sm font-semibold text-foreground">{label}</p>
-                  {isCollect ? (
-                    <span className="rounded-full bg-brand-tint px-2 py-0.5 text-[11px] font-medium text-brand">
-                      Documents from candidate
-                    </span>
-                  ) : null}
-                  {group.length > 1 ? (
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                      Sent together
-                    </span>
-                  ) : null}
+                  <StepBadge step={lead} members={group.length} />
                 </div>
 
                 <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                  {lead.locked
-                    ? "Always runs first — every later step builds on what it produces."
-                    : isCollect
-                      ? `${lead.items.length} document${lead.items.length === 1 ? "" : "s"}: ${lead.items
-                          .map((i) => i.label)
-                          .join(", ")}`
-                      : (lead.description ?? "")}
+                  {describe(lead, group)}
                 </p>
 
-                {isCollect && editing === lead.step_key ? (
+                {lead.kind === "generate" ? (
+                  <SignerPicker
+                    roles={lead.signer_roles as SignerRole[]}
+                    disabled={!canEdit || pending}
+                    onChange={(roles) =>
+                      run(
+                        key,
+                        () => setSigners(lead.step_key, roles),
+                        roles.length
+                          ? `Signed by ${roles.map((r) => SIGNER_LABELS[r]).join(", then ")}.`
+                          : "Sent without signatures.",
+                      )
+                    }
+                  />
+                ) : null}
+
+                {lead.kind === "collect" && editing === lead.step_key ? (
                   <ChecklistEditor
                     initial={lead.items}
                     saving={pending}
@@ -173,29 +259,29 @@ export function StepCatalogEditor({
                   />
                 ) : null}
 
-                {isCollect && editing !== lead.step_key && canEdit ? (
+                {canEdit && editing !== lead.step_key ? (
                   <div className="mt-2 flex gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setEditing(lead.step_key)}
-                      className="text-xs font-medium text-brand hover:underline"
-                    >
-                      Edit documents
-                    </button>
-                    <button
-                      type="button"
-                      disabled={pending}
-                      onClick={() =>
-                        run(
-                          key,
-                          () => removeStep(lead.step_key),
-                          "Step removed.",
-                        )
-                      }
-                      className="text-xs font-medium text-destructive-ink hover:underline disabled:opacity-50"
-                    >
-                      Remove
-                    </button>
+                    {lead.kind === "collect" ? (
+                      <button
+                        type="button"
+                        onClick={() => setEditing(lead.step_key)}
+                        className="text-xs font-medium text-brand hover:underline"
+                      >
+                        Edit documents
+                      </button>
+                    ) : null}
+                    {lead.locked ? null : (
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() =>
+                          run(key, () => removeStep(lead.step_key), "Step removed.")
+                        }
+                        className="text-xs font-medium text-destructive-ink hover:underline disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    )}
                   </div>
                 ) : null}
               </div>
@@ -238,14 +324,15 @@ export function StepCatalogEditor({
 
       {canEdit ? (
         adding ? (
-          <AddCollectStep
+          <AddStep
             steps={steps}
+            documentTypes={documentTypes}
+            saving={busy === "new"}
             onCancel={() => setAdding(false)}
             onSave={async (step) => {
-              await run("new", () => addCollectStep(step), "Step added.");
+              await run("new", () => addStep(step), "Step added.");
               setAdding(false);
             }}
-            saving={busy === "new"}
           />
         ) : (
           <button
@@ -254,7 +341,7 @@ export function StepCatalogEditor({
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border py-3 text-sm font-medium text-muted-foreground transition-colors hover:border-brand hover:text-brand"
           >
             <Plus className="h-4 w-4" />
-            Ask the candidate for documents
+            {bundles.length === 0 ? "Add the first step" : "Add a step"}
           </button>
         )
       ) : null}
@@ -262,30 +349,231 @@ export function StepCatalogEditor({
   );
 }
 
-/** Compose a new document-collection step and choose where it runs. */
-function AddCollectStep({
+function StepBadge({ step, members }: { step: CatalogStep; members: number }) {
+  return (
+    <>
+      {step.kind === "collect" ? (
+        <span className="rounded-full bg-brand-tint px-2 py-0.5 text-[11px] font-medium text-brand">
+          Documents from candidate
+        </span>
+      ) : null}
+      {step.kind === "system" ? (
+        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+          {step.system_action === "bgv" ? "Background check" : "Policy sign-off"}
+        </span>
+      ) : null}
+      {members > 1 ? (
+        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+          Sent together
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+function describe(lead: CatalogStep, group: CatalogStep[]): string {
+  if (lead.kind === "collect") {
+    const n = lead.items.length;
+    return n
+      ? `${n} document${n === 1 ? "" : "s"}: ${lead.items.map((i) => i.label).join(", ")}`
+      : "No documents on the checklist yet.";
+  }
+  if (lead.kind === "generate" && group.length > 1) {
+    return `Sends ${group.map((s) => s.label).join(" and ")} as one document.`;
+  }
+  return lead.description ?? "";
+}
+
+/** Move a step one place up or down. */
+function Reorder({
+  disabled,
+  isFirst,
+  isLast,
+  onMove,
+}: {
+  disabled: boolean;
+  isFirst: boolean;
+  isLast: boolean;
+  onMove: (dir: "up" | "down") => void;
+}) {
+  return (
+    <div className="mt-0.5 flex flex-col">
+      <button
+        type="button"
+        aria-label="Move step earlier"
+        disabled={disabled || isFirst}
+        onClick={() => onMove("up")}
+        className="text-muted-foreground transition-colors hover:text-brand disabled:opacity-25 disabled:hover:text-muted-foreground"
+      >
+        <ChevronUp className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        aria-label="Move step later"
+        disabled={disabled || isLast}
+        onClick={() => onMove("down")}
+        className="text-muted-foreground transition-colors hover:text-brand disabled:opacity-25 disabled:hover:text-muted-foreground"
+      >
+        <ChevronDown className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Who signs, in the order they sign.
+ *
+ * Selection order is routing order, so picking HR then Candidate means HR
+ * signs first — which is why this appends rather than sorting into a fixed
+ * sequence. No selection means the document is sent, not signed.
+ */
+function SignerPicker({
+  roles,
+  disabled,
+  onChange,
+}: {
+  roles: SignerRole[];
+  disabled: boolean;
+  onChange: (roles: SignerRole[]) => void;
+}) {
+  const toggle = (role: SignerRole) =>
+    onChange(
+      roles.includes(role) ? roles.filter((r) => r !== role) : [...roles, role],
+    );
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] text-muted-foreground">Signed by:</span>
+      {(Object.keys(SIGNER_LABELS) as SignerRole[]).map((role) => {
+        const at = roles.indexOf(role);
+        return (
+          <button
+            key={role}
+            type="button"
+            disabled={disabled}
+            onClick={() => toggle(role)}
+            className={cn(
+              "rounded-full border px-2 py-0.5 text-[11px] transition-colors disabled:opacity-50",
+              at >= 0
+                ? "border-brand bg-brand-tint text-brand"
+                : "border-border text-muted-foreground hover:border-brand hover:text-brand",
+            )}
+          >
+            {SIGNER_LABELS[role]}
+            {at >= 0 && roles.length > 1 ? ` (${at + 1})` : ""}
+          </button>
+        );
+      })}
+      {roles.length === 0 ? (
+        <span className="text-[11px] text-muted-foreground">
+          nobody — sent as-is
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/** Pick what kind of step to add, then fill in the details for that kind. */
+function AddStep({
   steps,
+  documentTypes,
   onSave,
   onCancel,
   saving,
 }: {
   steps: CatalogStep[];
-  onSave: (step: NewCollectStep) => Promise<void>;
+  documentTypes: DocumentType[];
+  onSave: (step: NewStep) => Promise<void>;
   onCancel: () => void;
   saving: boolean;
 }) {
-  const [label, setLabel] = useState("Joining documents");
-  const [after, setAfter] = useState<string>("loi");
-  const [items, setItems] = useState<DraftItem[]>([newItem("10th marksheet")]);
+  const [chosen, setChosen] = useState<(typeof STEP_TYPES)[number] | null>(null);
 
-  const valid = label.trim() && items.some((i) => i.label.trim());
+  if (!chosen) {
+    return (
+      <div className="rounded-xl border border-brand bg-brand-tint/20 p-4">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-semibold text-foreground">
+            What happens at this step?
+          </p>
+          <button type="button" onClick={onCancel} aria-label="Cancel">
+            <X className="h-4 w-4 text-muted-foreground" />
+          </button>
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {STEP_TYPES.map((type) => (
+            <button
+              key={type.id}
+              type="button"
+              onClick={() => setChosen(type)}
+              className="flex items-start gap-3 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-brand"
+            >
+              <type.Icon className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-foreground">
+                  {type.title}
+                </span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+                  {type.blurb}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <StepForm
+      type={chosen}
+      steps={steps}
+      documentTypes={documentTypes}
+      saving={saving}
+      onBack={() => setChosen(null)}
+      onCancel={onCancel}
+      onSave={onSave}
+    />
+  );
+}
+
+function StepForm({
+  type,
+  steps,
+  documentTypes,
+  onSave,
+  onBack,
+  onCancel,
+  saving,
+}: {
+  type: (typeof STEP_TYPES)[number];
+  steps: CatalogStep[];
+  documentTypes: DocumentType[];
+  onSave: (step: NewStep) => Promise<void>;
+  onBack: () => void;
+  onCancel: () => void;
+  saving: boolean;
+}) {
+  const [label, setLabel] = useState(type.defaultLabel);
+  const [after, setAfter] = useState<string>(
+    steps.length ? steps[steps.length - 1].step_key : "",
+  );
+  const [items, setItems] = useState<DraftItem[]>([newItem("10th marksheet")]);
+  const [docKeys, setDocKeys] = useState<string[]>([]);
+  const [signers, setSigners] = useState<SignerRole[]>([]);
+
+  const valid =
+    label.trim().length > 0 &&
+    (type.kind !== "collect" || items.some((i) => i.label.trim())) &&
+    (type.kind !== "generate" || docKeys.length > 0);
 
   return (
     <div className="rounded-xl border border-brand bg-brand-tint/20 p-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-foreground">
-          Ask the candidate for documents
-        </p>
+        <div className="flex items-center gap-2">
+          <type.Icon className="h-4 w-4 text-brand" />
+          <p className="text-sm font-semibold text-foreground">{type.title}</p>
+        </div>
         <button type="button" onClick={onCancel} aria-label="Cancel">
           <X className="h-4 w-4 text-muted-foreground" />
         </button>
@@ -297,47 +585,147 @@ function AddCollectStep({
           <Input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="Joining documents"
+            placeholder={type.defaultLabel}
             className="mt-1"
           />
         </label>
         <label className="block">
-          <span className="text-xs font-medium text-foreground">Ask after</span>
+          <span className="text-xs font-medium text-foreground">Runs after</span>
           <select
             value={after}
             onChange={(e) => setAfter(e.target.value)}
             className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
           >
-            {steps
-              .filter((s) => s.kind !== "collect")
-              .map((s) => (
-                <option key={s.step_key} value={s.step_key}>
-                  {s.label}
-                </option>
-              ))}
+            <option value="">Nothing — this goes first</option>
+            {steps.map((s) => (
+              <option key={s.step_key} value={s.step_key}>
+                {s.bundle_label ?? s.label}
+              </option>
+            ))}
           </select>
         </label>
       </div>
 
-      <ChecklistFields items={items} onChange={setItems} />
+      {type.kind === "collect" ? (
+        <ChecklistFields items={items} onChange={setItems} />
+      ) : null}
 
-      <div className="mt-4 flex justify-end gap-2">
-        <Button variant="ghost" onClick={onCancel} disabled={saving}>
-          Cancel
+      {type.kind === "generate" ? (
+        <div className="mt-3 space-y-3">
+          <div>
+            <p className="text-xs font-medium text-foreground">
+              Which documents?
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Pick more than one and they go out together, in a single signing
+              request.
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {documentTypes.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No document templates yet — add one under Document templates
+                  first.
+                </p>
+              ) : null}
+              {documentTypes.map((dt) => {
+                const at = docKeys.indexOf(dt.key);
+                return (
+                  <button
+                    key={dt.key}
+                    type="button"
+                    onClick={() =>
+                      setDocKeys(
+                        at >= 0
+                          ? docKeys.filter((k) => k !== dt.key)
+                          : [...docKeys, dt.key],
+                      )
+                    }
+                    title={
+                      dt.has_template
+                        ? dt.description ?? dt.label
+                        : "No template uploaded yet — the run will pause here until there is one."
+                    }
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                      at >= 0
+                        ? "border-brand bg-brand-tint text-brand"
+                        : "border-border text-muted-foreground hover:border-brand hover:text-brand",
+                    )}
+                  >
+                    {dt.label}
+                    {dt.has_template ? "" : " ·  no template"}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-medium text-foreground">Who signs it?</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              In the order you pick them. Choose nobody to send it unsigned.
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {(Object.keys(SIGNER_LABELS) as SignerRole[]).map((role) => {
+                const at = signers.indexOf(role);
+                return (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() =>
+                      setSigners(
+                        at >= 0
+                          ? signers.filter((r) => r !== role)
+                          : [...signers, role],
+                      )
+                    }
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                      at >= 0
+                        ? "border-brand bg-brand-tint text-brand"
+                        : "border-border text-muted-foreground hover:border-brand hover:text-brand",
+                    )}
+                  >
+                    {SIGNER_LABELS[role]}
+                    {at >= 0 && signers.length > 1 ? ` (${at + 1})` : ""}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-4 flex justify-between gap-2">
+        <Button variant="ghost" onClick={onBack} disabled={saving}>
+          Back
         </Button>
-        <Button
-          disabled={!valid || saving}
-          onClick={() =>
-            onSave({
-              label: label.trim(),
-              after_step_key: after,
-              items: items.filter((i) => i.label.trim()),
-            })
-          }
-        >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-          Add step
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="ghost" onClick={onCancel} disabled={saving}>
+            Cancel
+          </Button>
+          <Button
+            disabled={!valid || saving}
+            onClick={() =>
+              onSave({
+                kind: type.kind,
+                label: label.trim(),
+                after_step_key: after || null,
+                items:
+                  type.kind === "collect"
+                    ? items.filter((i) => i.label.trim())
+                    : undefined,
+                document_type_keys:
+                  type.kind === "generate" ? docKeys : undefined,
+                signer_roles: type.kind === "generate" ? signers : undefined,
+                system_action: type.system_action,
+              })
+            }
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Add step
+          </Button>
+        </div>
       </div>
     </div>
   );

@@ -22,8 +22,6 @@ EventType = Literal[
     "quota_warning",
     "quota_exceeded",
     "weekly_digest",
-    "knowledge_refresh",
-    "knowledge_gap_alert",
     "approval_request",
     "approval_resolved",
     "approval_reminder",
@@ -41,11 +39,15 @@ EventType = Literal[
     "onboarding_bgv_reminder",         # Reference: gentle nudge
     "onboarding_candidate_refs_reminder",  # Candidate: please submit refs
     "onboarding_offer_bundle_ready",   # HR: AL + NDA ready for review
+    "onboarding_step_review_ready",    # HR: an org-composed step's docs need approving
     "onboarding_offer_to_candidate",   # Candidate: appointment letter + NDA
     "onboarding_policies_pending",     # Candidate: please acknowledge policies
     "onboarding_induction_ready",      # Candidate: your induction document
     "onboarding_esign_stalled",        # HR: signing envelope >48h without completion
     "onboarding_sign_your_turn",       # Signer: it's your turn to sign (apps/esign routed flow)
+    "onboarding_documents_requested",  # Candidate: upload this step's checklist
+    "onboarding_references_requested", # Candidate: name your referees
+    "onboarding_documents_sent",       # Candidate: documents from an org-composed step
 ]
 
 

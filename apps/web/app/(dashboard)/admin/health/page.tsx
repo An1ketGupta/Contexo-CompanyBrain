@@ -9,9 +9,6 @@ import {
   CheckCircle2,
   CircleX,
   FileText,
-  Loader2,
-  RefreshCw,
-  Send,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -45,8 +42,6 @@ interface AtRiskDoc {
   citation_count: number;
   gap_flag_count: number;
   created_by: string | null;
-  review_due_at: string | null;
-  last_reviewed_at: string | null;
 }
 
 interface KnowledgeHealthResponse {
@@ -57,7 +52,7 @@ interface KnowledgeHealthResponse {
   label: string;
 }
 
-type BulkAction = "mark_for_review" | "request_owner_review" | "archive";
+type BulkAction = "archive";
 
 const fetcher = async (url: string): Promise<KnowledgeHealthResponse> => {
   const res = await fetch(url);
@@ -328,7 +323,6 @@ function DocRow({
           {doc.gap_flag_count > 0
             ? ` · ${doc.gap_flag_count} gap flag${doc.gap_flag_count === 1 ? "" : "s"}`
             : ""}
-          {doc.review_due_at ? " · review due" : ""}
         </p>
       </div>
       <HealthBadge
@@ -376,23 +370,9 @@ function BulkActionBar({
         toast.error(data.message ?? "Bulk action failed.");
         return;
       }
-      const data = (await res.json()) as {
-        updated: number;
-        skipped: number;
-        notified: number;
-      };
-      const verb =
-        action === "archive"
-          ? "Archived"
-          : action === "request_owner_review"
-            ? "Notified owners for"
-            : "Marked for review";
-      const detail =
-        action === "request_owner_review" && data.notified > 0
-          ? ` (${data.notified} notification${data.notified === 1 ? "" : "s"} sent)`
-          : "";
+      const data = (await res.json()) as { updated: number; skipped: number };
       toast.success(
-        `${verb} ${data.updated} document${data.updated === 1 ? "" : "s"}${detail}.`,
+        `Archived ${data.updated} document${data.updated === 1 ? "" : "s"}.`,
       );
       await onApplied();
     } catch (err) {
@@ -418,32 +398,6 @@ function BulkActionBar({
           {count} selected
         </span>
         <span className="mx-1 h-4 w-px bg-border" />
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy !== null}
-          onClick={() => void apply("mark_for_review")}
-        >
-          {busy === "mark_for_review" ? (
-            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-          )}
-          Mark for review
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy !== null}
-          onClick={() => void apply("request_owner_review")}
-        >
-          {busy === "request_owner_review" ? (
-            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Send className="mr-1.5 h-3.5 w-3.5" />
-          )}
-          Notify owners
-        </Button>
         <Button
           size="sm"
           variant="outline"

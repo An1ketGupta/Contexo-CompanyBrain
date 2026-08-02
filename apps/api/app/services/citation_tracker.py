@@ -3,7 +3,6 @@
 Powers the Day-12 "learning from usage" feedback loop:
     * chunk_citations rows let us see which knowledge surfaced where
     * documents.citation_count bumps drive the retrieval boost in hybrid_search
-    * the admin knowledge-intelligence dashboard sums over both
 
 Writes go through the service-role client so the chunk_citations RLS policy
 (read-only for org members) doesn't block the insert.

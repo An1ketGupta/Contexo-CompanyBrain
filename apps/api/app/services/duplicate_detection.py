@@ -22,9 +22,7 @@ What we do when a match is found:
 
 Thresholds:
     * Notification trigger: ≥ 0.85 cosine similarity (set in
-      DEFAULT_NOTIFY_THRESHOLD). The Day 3 Knowledge Curator's "suggest
-      merges" path uses a lower threshold (~0.75) to surface candidates;
-      that's a separate module — don't conflate the two.
+      DEFAULT_NOTIFY_THRESHOLD).
 """
 from __future__ import annotations
 
@@ -91,8 +89,7 @@ async def scan_document_for_duplicates(
             if row:
                 delivered += 1
 
-    # No dedicated webhook event: `knowledge_gap.detected` would be wrong —
-    # duplicates aren't gaps — and a new top-level event isn't warranted. The
+    # No dedicated webhook event — a new top-level event isn't warranted. The
     # admin in-app notification is the primary signal. Keeping the surface tight.
 
     return {

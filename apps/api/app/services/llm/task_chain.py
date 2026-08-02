@@ -598,7 +598,6 @@ async def execute_task(
         # End of tool loop — emit sources first, then either final text (non-stream)
         # or stream the final generation if requested.
         sources = _dedupe_sources(all_hits, limit=effective_max_context_chunks)
-        await _attach_review_due(sources, org_id=org_id, db_client=db_client)
         yield SourcesEvent(sources=sources)
 
         # Knowledge-gap signal: every search the LLM ran returned 0 hits.
@@ -607,21 +606,7 @@ async def execute_task(
         # uncertainty itself in the partial-coverage case.
         knowledge_gap = bool(search_attempts) and all(count == 0 for _, count in search_attempts)
         if knowledge_gap:
-            gap_topics = tuple(q for q, _ in search_attempts)
-            yield KnowledgeGapEvent(topics=gap_topics)
-            # Persist the gap signal so admins can act on it (Agent Day 5).
-            # Fire-and-forget through Inngest — a failed enqueue must not
-            # block the answer streaming back to the user.
-            try:
-                await _enqueue_knowledge_gap(
-                    org_id=org_id,
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    user_message=user_message,
-                    topics=gap_topics,
-                )
-            except Exception as exc:
-                log.warning("knowledge_gap_enqueue_failed: %s", exc)
+            yield KnowledgeGapEvent(topics=tuple(q for q, _ in search_attempts))
 
         # Confidence — emitted whenever the LLM consulted retrieval. Skipping
         # zero-source turns means a "hi how are you" doesn't render a "low
@@ -635,34 +620,6 @@ async def execute_task(
                 thresholds=confidence_thresholds,
             )
             yield confidence_event
-
-        # Low-confidence gap signal (Gap-v2). A turn that *answered* but did
-        # so on thin retrieval (conf<6 AND sources<2) is the bulk of platform
-        # quality misses — the zero-hit path catches the obvious failures,
-        # this one catches "we have a doc but it's stale / off-topic". We
-        # fire one event per search the LLM ran so the worker can debounce
-        # per-topic the same way it does for zero-hit.
-        if (
-            not knowledge_gap
-            and search_attempts
-            and confidence_event is not None
-            and confidence_event.score < 6.0
-            and len(sources) < 2
-        ):
-            low_conf_topics = tuple(q for q, _ in search_attempts)
-            try:
-                await _enqueue_knowledge_gap(
-                    org_id=org_id,
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    user_message=user_message,
-                    topics=low_conf_topics,
-                    signal_type="low_confidence",
-                    confidence_score=confidence_event.score,
-                    sources_count=len(sources),
-                )
-            except Exception as exc:
-                log.warning("low_confidence_gap_enqueue_failed: %s", exc)
 
         if stream and not final_text:
             # We may have exited the loop because the LLM was about to speak. To
@@ -734,59 +691,6 @@ async def execute_task(
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-async def _enqueue_knowledge_gap(
-    *,
-    org_id: str,
-    user_id: str | None,
-    conversation_id: str | None,
-    user_message: str,
-    topics: tuple[str, ...],
-    signal_type: str = "zero_hit",
-    confidence_score: float | None = None,
-    sources_count: int | None = None,
-) -> None:
-    """Emit a knowledge/gap-detected event for the Inngest worker.
-
-    Each search the LLM ran becomes its own gap row — that's the right
-    granularity for the admin alert (a topic that's hit 3x is more
-    actionable than a query that ran once). The worker handles dedupe +
-    threshold + auto-draft.
-
-    `signal_type` distinguishes the two production triggers:
-      * 'zero_hit'         — all searches returned no chunks (the v1 case)
-      * 'low_confidence'   — answer surfaced, but on thin retrieval (Gap-v2)
-    Worker uses signal_type to decide whether to write an AI-stub draft
-    (zero_hit only — low-confidence drafts would mostly fight existing docs)
-    or just record for the weekly clustering report.
-    """
-    if not topics:
-        return
-    import inngest as _inngest_pkg
-
-    from app.inngest.client import get_inngest_client
-
-    client = get_inngest_client()
-    for topic in topics:
-        # Each topic is its own event so the worker can debounce per
-        # (org, topic) cleanly. The event id includes a hash of the topic
-        # to absorb tight duplicate fires from concurrent chat windows.
-        await client.send(
-            _inngest_pkg.Event(
-                name="knowledge/gap-detected",
-                data={
-                    "org_id": org_id,
-                    "topic": topic,
-                    "query": user_message,
-                    "user_id": user_id,
-                    "conversation_id": conversation_id,
-                    "signal_type": signal_type,
-                    "confidence_score": confidence_score,
-                    "sources_count": sources_count,
-                },
-            )
-        )
-
 
 async def _resolve_display_name(client: Client, user_id: str) -> str | None:
     """Fetch the user's display_name. Returns None when missing/blank so the
@@ -1152,35 +1056,6 @@ def _dedupe_sources(hits: list[SearchHit], *, limit: int) -> list[dict]:
             }
         )
     return out
-
-
-async def _attach_review_due(
-    sources: list[dict], *, org_id: str, db_client: Client
-) -> None:
-    """Stamp each source dict with its document's `review_due_at`.
-
-    Powers the in-chat "may be outdated" banner. Best-effort: a failed read
-    leaves sources untouched and the banner simply won't render.
-    """
-    doc_ids = {s["document_id"] for s in sources if s.get("document_id")}
-    if not doc_ids:
-        return
-    try:
-        result = await asyncio.to_thread(
-            lambda: db_client.table("documents")
-            .select("id, review_due_at")
-            .eq("org_id", org_id)
-            .in_("id", list(doc_ids))
-            .execute()
-        )
-    except Exception as exc:
-        log.warning("attach_review_due failed: %s", exc)
-        return
-    by_id = {row["id"]: row.get("review_due_at") for row in (result.data or [])}
-    for s in sources:
-        doc_id = s.get("document_id")
-        if doc_id in by_id:
-            s["review_due_at"] = by_id[doc_id]
 
 
 # ── Convenience: collect events into a single response (non-streaming path) ─

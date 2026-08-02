@@ -25,9 +25,15 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill, type PillTone } from "@/components/actual/kit";
 import { LOIDraftEditor } from "@/components/onboarding/loi-draft-editor";
-import { StageBoard, currentStageKey } from "@/components/onboarding/stage-board";
+import {
+  StageBoard,
+  panelStageGroup,
+} from "@/components/onboarding/stage-board";
 import { SubmissionsPanel } from "@/components/onboarding/submissions-panel";
-import { useOnboardingSteps } from "@/hooks/use-onboarding-steps";
+import {
+  builtInPanelFor,
+  type RunStep,
+} from "@/components/onboarding/step-panel";
 import { DOCUMENT_KIND_LABEL as DOC_LABEL } from "@/lib/onboarding-documents";
 
 interface ReferenceRow {
@@ -123,6 +129,7 @@ interface RunDetail {
   references: ReferenceRow[];
   documents: DocumentRow[];
   events: EventRow[];
+  steps: RunStep[];
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -145,8 +152,23 @@ const STATUS_LABELS: Record<string, string> = {
   induction_sent: "Induction sent",
   completed: "Completed",
   blocked_missing_template: "Blocked — missing template",
+  blocked_template_drift: "Blocked — template changed",
   failed: "Failed",
   cancelled: "Cancelled",
+  // What a step an org composed writes, since it has no legacy label to reuse.
+  // Generic on purpose — the step's own name is right there in the pipeline
+  // panel, so the pill says what is happening rather than to what.
+  step_active: "In progress",
+  step_generating: "Preparing document from template",
+  step_pending_hr_review: "Review draft",
+  step_pending_signature: "Awaiting signature",
+  awaiting_candidate_documents: "Awaiting candidate documents",
+};
+
+/** How a signer role reads in the routing summary. */
+const SIGNER_LABEL: Record<string, string> = {
+  hr: "HR",
+  candidate: "candidate",
 };
 
 const fetcher = async <T,>(url: string): Promise<T> => {
@@ -191,10 +213,6 @@ export default function OnboardingDetailPage() {
     fetcher,
     { refreshInterval: 8_000 },
   );
-
-  // The stages this workspace runs. A stage switched off in settings is one
-  // the run passes straight through, so the board doesn't show a column for it.
-  const { enabledStages } = useOnboardingSteps();
 
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -493,7 +511,12 @@ export default function OnboardingDetailPage() {
   }
 
   const isBlocked = data.status === "blocked_missing_template";
-  const stage = currentStageKey(data, enabledStages);
+  const steps = data.steps ?? [];
+  // Where the run actually is, asked of its own steps. A step an org composed
+  // beyond the built-ins answers null and shows no panel.
+  const currentGroup = panelStageGroup(steps);
+  const currentStep = currentGroup?.[0] ?? null;
+  const panel = builtInPanelFor(currentStep);
   const ctc =
     data.ctc_amount !== null && data.ctc_amount !== undefined
       ? `${data.ctc_currency || "INR"} ${data.ctc_amount.toLocaleString()}`
@@ -561,14 +584,13 @@ export default function OnboardingDetailPage() {
         </div>
       </header>
 
-      {/* Stage board — the stages this workspace runs as columns, candidate
-          box parked in whichever one it's sitting in. Only that stage's panel
-          renders below. */}
+      {/* Stage board — this run's own steps as columns, candidate box parked in
+          whichever one it's sitting in. */}
       <section className="mb-8">
         <StageBoard
           run={data}
+          steps={steps}
           statusLabel={STATUS_LABELS[data.status] || data.status}
-          enabledStages={enabledStages}
         />
       </section>
 
@@ -647,15 +669,20 @@ export default function OnboardingDetailPage() {
         <SubmissionsPanel runId={data.id} />
       </div>
 
-      {/* Only the stage the run is actually sitting in. The other four are
-          summarised in the board above — an empty panel for a stage nobody has
+      {/* Only the step the run is actually sitting in, and only when it is one
+          of the built-ins these panels were written for. The rest of the
+          pipeline is in the board above — an empty panel for a step nobody has
           reached yet is noise, not information. */}
-      {stage === "loi" ? (
+      {panel === "loi" && currentStep ? (
         <>
-          <SectionHeader icon={FileSignature} title="LOI" />
+          <SectionHeader
+            icon={FileSignature}
+            title={currentStep.bundle_label ?? currentStep.label}
+          />
           <div className="mb-12 rounded-2xl border border-border bg-card p-4">
             <LOIPanel
               data={data}
+              step={currentStep}
               busy={busy}
               fileRef={loiFileInput}
               draftFileRef={loiDraftInput}
@@ -670,9 +697,9 @@ export default function OnboardingDetailPage() {
         </>
       ) : null}
 
-      {stage === "bgv" ? (
+      {panel === "bgv" && currentStep ? (
         <>
-          <SectionHeader icon={ShieldCheck} title="Background verification" />
+          <SectionHeader icon={ShieldCheck} title={currentStep.label} />
           <div className="mb-12 rounded-2xl border border-border bg-card p-4">
             <BgvPanel
               data={data}
@@ -686,12 +713,16 @@ export default function OnboardingDetailPage() {
         </>
       ) : null}
 
-      {stage === "appointment" ? (
+      {panel === "appointment" && currentStep ? (
         <>
-          <SectionHeader icon={FileText} title="Appointment Letter + NDA" />
+          <SectionHeader
+            icon={FileText}
+            title={currentStep.bundle_label ?? currentStep.label}
+          />
           <div className="mb-12 rounded-2xl border border-border bg-card p-4">
             <BundlePanel
               data={data}
+              steps={currentGroup ?? []}
               busy={busy}
               onApprove={approveBundle}
             />
@@ -699,11 +730,11 @@ export default function OnboardingDetailPage() {
         </>
       ) : null}
 
-      {stage === "policies" ? (
+      {panel === "policies" && currentStep ? (
         <>
-          <SectionHeader icon={CheckCircle2} title="Policies" />
+          <SectionHeader icon={CheckCircle2} title={currentStep.label} />
           <div className="mb-12 rounded-2xl border border-border bg-card p-4">
-            <p className="text-sm font-medium">Policies</p>
+            <p className="text-sm font-medium">{currentStep.label}</p>
             <p className="mt-1 text-xs text-muted-foreground">
               Assigned: {relativeTime(data.policies_assigned_at)}
               <br />
@@ -713,26 +744,15 @@ export default function OnboardingDetailPage() {
         </>
       ) : null}
 
-      {stage === "induction" ? (
+      {panel === "induction" && currentStep ? (
         <>
-          <SectionHeader icon={CheckCircle2} title="Induction" />
+          <SectionHeader icon={CheckCircle2} title={currentStep.label} />
           <div className="mb-12 rounded-2xl border border-border bg-card p-4">
-            <p className="text-sm font-medium">Induction</p>
+            <p className="text-sm font-medium">{currentStep.label}</p>
             <p className="mt-1 text-xs text-muted-foreground">
               Sent: {relativeTime(data.induction_sent_at)}
             </p>
-            {data.documents.find((d) => d.kind === "induction")?.signed_url ? (
-              <a
-                href={
-                  data.documents.find((d) => d.kind === "induction")!.signed_url!
-                }
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-foreground underline hover:no-underline"
-              >
-                Open induction PDF <ExternalLink className="h-3 w-3" />
-              </a>
-            ) : null}
+            <InductionLink data={data} step={currentStep} />
           </div>
         </>
       ) : null}
@@ -926,6 +946,7 @@ function BlockingFieldsForm({
 
 function LOIPanel({
   data,
+  step,
   busy,
   fileRef,
   draftFileRef,
@@ -937,6 +958,7 @@ function LOIPanel({
   onOpenSigningLink,
 }: {
   data: RunDetail;
+  step: RunStep;
   busy: string | null;
   fileRef: React.RefObject<HTMLInputElement | null>;
   draftFileRef: React.RefObject<HTMLInputElement | null>;
@@ -948,25 +970,52 @@ function LOIPanel({
   onOpenSigningLink: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const loi = data.documents.find((d) => d.kind === "loi");
-  const inReview = data.status === "loi_pending_hr_review";
-  const awaitingSign = data.status === "loi_pending_hr_sign";
-  const inEsign = data.status === "loi_pending_esign_signature";
-  const esignStatus = (loi?.esign_status || "").toLowerCase();
 
-  // Per-signer progress from the signing envelope.
-  const hrSigner = loi?.esign_signers?.find((s) => s.role === "hr");
-  const candidateSigner = loi?.esign_signers?.find(
-    (s) => s.role === "candidate",
-  );
-  const hrSigned = hrSigner?.status === "completed";
-  const candidateSigned = candidateSigner?.status === "completed";
+  // Everything here is addressed by the step, not by the literal key `loi`.
+  // The document row's `kind` is the step key the org chose, and the run status
+  // only spells `loi_pending_hr_review` while that key happens to be `loi` —
+  // for any other name it reads `step_pending_hr_review`, which used to hide
+  // this whole panel behind a document that appeared never to have generated.
+  const loi = data.documents.find((d) => d.kind === step.step_key);
+  const inReview = step.status === "pending_hr_review";
+
+  // One step status covers both ways of getting signed. An envelope on the
+  // document is what tells them apart: with one, signing happens in the
+  // browser; without one, HR prints, signs and uploads the scan.
+  const hasEnvelope = Boolean(loi?.esign_envelope_id);
+  const awaitingSign = step.status === "pending_signature" && !hasEnvelope;
+  const inEsign = step.status === "pending_signature" && hasEnvelope;
+
+  // What HR calls this document. The step's own name, falling back to the
+  // built-in label for a run whose steps predate the catalog.
+  const label = step.bundle_label ?? step.label ?? DOC_LABEL.loi;
+
+  // Per-signer progress from the signing envelope, in the routing order the
+  // step defines. `esign_signers` is authoritative once an envelope exists;
+  // before that the step's roles are all there is to show.
+  const signerRoles = step.signer_roles.length
+    ? step.signer_roles
+    : (loi?.esign_signers ?? []).map((s) => s.role);
+  const signers = signerRoles.map((role) => {
+    const fromEnvelope = loi?.esign_signers?.find((s) => s.role === role);
+    return {
+      role,
+      name:
+        role === "candidate"
+          ? data.candidate_name || "Candidate"
+          : fromEnvelope?.name || "You (HR)",
+      signed: fromEnvelope?.status === "completed",
+    };
+  });
+  const hrSigned = signers.find((s) => s.role === "hr")?.signed ?? false;
+  const firstUnsigned = signers.find((s) => !s.signed);
+  const myTurn = firstUnsigned?.role === "hr";
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm">
-          <span className="font-medium">{DOC_LABEL.loi}</span>
+          <span className="font-medium">{label}</span>
           {loi ? (
             <span className="ml-2 text-xs text-muted-foreground">
               {loi.sign_status.replace(/_/g, " ")}
@@ -1135,57 +1184,57 @@ function LOIPanel({
       {inEsign ? (
         <div className="space-y-3 rounded-xl border border-brand/30 bg-brand-tint p-4">
           <div>
-            <p className="text-sm font-medium">Signing LOI</p>
+            <p className="text-sm font-medium">Signing {label}</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {hrSigned ? (
+              {!firstUnsigned ? (
+                <>Everyone has signed. Sending it on.</>
+              ) : hrSigned || !signerRoles.includes("hr") ? (
                 <>
-                  You&apos;ve signed. The candidate will receive a signing
-                  email automatically.
+                  Waiting on{" "}
+                  <strong>{firstUnsigned.name}</strong>. They&apos;ve been
+                  emailed a signing link.
                 </>
               ) : (
                 <>
-                  The envelope is routed <strong>HR → candidate</strong>. 
-                  The candidate will receive a signing email
-                  automatically once you&apos;re done.
+                  The envelope is routed{" "}
+                  <strong>
+                    {signers.map((s) => SIGNER_LABEL[s.role] ?? s.role).join(" → ")}
+                  </strong>
+                  . Each signer is emailed automatically when it reaches them.
                 </>
               )}
             </p>
           </div>
 
           <dl className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-            <div
-              className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
-                hrSigned
-                  ? "border-success/30 bg-success-tint"
-                  : "border-border bg-muted/40"
-              }`}
-            >
-              <dt className="font-medium text-foreground">You (HR)</dt>
-              <dd className={hrSigned ? "font-medium text-success-ink" : "text-muted-foreground"}>
-                {hrSigned ? "Signed ✓" : "Pending"}
-              </dd>
-            </div>
-            <div
-              className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
-                candidateSigned
-                  ? "border-success/30 bg-success-tint"
-                  : "border-border bg-muted/40"
-              }`}
-            >
-              <dt className="font-medium text-foreground">
-                {data.candidate_name || "Candidate"}
-              </dt>
-              <dd className={candidateSigned ? "font-medium text-success-ink" : "text-muted-foreground"}>
-                {candidateSigned
-                  ? "Signed ✓"
-                  : hrSigned
-                    ? "Pending"
-                    : "Waiting for HR first"}
-              </dd>
-            </div>
+            {signers.map((signer, i) => (
+              <div
+                key={signer.role}
+                className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
+                  signer.signed
+                    ? "border-success/30 bg-success-tint"
+                    : "border-border bg-muted/40"
+                }`}
+              >
+                <dt className="font-medium text-foreground">{signer.name}</dt>
+                <dd
+                  className={
+                    signer.signed
+                      ? "font-medium text-success-ink"
+                      : "text-muted-foreground"
+                  }
+                >
+                  {signer.signed
+                    ? "Signed ✓"
+                    : signer.role === firstUnsigned?.role
+                      ? "Pending"
+                      : `Waiting for ${signers[i - 1]?.name ?? "the previous signer"}`}
+                </dd>
+              </div>
+            ))}
           </dl>
 
-          {!hrSigned ? (
+          {myTurn ? (
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 size="sm"
@@ -1328,7 +1377,12 @@ function BgvPanel({
   onNudge: () => void;
   onExtendToken: () => void;
 }) {
-  const awaitingCandidate = data.status === "awaiting_candidate_references";
+  // The agent waits here until the candidate names their referees, which is
+  // exactly what `references_submitted_at` records. It used to read the run
+  // status, but `awaiting_candidate_references` is a value the status ladder no
+  // longer writes at all — the step engine reports `bgv_pending`, so this was
+  // always false and the nudge and manual-entry controls never appeared.
+  const awaitingCandidate = !data.references_submitted_at;
 
   const formExpired =
     data.references_form_expires_at != null &&
@@ -1514,24 +1568,50 @@ function ReferenceField({
   );
 }
 
+/** Link to the induction pack, addressed by the step that produced it. */
+function InductionLink({ data, step }: { data: RunDetail; step: RunStep }) {
+  const url = data.documents.find((d) => d.kind === step.step_key)?.signed_url;
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-foreground underline hover:no-underline"
+    >
+      Open {step.label} PDF <ExternalLink className="h-3 w-3" />
+    </a>
+  );
+}
+
 function BundlePanel({
   data,
+  steps,
   busy,
   onApprove,
 }: {
   data: RunDetail;
+  /** Every document in the bundle, in the order the org arranged them. */
+  steps: RunStep[];
   busy: string | null;
   onApprove: () => void;
 }) {
-  const al = data.documents.find((d) => d.kind === "appointment_letter");
-  const nda = data.documents.find((d) => d.kind === "nda");
-  const awaitingApproval = data.status === "appointment_pending_hr_review";
+  // One card per member rather than a fixed appointment-letter-and-NDA pair —
+  // a bundle is whatever documents the org grouped, and each is addressed by
+  // its step key because that is what the document row's `kind` holds.
+  const docs = steps.map((step) => ({
+    key: step.id,
+    label: step.label,
+    doc: data.documents.find((d) => d.kind === step.step_key),
+  }));
+  const awaitingApproval = steps[0]?.status === "pending_hr_review";
 
   return (
     <div className="space-y-3" id="offer-bundle">
       <div className="grid gap-2 sm:grid-cols-2">
-        <DocCard label={DOC_LABEL.appointment_letter} doc={al} />
-        <DocCard label={DOC_LABEL.nda} doc={nda} />
+        {docs.map((d) => (
+          <DocCard key={d.key} label={d.label} doc={d.doc} />
+        ))}
       </div>
 
       {awaitingApproval ? (

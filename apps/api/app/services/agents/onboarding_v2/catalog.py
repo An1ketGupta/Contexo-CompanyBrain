@@ -37,6 +37,33 @@ log = get_logger(__name__)
 KIND_GENERATE = "generate"
 KIND_COLLECT = "collect"
 KIND_SYSTEM = "system"
+KINDS = (KIND_GENERATE, KIND_COLLECT, KIND_SYSTEM)
+
+# What a system-kind step does. Held separately from `step_key` so an org can
+# rename "Background verification" to "Reference checks", or run two of them at
+# different points, without changing which handler executes.
+SYSTEM_ACTION_BGV = "bgv"
+SYSTEM_ACTION_POLICIES = "policies"
+SYSTEM_ACTIONS = (SYSTEM_ACTION_BGV, SYSTEM_ACTION_POLICIES)
+
+# Who can be asked to sign a generated document. Routing order is the order of
+# the list: signer_roles[0] signs before signer_roles[1]. An empty list means
+# the document is sent, not signed.
+SIGNER_HR = "hr"
+SIGNER_CANDIDATE = "candidate"
+SIGNER_ROLES = (SIGNER_HR, SIGNER_CANDIDATE)
+
+# The letter of intent's document type. The LOI review endpoints and the panel
+# they serve predate the catalog and were written against the literal step key
+# `loi`; an org that renamed or re-created that step renders the same document
+# under a different key, so it is addressed by type instead.
+DOCUMENT_TYPE_LOI = "letter_of_intent"
+DOCUMENT_TYPE_INDUCTION = "induction"
+
+# The seeded appointment letter + NDA pair. Only this bundle gets the bespoke
+# "AL + NDA are ready" copy — a bundle an org composed itself is named and
+# described by its own label instead.
+BUNDLE_APPOINTMENT = "appointment_bundle"
 
 # Per-step lifecycle. Mirrors the CHECK in migration 107.
 STATUS_PENDING = "pending"
@@ -78,7 +105,8 @@ DEFAULT_STEP_DEFS: tuple[dict[str, Any], ...] = (
         "bundle_label": None,
         "position": 0,
         "signer_roles": ["hr", "candidate"],
-        "locked": True,
+        "system_action": None,
+        "locked": False,
         "legacy_toggle": None,
     },
     {
@@ -93,6 +121,7 @@ DEFAULT_STEP_DEFS: tuple[dict[str, Any], ...] = (
         "bundle_label": None,
         "position": 10,
         "signer_roles": [],
+        "system_action": SYSTEM_ACTION_BGV,
         "locked": False,
         "legacy_toggle": "bgv",
     },
@@ -102,10 +131,11 @@ DEFAULT_STEP_DEFS: tuple[dict[str, Any], ...] = (
         "label": "Appointment letter",
         "description": "Generate the appointment letter for HR review.",
         "document_type_key": "appointment_letter",
-        "bundle_key": "appointment_bundle",
+        "bundle_key": BUNDLE_APPOINTMENT,
         "bundle_label": "Appointment letter + NDA",
         "position": 20,
         "signer_roles": ["candidate"],
+        "system_action": None,
         "locked": False,
         "legacy_toggle": "appointment_bundle",
     },
@@ -115,10 +145,11 @@ DEFAULT_STEP_DEFS: tuple[dict[str, Any], ...] = (
         "label": "NDA",
         "description": "Generate the NDA for HR review.",
         "document_type_key": "nda",
-        "bundle_key": "appointment_bundle",
+        "bundle_key": BUNDLE_APPOINTMENT,
         "bundle_label": "Appointment letter + NDA",
         "position": 21,
         "signer_roles": ["candidate"],
+        "system_action": None,
         "locked": False,
         "legacy_toggle": "appointment_bundle",
     },
@@ -135,6 +166,7 @@ DEFAULT_STEP_DEFS: tuple[dict[str, Any], ...] = (
         "bundle_label": None,
         "position": 30,
         "signer_roles": [],
+        "system_action": SYSTEM_ACTION_POLICIES,
         "locked": False,
         "legacy_toggle": "policies",
     },
@@ -148,6 +180,7 @@ DEFAULT_STEP_DEFS: tuple[dict[str, Any], ...] = (
         "bundle_label": None,
         "position": 40,
         "signer_roles": [],
+        "system_action": None,
         "locked": False,
         "legacy_toggle": "induction",
     },
@@ -200,7 +233,68 @@ _SNAPSHOT_FIELDS = (
     "bundle_label",
     "position",
     "signer_roles",
+    "system_action",
 )
+
+# What to write to `onboarding_runs.status` for a given (step_key, step status).
+# The step rows are authoritative; this exists so the runs list, the stage board
+# and the run-detail page keep reading the vocabulary they were built against
+# while a built-in step is running.
+#
+# Inverting LEGACY_STATUS_STEP would not do: that map is many-to-one (four LOI
+# statuses collapse onto two step states), and it records where a run *is*
+# rather than what to call it. These are the labels the old ladder would have
+# written at each point.
+LEGACY_STATUS_FOR_STEP: dict[tuple[str, str], str] = {
+    ("loi", STATUS_GENERATING): "loi_generating",
+    ("loi", STATUS_PENDING_HR_REVIEW): "loi_pending_hr_review",
+    ("loi", STATUS_PENDING_SIGNATURE): "loi_pending_hr_sign",
+    ("loi", STATUS_DONE): "loi_sent_to_candidate",
+    ("bgv", STATUS_ACTIVE): "bgv_pending",
+    ("bgv", STATUS_DONE): "bgv_complete",
+    ("appointment_letter", STATUS_GENERATING): "appointment_bundle_generating",
+    ("appointment_letter", STATUS_PENDING_HR_REVIEW): "appointment_pending_hr_review",
+    ("appointment_letter", STATUS_DONE): "appointment_sent_to_candidate",
+    ("nda", STATUS_GENERATING): "appointment_bundle_generating",
+    ("nda", STATUS_PENDING_HR_REVIEW): "appointment_pending_hr_review",
+    ("nda", STATUS_DONE): "appointment_sent_to_candidate",
+    ("policies", STATUS_ACTIVE): "policies_assigned",
+    ("policies", STATUS_DONE): "policies_acknowledged",
+    ("induction", STATUS_GENERATING): "induction_generating",
+    ("induction", STATUS_DONE): "induction_sent",
+}
+
+# The label a step that has no legacy equivalent reports. Generic on purpose:
+# an org-named step has no place in a vocabulary that predates it, and inventing
+# `joining_documents_pending_hr_review` per org is how the CHECK constraint got
+# widened five times in the first place.
+GENERIC_RUN_STATUS: dict[str, str] = {
+    STATUS_PENDING: "step_active",
+    STATUS_ACTIVE: "step_active",
+    STATUS_GENERATING: "step_generating",
+    STATUS_PENDING_HR_REVIEW: "step_pending_hr_review",
+    STATUS_PENDING_SIGNATURE: "step_pending_signature",
+    STATUS_SUBMITTED: "step_active",
+    STATUS_PENDING_HR_APPROVAL: "step_active",
+    STATUS_BLOCKED_MISSING_TEMPLATE: "blocked_missing_template",
+    STATUS_BLOCKED_TEMPLATE_DRIFT: "blocked_template_drift",
+    STATUS_FAILED: "failed",
+}
+
+
+def run_status_for(step: dict[str, Any], step_status: str) -> str:
+    """What `onboarding_runs.status` should say while `step` is in this state.
+
+    Built-in steps keep their historical label so nothing downstream has to
+    learn a new vocabulary; a collect step reports that it is waiting on the
+    candidate; anything else falls back to a generic per-state label.
+    """
+    legacy = LEGACY_STATUS_FOR_STEP.get((step.get("step_key") or "", step_status))
+    if legacy:
+        return legacy
+    if step.get("kind") == KIND_COLLECT and step_status not in TERMINAL_STEP_STATUSES:
+        return "awaiting_candidate_documents"
+    return GENERIC_RUN_STATUS.get(step_status, "step_active")
 
 
 # ── Pure helpers ───────────────────────────────────────────────────────────
@@ -222,6 +316,27 @@ def bundle_siblings(
         (s for s in steps if s.get("bundle_key") == bundle_key),
         key=lambda s: s.get("position") or 0,
     )
+
+
+def find_document_step(
+    steps: list[dict[str, Any]], document_type_key: str
+) -> dict[str, Any] | None:
+    """The step that renders a given document type, earliest one wins.
+
+    How anything outside the agent finds "the LOI" now that `step_key` is
+    whatever the org named it. A catalog may legitimately render the same type
+    twice — a second NDA later in the pipeline — so this returns the first by
+    position rather than refusing to choose.
+    """
+    matched = [
+        s
+        for s in steps
+        if s.get("kind") == KIND_GENERATE
+        and s.get("document_type_key") == document_type_key
+    ]
+    if not matched:
+        return None
+    return min(matched, key=lambda s: s.get("position") or 0)
 
 
 def next_actionable(steps: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -349,6 +464,7 @@ async def seed_default_step_defs(org_id: str) -> None:
             "position": d["position"],
             "enabled": True,
             "signer_roles": d["signer_roles"],
+            "system_action": d["system_action"],
             "locked": d["locked"],
         }
         for d in DEFAULT_STEP_DEFS
@@ -424,70 +540,229 @@ async def _renumber(org_id: str, ordered_ids: list[str]) -> None:
         )
 
 
+def normalize_signer_roles(roles: list[str] | None) -> list[str]:
+    """Clean a signer list, preserving the caller's routing order.
+
+    Order matters — it is who signs first — so this de-duplicates in place
+    rather than sorting. An unknown role is rejected outright: silently
+    dropping one would produce a document nobody was asked to sign, which
+    looks identical to a document deliberately sent unsigned.
+    """
+    cleaned: list[str] = []
+    for role in roles or []:
+        key = str(role).strip().lower()
+        if not key:
+            continue
+        if key not in SIGNER_ROLES:
+            raise CatalogError(
+                f"'{role}' can't sign a document. Choose HR, the candidate, or both."
+            )
+        if key not in cleaned:
+            cleaned.append(key)
+    return cleaned
+
+
+async def _splice(
+    org_id: str,
+    defs: list[dict[str, Any]],
+    new_ids: list[str],
+    after_step_key: str | None,
+) -> None:
+    """Place newly created steps into the order, then renumber everything.
+
+    `after_step_key` is how position is expressed to callers: an org thinks
+    "ask for these before background verification", not "position 15". None
+    puts them first — nothing is pinned ahead of them any more.
+    """
+    ordered = [d["id"] for d in defs]
+    if after_step_key:
+        anchor = next((d for d in defs if d["step_key"] == after_step_key), None)
+        if anchor is None:
+            raise CatalogError(f"No step named '{after_step_key}' to place this after.")
+        at = ordered.index(anchor["id"]) + 1
+    else:
+        at = 0
+    ordered[at:at] = new_ids
+    await _renumber(org_id, ordered)
+
+
+async def create_step(
+    *,
+    org_id: str,
+    kind: str,
+    label: str,
+    after_step_key: str | None = None,
+    items: list[dict[str, Any]] | None = None,
+    document_type_keys: list[str] | None = None,
+    signer_roles: list[str] | None = None,
+    system_action: str | None = None,
+) -> list[dict[str, Any]]:
+    """Add a step of any kind, positioned after an existing one.
+
+    Returns a list because one request can create several rows: picking more
+    than one document type produces a bundle — several `generate` steps sharing
+    a `bundle_key`, generated together, reviewed together and signed in one
+    envelope. That is how "appointment letter + NDA" was always modelled; this
+    just lets an org compose its own.
+    """
+    label = label.strip()
+    if not label:
+        raise CatalogError("Give the step a name.")
+    if kind not in KINDS:
+        raise CatalogError(f"'{kind}' is not a kind of step.")
+
+    defs = await get_step_defs(org_id)
+    taken = {d["step_key"] for d in defs}
+    svc = get_service_client()
+
+    if kind == KIND_COLLECT:
+        rows = [_collect_row(org_id, label, taken)]
+    elif kind == KIND_SYSTEM:
+        rows = [_system_row(org_id, label, system_action, taken)]
+    else:
+        rows = _generate_rows(
+            org_id, label, document_type_keys, normalize_signer_roles(signer_roles), taken
+        )
+
+    created = await asyncio.to_thread(
+        lambda: svc.table("onboarding_step_defs").insert(rows).execute()
+    )
+    steps = created.data or []
+    if not steps:
+        raise CatalogError("Couldn't save the step. Try again.")
+
+    if kind == KIND_COLLECT:
+        await replace_collect_items(
+            org_id=org_id, step_def_id=steps[0]["id"], items=items or []
+        )
+
+    await _splice(org_id, defs, [s["id"] for s in steps], after_step_key)
+    return steps
+
+
+def _collect_row(org_id: str, label: str, taken: set[str]) -> dict[str, Any]:
+    return {
+        "org_id": org_id,
+        "step_key": slugify_step_key(label, taken=taken),
+        "kind": KIND_COLLECT,
+        "label": label,
+        "document_type_key": None,
+        "bundle_key": None,
+        "bundle_label": None,
+        # Placed by the splice above; any value would do here.
+        "position": 999,
+        "enabled": True,
+        "signer_roles": [],
+        "system_action": None,
+        "locked": False,
+    }
+
+
+def _system_row(
+    org_id: str, label: str, system_action: str | None, taken: set[str]
+) -> dict[str, Any]:
+    if system_action not in SYSTEM_ACTIONS:
+        raise CatalogError(
+            "Choose what this step does: a background check, or a policy sign-off."
+        )
+    return {
+        "org_id": org_id,
+        "step_key": slugify_step_key(label, taken=taken),
+        "kind": KIND_SYSTEM,
+        "label": label,
+        "document_type_key": None,
+        "bundle_key": None,
+        "bundle_label": None,
+        "position": 999,
+        "enabled": True,
+        "signer_roles": [],
+        "system_action": system_action,
+        "locked": False,
+    }
+
+
+def _generate_rows(
+    org_id: str,
+    label: str,
+    document_type_keys: list[str] | None,
+    signer_roles: list[str],
+    taken: set[str],
+) -> list[dict[str, Any]]:
+    """One row per document type, bundled together when there is more than one.
+
+    The bundle key is minted from the step's name and reserved in `taken` the
+    same way step keys are, so a second bundle called "Joining paperwork" cannot
+    silently merge into the first.
+    """
+    keys = [k.strip() for k in (document_type_keys or []) if k and k.strip()]
+    if not keys:
+        raise CatalogError("Choose at least one document to send.")
+    # Deduplicate: sending the same template twice in one step is never intended
+    # and would produce two rows fighting over the same onboarding_documents.kind.
+    seen: set[str] = set()
+    keys = [k for k in keys if not (k in seen or seen.add(k))]
+
+    if len(keys) == 1:
+        return [
+            {
+                "org_id": org_id,
+                "step_key": slugify_step_key(label, taken=taken),
+                "kind": KIND_GENERATE,
+                "label": label,
+                "document_type_key": keys[0],
+                "bundle_key": None,
+                "bundle_label": None,
+                "position": 999,
+                "enabled": True,
+                "signer_roles": signer_roles,
+                "system_action": None,
+                "locked": False,
+            }
+        ]
+
+    bundle_key = slugify_step_key(f"{label} bundle", taken=taken)
+    taken.add(bundle_key)
+    rows: list[dict[str, Any]] = []
+    for key in keys:
+        step_key = slugify_step_key(key, taken=taken)
+        taken.add(step_key)
+        rows.append(
+            {
+                "org_id": org_id,
+                "step_key": step_key,
+                "kind": KIND_GENERATE,
+                "label": key.replace("_", " ").title(),
+                "document_type_key": key,
+                "bundle_key": bundle_key,
+                "bundle_label": label,
+                "position": 999,
+                "enabled": True,
+                "signer_roles": signer_roles,
+                "system_action": None,
+                "locked": False,
+            }
+        )
+    return rows
+
+
 async def create_collect_step(
     *,
     org_id: str,
     label: str,
     after_step_key: str | None,
     items: list[dict[str, Any]],
-    bundle_key: str | None = None,
-    bundle_label: str | None = None,
 ) -> dict[str, Any]:
-    """Add a document-collection step, positioned after an existing one.
-
-    `after_step_key` is how position is expressed to callers: an org thinks
-    "ask for these before background verification", not "position 15". None
-    puts the step first among the non-locked steps — never ahead of the LOI,
-    which the pipeline requires to run first.
-    """
-    if not label.strip():
-        raise CatalogError("Give the step a name.")
+    """Add a document-collection step. Thin wrapper over `create_step`."""
     if not items:
         raise CatalogError("A document collection step needs at least one document.")
-
-    defs = await get_step_defs(org_id)
-    taken = {d["step_key"] for d in defs}
-    step_key = slugify_step_key(label, taken=taken)
-
-    svc = get_service_client()
-    created = await asyncio.to_thread(
-        lambda: svc.table("onboarding_step_defs")
-        .insert(
-            {
-                "org_id": org_id,
-                "step_key": step_key,
-                "kind": KIND_COLLECT,
-                "label": label.strip(),
-                "document_type_key": None,
-                "bundle_key": bundle_key,
-                "bundle_label": bundle_label,
-                # Placed by the renumber below; any value would do here.
-                "position": 999,
-                "enabled": True,
-                "signer_roles": [],
-                "locked": False,
-            }
-        )
-        .execute()
+    steps = await create_step(
+        org_id=org_id,
+        kind=KIND_COLLECT,
+        label=label,
+        after_step_key=after_step_key,
+        items=items,
     )
-    step = (created.data or [{}])[0]
-
-    await replace_collect_items(org_id=org_id, step_def_id=step["id"], items=items)
-
-    # Splice into the order. A locked step (the LOI) always leads, so an
-    # unanchored insert lands after it rather than displacing it.
-    ordered = [d["id"] for d in defs]
-    if after_step_key:
-        anchor = next((d for d in defs if d["step_key"] == after_step_key), None)
-        if anchor is None:
-            raise CatalogError(f"No step named '{after_step_key}' to place this after.")
-        ordered.insert(ordered.index(anchor["id"]) + 1, step["id"])
-    else:
-        lead = sum(1 for d in defs if d.get("locked"))
-        ordered.insert(lead, step["id"])
-    await _renumber(org_id, ordered)
-
-    return step
+    return steps[0]
 
 
 async def update_step(
@@ -496,8 +771,17 @@ async def update_step(
     step_key: str,
     enabled: bool | None = None,
     label: str | None = None,
+    signer_roles: list[str] | None = None,
+    after_step_key: str | None = None,
+    move: str | None = None,
 ) -> dict[str, Any]:
-    """Rename or enable/disable one step."""
+    """Rename, enable/disable, re-sign or re-position one step.
+
+    `move` is 'up' or 'down' — one place in the pipeline, which is how the
+    settings list drives it. `after_step_key` places the step explicitly and
+    wins if both are given. A bundle moves as a unit: its members are adjacent
+    by construction and reordering one past its own sibling would split it.
+    """
     defs = await get_step_defs(org_id)
     step = next((d for d in defs if d["step_key"] == step_key), None)
     if step is None:
@@ -514,9 +798,26 @@ async def update_step(
     if label is not None:
         if not label.strip():
             raise CatalogError("Give the step a name.")
-        patch["label"] = label.strip()
+        # Renaming a bundle member renames the bundle, not the member: the
+        # settings list shows one row per bundle, so that row's name is the one
+        # being edited.
+        if step.get("bundle_key"):
+            patch["bundle_label"] = label.strip()
+        else:
+            patch["label"] = label.strip()
+    if signer_roles is not None:
+        if step.get("kind") != KIND_GENERATE:
+            raise CatalogError(
+                f"{step['label']} doesn't produce a document, so nobody signs it."
+            )
+        patch["signer_roles"] = normalize_signer_roles(signer_roles)
+
+    if after_step_key is not None or move is not None:
+        await _reposition(org_id, defs, step, after_step_key=after_step_key, move=move)
+        defs = await get_step_defs(org_id)
+
     if not patch:
-        return step
+        return next((d for d in defs if d["step_key"] == step_key), step)
 
     svc = get_service_client()
     await asyncio.to_thread(
@@ -527,10 +828,12 @@ async def update_step(
         .execute()
     )
 
-    # Bundle members are asked and reviewed as one unit, so they are enabled as
-    # one unit too — a bundle with half its documents turned off has no
-    # meaningful behaviour.
-    if enabled is not None and step.get("bundle_key"):
+    # A bundle is asked, reviewed and signed as one unit, so everything except
+    # a member's own label applies to all of it. A bundle with half its
+    # documents turned off, or with the NDA routed to a different signer than
+    # the appointment letter it ships with, has no meaningful behaviour.
+    shared = {k: v for k, v in patch.items() if k != "label"}
+    if shared and step.get("bundle_key"):
         for sibling in defs:
             if (
                 sibling.get("bundle_key") == step["bundle_key"]
@@ -538,7 +841,7 @@ async def update_step(
             ):
                 await asyncio.to_thread(
                     lambda sid=sibling["id"]: svc.table("onboarding_step_defs")
-                    .update({"enabled": enabled})
+                    .update(shared)
                     .eq("id", sid)
                     .eq("org_id", org_id)
                     .execute()
@@ -550,8 +853,65 @@ async def update_step(
     return {**step, **patch}
 
 
+async def _reposition(
+    org_id: str,
+    defs: list[dict[str, Any]],
+    step: dict[str, Any],
+    *,
+    after_step_key: str | None = None,
+    move: str | None = None,
+) -> None:
+    """Move a step (or its whole bundle) to a new place in the pipeline."""
+    groups: list[list[dict[str, Any]]] = []
+    seen: set[str] = set()
+    for d in defs:
+        key = d.get("bundle_key")
+        if not key:
+            groups.append([d])
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        groups.append([s for s in defs if s.get("bundle_key") == key])
+
+    index = next(
+        (i for i, g in enumerate(groups) if any(s["id"] == step["id"] for s in g)),
+        None,
+    )
+    if index is None:
+        return
+
+    group = groups.pop(index)
+    if after_step_key:
+        anchor = next(
+            (
+                i
+                for i, g in enumerate(groups)
+                if any(s["step_key"] == after_step_key for s in g)
+            ),
+            None,
+        )
+        if anchor is None:
+            raise CatalogError(f"No step named '{after_step_key}' to place this after.")
+        target = anchor + 1
+    elif move == "up":
+        target = max(0, index - 1)
+    elif move == "down":
+        target = min(len(groups), index + 1)
+    else:
+        raise CatalogError("Say where to move the step.")
+
+    groups.insert(target, group)
+    await _renumber(org_id, [s["id"] for g in groups for s in g])
+
+
 async def delete_step(*, org_id: str, step_key: str) -> None:
-    """Remove a step an org added. Built-in steps can only be disabled.
+    """Remove a step from the catalog, bundle and all.
+
+    Any step may go. The pipeline is whatever the org composed, so there is no
+    longer such a thing as a step that is part of "the standard flow" and may
+    only be disabled — an org that does not send an NDA should not have to look
+    at a switched-off NDA row forever.
 
     Runs already underway are unaffected — they hold their own snapshot, and
     onboarding_run_steps.step_def_id is ON DELETE SET NULL precisely so a
@@ -561,21 +921,28 @@ async def delete_step(*, org_id: str, step_key: str) -> None:
     step = next((d for d in defs if d["step_key"] == step_key), None)
     if step is None:
         raise CatalogError(f"No step named '{step_key}'.")
-    if step.get("kind") != KIND_COLLECT:
+    if step.get("locked"):
         raise CatalogError(
-            f"{step['label']} is part of the standard pipeline and can be "
-            "turned off, but not removed."
+            f"{step['label']} can't be removed — every later step builds on "
+            "what it produces."
         )
 
+    # Deleting one member of a bundle would leave the rest generated, reviewed
+    # and signed as a bundle of one, which is not what "remove this step" means
+    # to whoever clicked it.
+    doomed = {s["id"] for s in bundle_siblings(defs, step)}
+
     svc = get_service_client()
-    await asyncio.to_thread(
-        lambda: svc.table("onboarding_step_defs")
-        .delete()
-        .eq("id", step["id"])
-        .eq("org_id", org_id)
-        .execute()
-    )
-    await _renumber(org_id, [d["id"] for d in defs if d["id"] != step["id"]])
+    for step_id in doomed:
+        await asyncio.to_thread(
+            lambda sid=step_id: svc.table("onboarding_step_defs")
+            .delete()
+            .eq("id", sid)
+            .eq("org_id", org_id)
+            .execute()
+        )
+    await _renumber(org_id, [d["id"] for d in defs if d["id"] not in doomed])
+    await sync_legacy_toggles(org_id)
 
 
 async def replace_collect_items(
@@ -642,18 +1009,23 @@ async def sync_legacy_toggles(org_id: str) -> None:
     without changing what the pipeline does.
     """
     defs = await get_step_defs(org_id)
-    by_key = {d["step_key"]: d for d in defs}
 
-    def _on(*step_keys: str) -> bool:
-        return any(by_key.get(k, {}).get("enabled", True) for k in step_keys)
+    def _any(predicate: Any) -> bool:
+        matched = [d for d in defs if predicate(d)]
+        return any(d.get("enabled", True) for d in matched) if matched else False
 
+    # Matched on what a step *does*, not what it is called: an org may rename
+    # "Background verification" or add a second one, and the legacy boolean is
+    # supposed to mean "does this org run reference checks at all".
     try:
         await org_config.update_onboarding_steps(
             org_id=org_id,
-            bgv=_on("bgv"),
-            appointment_bundle=_on("appointment_letter", "nda"),
-            policies=_on("policies"),
-            induction=_on("induction"),
+            bgv=_any(lambda d: d.get("system_action") == SYSTEM_ACTION_BGV),
+            appointment_bundle=_any(
+                lambda d: d.get("document_type_key") in ("appointment_letter", "nda")
+            ),
+            policies=_any(lambda d: d.get("system_action") == SYSTEM_ACTION_POLICIES),
+            induction=_any(lambda d: d.get("document_type_key") == "induction"),
         )
     except Exception as exc:  # noqa: BLE001
         log.warning(

@@ -49,7 +49,6 @@ const ALL_EVENTS = [
   { value: "approval.requested", label: "Approval requested" },
   { value: "approval.decided", label: "Approval decided" },
   { value: "compliance.acknowledged", label: "Compliance acknowledged" },
-  { value: "knowledge_gap.detected", label: "Knowledge gap detected" },
   { value: "agent.completed", label: "Agent run completed" },
   { value: "agent.failed", label: "Agent run failed" },
   { value: "employee.joined", label: "Employee joined" },

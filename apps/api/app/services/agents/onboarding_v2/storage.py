@@ -249,9 +249,15 @@ async def upsert_onboarding_document(
     source_template_id: str | None,
     render_context: dict[str, Any] | None,
     sign_status: str = "draft",
+    run_step_id: str | None = None,
 ) -> str:
     """Insert or update the onboarding_documents row for this (run, kind).
-    Returns the row id."""
+    Returns the row id.
+
+    `run_step_id` points the document at the step that produced it, which is
+    what lets a step an org composed own its own documents — `kind` alone only
+    identified the five that used to be hardcoded.
+    """
     svc = get_service_client()
 
     def _existing() -> dict[str, Any] | None:
@@ -279,6 +285,8 @@ async def upsert_onboarding_document(
         "render_context": render_context,
         "sign_status": sign_status,
     }
+    if run_step_id is not None:
+        payload["run_step_id"] = run_step_id
 
     if existing:
         await asyncio.to_thread(

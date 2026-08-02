@@ -75,7 +75,7 @@ apps/web/app/(dashboard)/
   documents/            upload, list, version history
   settings/             profile, team, API keys, integrations, collections, webhooks, templates
   compliance/           pending acks + quiz UI
-  admin/                11 pages (analytics, coverage, health, gaps, moderation, etc.)
+  admin/                9 pages (analytics, health, knowledge health, moderation, etc.)
 
 apps/web/components/    chat/ (30+), documents/ (15+), admin/ (10+), layout/
 apps/web/hooks/         18+ hooks — use-chat.ts is the SSE streaming core

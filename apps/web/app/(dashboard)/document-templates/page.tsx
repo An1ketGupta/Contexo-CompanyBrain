@@ -225,11 +225,6 @@ function EmptyLibrary({ onUpload }: { onUpload: () => void }) {
     <div className="rounded-xl border border-dashed px-6 py-12 text-center">
       <FileText className="mx-auto h-8 w-8 text-muted-foreground" />
       <h3 className="mt-4 font-semibold">No templates yet</h3>
-      <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-        Upload a Word document you already send — a finished offer letter works
-        best. We&rsquo;ll find the details that change per person and leave every
-        word of your legal wording exactly as it is.
-      </p>
       <Button className="mt-6" onClick={onUpload}>
         <Plus className="mr-2 h-4 w-4" />
         Upload your first template

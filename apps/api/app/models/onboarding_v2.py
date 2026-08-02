@@ -152,10 +152,38 @@ class OnboardingRunRead(BaseModel):
     updated_at: datetime
 
 
+class RunStepRead(BaseModel):
+    """One step of this run's pipeline, as snapshotted when it started.
+
+    The run detail page renders from these rather than inferring a stage from
+    `onboarding_runs.status` and a spread of timestamp columns — which could
+    only ever describe the five stages that used to be hardcoded.
+    """
+
+    id: str
+    step_key: str
+    kind: str
+    label: str
+    # Which template a `generate` step renders. The only stable way to find a
+    # particular document in a catalog an org has renamed — `step_key` is
+    # whatever they called it.
+    document_type_key: str | None = None
+    bundle_key: str | None = None
+    bundle_label: str | None = None
+    position: int
+    status: str
+    signer_roles: list[str] = Field(default_factory=list)
+    system_action: str | None = None
+    blocked_reason: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 class OnboardingRunDetailRead(OnboardingRunRead):
     references: list[BgvReferenceRead] = Field(default_factory=list)
     documents: list[OnboardingDocumentRead] = Field(default_factory=list)
     events: list[OnboardingEventRead] = Field(default_factory=list)
+    steps: list[RunStepRead] = Field(default_factory=list)
 
 
 class BgvFormPrefill(BaseModel):

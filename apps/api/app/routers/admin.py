@@ -3,10 +3,9 @@
   GET /admin/analytics?period=7d|30d|90d   — full usage analytics dashboard
   GET /admin/knowledge-health              — KB health overview
   GET /admin/moderation?result=blocked|flagged|all  — moderation logs
-  GET /admin/coverage-score?refresh=true   — KB coverage vs canonical categories
 
-Admin gating uses the same pattern as `/usage/knowledge-intelligence`: hit
-the `users` table with the user-scoped client and check `role = 'admin'`.
+Admin gating hits the `users` table with the user-scoped client and checks
+`role = 'admin'`.
 RLS on `users` already restricts the row to the caller, so the read is safe.
 
 Aggregations use the service-role client because we want to read across the
@@ -319,7 +318,7 @@ async def get_knowledge_health(
         .select(
             "id, name, file_type, health_score, health_label, last_accessed_at,"
             " created_at, citation_count, gap_flag_count, health_computed_at,"
-            " created_by, review_due_at, last_reviewed_at"
+            " created_by"
         )
         .eq("org_id", org_id)
         .eq("status", "ready")
@@ -366,8 +365,6 @@ async def get_knowledge_health(
                 "citation_count": d.get("citation_count") or 0,
                 "gap_flag_count": d.get("gap_flag_count") or 0,
                 "created_by": d.get("created_by"),
-                "review_due_at": d.get("review_due_at"),
-                "last_reviewed_at": d.get("last_reviewed_at"),
             })
 
     rows.sort(key=lambda r: r["health_score"])
@@ -384,12 +381,12 @@ async def get_knowledge_health(
 
 
 # ── Feature 1.14 — Bulk health remediation ──────────────────────────────────
-# Admins select N documents on the health page and trigger one of three
-# bulk actions. We model these as one endpoint with a discriminated body so
-# the proxy + frontend hit a single URL and we can add more actions later.
+# Admins select N documents on the health page and trigger a bulk action. We
+# model these as one endpoint with a discriminated body so the proxy +
+# frontend hit a single URL and we can add more actions later.
 
 class _BulkHealthBody(BaseModel):
-    action: Literal["mark_for_review", "request_owner_review", "archive"]
+    action: Literal["archive"]
     document_ids: list[str] = Field(..., min_length=1, max_length=500)
 
 
@@ -401,10 +398,6 @@ async def bulk_health_action(
     """Apply a remediation action to a batch of documents.
 
     Actions:
-      * mark_for_review — sets review_due_at = NOW() so the doc lights up
-        on the next cron sweep and on the owner's review queue.
-      * request_owner_review — also sends an in-app notification to each
-        owner (created_by). Deduped per (owner, doc) via dedupe_key.
       * archive — soft-delete via status='archived' so the doc disappears
         from search but the row + chunks stick around for un-archive.
     """
@@ -418,9 +411,8 @@ async def bulk_health_action(
             detail="No document_ids provided.",
         )
 
-    # Pull metadata for the targeted docs — needed to notify owners and to
-    # filter cross-org IDs out before mutating. This is a single round-trip
-    # regardless of action so we can return a tight summary either way.
+    # Pull metadata for the targeted docs so cross-org IDs are filtered out
+    # before mutating.
     docs_res = await asyncio.to_thread(
         lambda: svc.table("documents")
         .select("id, name, created_by, status")
@@ -432,72 +424,18 @@ async def bulk_health_action(
     valid_ids = [d["id"] for d in docs]
     skipped = len(doc_ids) - len(valid_ids)
     if not valid_ids:
-        return {"updated": 0, "skipped": skipped, "notified": 0}
+        return {"updated": 0, "skipped": skipped}
 
-    now_iso = datetime.now(UTC).isoformat()
-
-    if body.action == "mark_for_review":
-        await asyncio.to_thread(
-            lambda: svc.table("documents")
-            .update({"review_due_at": now_iso})
-            .eq("org_id", org_id)
-            .in_("id", valid_ids)
-            .execute()
-        )
-        return {"updated": len(valid_ids), "skipped": skipped, "notified": 0}
-
-    if body.action == "archive":
-        # Note: we use status='archived' (lower-cased) — chat retrieval and
-        # the documents list both already exclude non-'ready' statuses.
-        await asyncio.to_thread(
-            lambda: svc.table("documents")
-            .update({"status": "archived"})
-            .eq("org_id", org_id)
-            .in_("id", valid_ids)
-            .execute()
-        )
-        return {"updated": len(valid_ids), "skipped": skipped, "notified": 0}
-
-    # request_owner_review — set review_due_at AND notify each owner.
+    # Note: we use status='archived' (lower-cased) — chat retrieval and
+    # the documents list both already exclude non-'ready' statuses.
     await asyncio.to_thread(
         lambda: svc.table("documents")
-        .update({"review_due_at": now_iso})
+        .update({"status": "archived"})
         .eq("org_id", org_id)
         .in_("id", valid_ids)
         .execute()
     )
-
-    notified = 0
-    try:
-        from app.services.notifications import create_notification
-
-        for d in docs:
-            owner = d.get("created_by")
-            if not owner:
-                continue
-            res = await create_notification(
-                org_id=org_id,
-                user_id=owner,
-                type="document_review_requested",
-                title="Knowledge admin requested a review",
-                body=f"Please review “{d.get('name') or 'an untitled document'}”.",
-                metadata={"document_id": d["id"]},
-                link_url=f"/documents?id={d['id']}",
-                # One notification per (owner, doc, day) — re-firing the
-                # bulk action the same day is a no-op for the owner.
-                dedupe_key=f"review:{d['id']}:{now_iso[:10]}",
-                client=svc,
-            )
-            if res:
-                notified += 1
-    except Exception as exc:
-        log.warning("bulk_review_notify_failed", extra={"err": str(exc)})
-
-    return {
-        "updated": len(valid_ids),
-        "skipped": skipped,
-        "notified": notified,
-    }
+    return {"updated": len(valid_ids), "skipped": skipped}
 
 
 # ── Moderation logs (Day 2) ──────────────────────────────────────────────────
@@ -522,24 +460,6 @@ async def get_moderation_logs(
         q = q.eq("result", result)
     res = await asyncio.to_thread(lambda: q.execute())
     return res.data or []
-
-
-# ── Coverage Score (Day 4) ───────────────────────────────────────────────────
-
-@router.get("/coverage-score")
-async def get_coverage_score(
-    refresh: bool = Query(default=False),
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Return the KB coverage payload, recomputing if stale or `refresh=true`.
-
-    Compute is bounded (≤8 embedding calls + 8 RPCs) but not free; the
-    service caches on a 1h TTL with eager invalidation on doc-ready.
-    """
-    from app.services.coverage import get_or_compute_coverage
-
-    org_id = await _require_admin(current_user)
-    return await get_or_compute_coverage(org_id, force_refresh=refresh)
 
 
 # ── Confidence thresholds (Agent Day 3) ──────────────────────────────────────
@@ -635,211 +555,6 @@ async def update_confidence_thresholds_endpoint(
         "block": saved.block,
         "updated": True,
     }
-
-
-# ── Knowledge gaps (Agent Day 5) ─────────────────────────────────────────────
-
-
-@router.get("/knowledge-gaps")
-async def list_knowledge_gaps(
-    days: int = Query(default=30, ge=1, le=180),
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Aggregate gap rows by topic for the admin panel.
-
-    Returns one row per distinct topic, with occurrence count + last-asked
-    timestamp + whether an AI draft is available. We aggregate server-side
-    (instead of the UI doing it) so the response stays small even on orgs
-    with thousands of zero-result queries.
-    """
-    org_id = await _require_admin(current_user)
-    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
-    svc = get_service_client()
-
-    gaps_res = await asyncio.to_thread(
-        lambda: svc.table("knowledge_gaps")
-        .select("topic, query, created_at")
-        .eq("org_id", org_id)
-        .gte("created_at", cutoff)
-        .order("created_at", desc=True)
-        .limit(5000)
-        .execute()
-    )
-    rows = gaps_res.data or []
-
-    # Bucket by topic — simple, fast, and predictable. If/when a single org
-    # blows past 5k rows in a window, we'll push this to a SQL view.
-    buckets: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        topic = (row.get("topic") or "").strip()
-        if not topic:
-            continue
-        bucket = buckets.setdefault(
-            topic,
-            {"topic": topic, "count": 0, "last_asked": row["created_at"], "sample_queries": []},
-        )
-        bucket["count"] += 1
-        if row["created_at"] > bucket["last_asked"]:
-            bucket["last_asked"] = row["created_at"]
-        if len(bucket["sample_queries"]) < 3 and row.get("query"):
-            bucket["sample_queries"].append(row["query"])
-
-    # Pull draft availability in one shot rather than N queries.
-    draft_topics = await asyncio.to_thread(
-        lambda: svc.table("document_drafts")
-        .select("gap_topic, id, status")
-        .eq("org_id", org_id)
-        .eq("source", "knowledge_gap_autoflow")
-        .execute()
-    )
-    drafts_by_topic: dict[str, dict[str, Any]] = {}
-    for d in (draft_topics.data or []):
-        t = d.get("gap_topic")
-        if t and t not in drafts_by_topic:
-            drafts_by_topic[t] = {"draft_id": d["id"], "draft_status": d.get("status")}
-
-    items = []
-    for bucket in buckets.values():
-        draft = drafts_by_topic.get(bucket["topic"])
-        items.append({**bucket, "draft": draft})
-
-    items.sort(key=lambda i: (-i["count"], i["topic"]))
-    return {"days": days, "items": items, "total_topics": len(items)}
-
-
-@router.get("/document-drafts/{draft_id}")
-async def get_document_draft(
-    draft_id: str,
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    org_id = await _require_admin(current_user)
-    svc = get_service_client()
-    row = await asyncio.to_thread(
-        lambda: svc.table("document_drafts")
-        .select("*")
-        .eq("id", draft_id)
-        .eq("org_id", org_id)
-        .maybe_single()
-        .execute()
-    )
-    if not row or not row.data:
-        raise HTTPException(status_code=404, detail="draft_not_found")
-    return row.data
-
-
-class DraftDecisionBody(BaseModel):
-    # Optional edits — if present, replaces the stub before ingest.
-    title: str | None = Field(default=None, max_length=200)
-    content: str | None = Field(default=None, max_length=200_000)
-
-
-@router.post("/document-drafts/{draft_id}/approve")
-async def approve_document_draft(
-    draft_id: str,
-    body: DraftDecisionBody,
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """Approve a knowledge-gap stub: ingest it as a real document.
-
-    The draft is persisted (status='approved' + reviewer) and a regular
-    `doc/process-text` event is fired against the same pipeline that
-    handles Notion/Drive ingest. Once it lands in `documents`, the next
-    chat that asks about the topic will find it via hybrid_search.
-    """
-    org_id = await _require_admin(current_user)
-    user_id = current_user["user_id"]
-    svc = get_service_client()
-
-    row = await asyncio.to_thread(
-        lambda: svc.table("document_drafts")
-        .select("id, title, content, status, gap_topic")
-        .eq("id", draft_id)
-        .eq("org_id", org_id)
-        .maybe_single()
-        .execute()
-    )
-    if not row or not row.data:
-        raise HTTPException(status_code=404, detail="draft_not_found")
-    if row.data.get("status") not in (None, "pending_review"):
-        raise HTTPException(status_code=409, detail="draft_already_resolved")
-
-    title = (body.title or row.data["title"]).strip() or "Untitled knowledge stub"
-    content = (body.content or row.data["content"]).strip()
-    if not content:
-        raise HTTPException(status_code=400, detail="empty_content")
-
-    # Insert documents row in 'processing' state — same shape the rest of the
-    # ingest pipeline expects.
-    doc_row = await asyncio.to_thread(
-        lambda: svc.table("documents")
-        .insert({
-            "org_id": org_id,
-            "name": title,
-            "file_type": "md",
-            "status": "processing",
-            "uploaded_by": user_id,
-            "source": "knowledge_gap_stub",
-        })
-        .execute()
-    )
-    if not doc_row.data:
-        raise HTTPException(status_code=500, detail="document_insert_failed")
-    new_doc_id = doc_row.data[0]["id"]
-
-    # Mark draft approved + link to the created document.
-    await asyncio.to_thread(
-        lambda: svc.table("document_drafts")
-        .update({
-            "status": "approved",
-            "reviewed_by": user_id,
-            "reviewed_at": datetime.now(UTC).isoformat(),
-            "ingested_document_id": new_doc_id,
-            "title": title,
-            "content": content,
-        })
-        .eq("id", draft_id)
-        .execute()
-    )
-
-    # Queue the standard process-text pipeline (chunk + embed + ready flip).
-    import inngest as _inngest_pkg
-
-    from app.inngest.client import get_inngest_client
-
-    client = get_inngest_client()
-    await client.send(
-        _inngest_pkg.Event(
-            name="doc/process-text",
-            data={"doc_id": new_doc_id, "org_id": org_id, "text": content},
-            id=f"draft-{draft_id}-{new_doc_id}",
-        )
-    )
-
-    return {"approved": True, "document_id": new_doc_id}
-
-
-@router.post("/document-drafts/{draft_id}/reject")
-async def reject_document_draft(
-    draft_id: str,
-    current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    org_id = await _require_admin(current_user)
-    user_id = current_user["user_id"]
-    svc = get_service_client()
-    res = await asyncio.to_thread(
-        lambda: svc.table("document_drafts")
-        .update({
-            "status": "rejected",
-            "reviewed_by": user_id,
-            "reviewed_at": datetime.now(UTC).isoformat(),
-        })
-        .eq("id", draft_id)
-        .eq("org_id", org_id)
-        .execute()
-    )
-    if not res.data:
-        raise HTTPException(status_code=404, detail="draft_not_found")
-    return {"rejected": True}
 
 
 # ── Agent Roadmap Day 7: agent runs audit trail ─────────────────────────────

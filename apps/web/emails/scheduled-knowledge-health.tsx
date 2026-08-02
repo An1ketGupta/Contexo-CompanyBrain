@@ -4,8 +4,8 @@ import { EmailShell, button, muted, p } from "./_layout";
 /**
  * Knowledge base health report (V5 #98).
  *
- * Snapshot of the corpus: top-cited docs (working knowledge), stale docs
- * (zero citations & older than 30d), knowledge gaps in the last 30 days.
+ * Snapshot of the corpus: top-cited docs (working knowledge) and stale docs
+ * (zero citations & older than 30d).
  */
 export interface ScheduledKnowledgeHealthEmailProps {
   org_name: string;
@@ -14,8 +14,6 @@ export interface ScheduledKnowledgeHealthEmailProps {
   top_documents: { name: string; citations: number }[];
   stale_documents: { name: string }[];
   stale_count: number;
-  knowledge_gaps_count: number;
-  top_gap_topics: { topic: string; count: number }[];
 }
 
 export function scheduledKnowledgeHealthSubject(
@@ -34,15 +32,13 @@ export function ScheduledKnowledgeHealthEmail(
     top_documents,
     stale_documents,
     stale_count,
-    knowledge_gaps_count,
-    top_gap_topics,
   } = props;
 
   const base = app_url.replace(/\/$/, "");
 
   return (
     <EmailShell
-      preview={`${total_docs} docs · ${knowledge_gaps_count} gaps detected`}
+      preview={`${total_docs} docs in your knowledge base`}
       heading={`${org_name} — knowledge health`}
     >
       <Text style={p}>
@@ -74,24 +70,9 @@ export function ScheduledKnowledgeHealthEmail(
         </Section>
       )}
 
-      {top_gap_topics.length > 0 && (
-        <Section>
-          <Text style={sectionHeading}>Top knowledge gaps</Text>
-          <Text style={muted}>
-            Queries the team asked where retrieval came up empty. Likely worth
-            documenting.
-          </Text>
-          {top_gap_topics.map((g) => (
-            <Text key={g.topic} style={listItem}>
-              · &ldquo;{g.topic}&rdquo; <span style={countStyle}>({g.count})</span>
-            </Text>
-          ))}
-        </Section>
-      )}
-
       <Section style={{ marginTop: "24px" }}>
-        <Button href={`${base}/admin/knowledge-gaps`} style={button}>
-          Review knowledge gaps
+        <Button href={`${base}/documents`} style={button}>
+          Open your documents
         </Button>
       </Section>
       <Text style={muted}>

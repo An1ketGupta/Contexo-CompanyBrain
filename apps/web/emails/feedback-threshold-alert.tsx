@@ -109,7 +109,7 @@ const REASON_EXPLAINERS: Record<string, string> = {
   outdated_policy:
     "Responses are citing stale information. Check for older versions still tagged as authoritative and re-upload the current revision.",
   hallucination:
-    "Responses are inventing information. Check if knowledge-gap alerts are accumulating in the same area — fill those gaps first.",
+    "Responses are inventing information. Check whether the knowledge base actually covers the area being asked about — add an authoritative document first.",
   wrong_format:
     "Output format doesn't match the use case. A template in Settings → Templates often resolves this.",
 };

@@ -172,9 +172,6 @@ export default function BgvFormPage() {
       <h1 className="text-2xl font-semibold tracking-tight text-foreground">
         Reference check for {prefill.candidate_name}
       </h1>
-      <p className="mt-1 text-sm text-muted-foreground">
-        About 3 minutes. No account needed.
-      </p>
 
       <form className="mt-8 space-y-6" onSubmit={onSubmit}>
         <div className="space-y-2">

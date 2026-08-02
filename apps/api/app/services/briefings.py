@@ -1,8 +1,6 @@
 """Proactive Morning Briefings (Feature 2.2).
 
 Composes a weekly briefing for one user. Pulls signals from:
-  * knowledge_gaps        — top 3 under-served queries in the past week
-  * documents             — docs with review_due_at < now and health=stale
   * calendar_meetings     — meetings starting in the next 7 days
   * analytics_events      — high-activity event types from the past week
 
@@ -33,9 +31,6 @@ _BRIEFING_PROMPT = """You are the user's chief of staff. Write a short Monday-mo
 
 ## What's coming up this week
 (1-2 short sentences naming the most important upcoming meetings.)
-
-## What needs your attention
-(1-2 short sentences calling out stale docs or knowledge gaps the user can fix.)
 
 ## What the team is asking about
 (1-2 sentences summarizing the topics generating questions, citing the most-asked queries.)
@@ -256,44 +251,6 @@ async def _gather_signals(*, org_id: str, user_id: str) -> dict[str, Any]:
     week_ago = (now - timedelta(days=7)).isoformat()
     week_ahead = (now + timedelta(days=7)).isoformat()
 
-    def _knowledge_gaps() -> list[dict[str, Any]]:
-        # Tally by topic over the last 7 days. supabase-py doesn't expose
-        # GROUP BY directly, so we pull recent gaps and tally in Python.
-        res = (
-            svc.table("knowledge_gaps")
-            .select("topic, query, created_at")
-            .eq("org_id", org_id)
-            .gte("created_at", week_ago)
-            .order("created_at", desc=True)
-            .limit(500)
-            .execute()
-        )
-        rows = res.data or []
-        tally: dict[str, dict[str, Any]] = {}
-        for r in rows:
-            t = (r.get("topic") or "").strip().lower()
-            if not t:
-                continue
-            slot = tally.setdefault(t, {"topic": t, "count": 0, "last_query": ""})
-            slot["count"] += 1
-            slot["last_query"] = r.get("query") or slot["last_query"]
-        ranked = sorted(tally.values(), key=lambda r: r["count"], reverse=True)
-        return ranked[:3]
-
-    def _stale_docs() -> list[dict[str, Any]]:
-        # Docs the user is on the hook for that need review.
-        res = (
-            svc.table("documents")
-            .select("id, name, health_label, review_due_at, last_reviewed_at")
-            .eq("org_id", org_id)
-            .eq("status", "ready")
-            .eq("created_by", user_id)
-            .lte("review_due_at", now.isoformat())
-            .limit(5)
-            .execute()
-        )
-        return res.data or []
-
     def _upcoming_meetings() -> list[dict[str, Any]]:
         res = (
             svc.table("calendar_meetings")
@@ -326,15 +283,11 @@ async def _gather_signals(*, org_id: str, user_id: str) -> dict[str, Any]:
         ranked = sorted(tally.items(), key=lambda kv: kv[1], reverse=True)
         return [{"event_type": k, "count": v} for k, v in ranked[:5]]
 
-    gaps, stale, meetings, trending = await asyncio.gather(
-        asyncio.to_thread(_knowledge_gaps),
-        asyncio.to_thread(_stale_docs),
+    meetings, trending = await asyncio.gather(
         asyncio.to_thread(_upcoming_meetings),
         asyncio.to_thread(_trending_topics),
     )
     return {
-        "knowledge_gaps": gaps,
-        "stale_docs": stale,
         "meetings": meetings,
         "trending_topics": trending,
     }
@@ -360,22 +313,6 @@ async def _synthesize(
             lines.append(f"- {t} at {when}")
     else:
         lines.append("\nUpcoming meetings: none on the calendar.")
-
-    gaps = data.get("knowledge_gaps") or []
-    if gaps:
-        lines.append("\nTop questions teammates asked the AI last week:")
-        for g in gaps:
-            lines.append(f"- “{g.get('topic')}” ({g.get('count')} times)")
-    else:
-        lines.append("\nKnowledge gaps last week: none flagged.")
-
-    stale = data.get("stale_docs") or []
-    if stale:
-        lines.append("\nDocs you own that are due for review:")
-        for d in stale:
-            lines.append(f"- {d.get('name')}")
-    else:
-        lines.append("\nDocs due for review (owned by you): none.")
 
     trending = data.get("trending_topics") or []
     if trending:
@@ -414,14 +351,6 @@ async def _synthesize(
         parts.append(f"You have {len(meetings)} meeting(s) coming up this week.")
     else:
         parts.append("No meetings on the calendar this week.")
-    if stale:
-        parts.append(
-            f"{len(stale)} document(s) you own are due for review."
-        )
-    if gaps:
-        top = gaps[0].get("topic") if gaps else None
-        if top:
-            parts.append(f"The team's been asking about \"{top}\" — worth a look.")
     body = "## Your weekly briefing\n\n" + " ".join(parts)
     return body, parts[0]
 

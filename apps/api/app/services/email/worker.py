@@ -334,8 +334,8 @@ async def _enqueue_org_digest(org: dict[str, Any], iso_week: str) -> None:
     """Compute weekly stats + fan one digest email per admin in the org.
 
     Day 11 expanded the digest to cover the full value-prop surface area:
-    queries, time saved, knowledge gaps, low-confidence answers, new docs,
-    and ack compliance. All sourced from existing analytics tables — no
+    queries, time saved, low-confidence answers, new docs, and ack
+    compliance. All sourced from existing analytics tables — no
     new instrumentation. We skip the email if NOTHING happened (zero
     queries AND zero new docs) so an idle org doesn't get spam.
     """
@@ -431,34 +431,6 @@ def _gather_weekly_stats(org_id: str) -> dict[str, Any]:
     new_docs = new_docs_res.data or []
     new_doc_titles = [d.get("name") for d in new_docs if d.get("name")][:5]
 
-    # Knowledge gaps surfaced this week — Counter the topics.
-    gaps_count = 0
-    top_gap_topics: list[dict[str, Any]] = []
-    try:
-        gaps_res = (
-            svc.table("knowledge_gaps")
-            .select("topic")
-            .eq("org_id", org_id)
-            .gte("created_at", one_week_ago)
-            .limit(2000)
-            .execute()
-        )
-        gap_rows = gaps_res.data or []
-        gaps_count = len(gap_rows)
-        from collections import Counter
-
-        counter = Counter(
-            (g.get("topic") or "").strip()
-            for g in gap_rows
-            if (g.get("topic") or "").strip()
-        )
-        top_gap_topics = [
-            {"topic": topic, "count": count}
-            for topic, count in counter.most_common(3)
-        ]
-    except Exception as exc:
-        log.warning("digest_gaps_query_failed", org_id=org_id, error=str(exc))
-
     # Acknowledgement compliance — count outstanding pending older than 7d.
     ack_pending = 0
     ack_completion_pct: float | None = None
@@ -505,8 +477,6 @@ def _gather_weekly_stats(org_id: str) -> dict[str, Any]:
         "negative_feedback_count": negative_count,
         "positive_feedback_count": positive_count,
         "low_confidence_count": low_conf_count,
-        "knowledge_gaps_count": gaps_count,
-        "top_gap_topics": top_gap_topics,
         "new_document_count": len(new_docs),
         "new_document_titles": new_doc_titles,
         "ack_pending_count": ack_pending,

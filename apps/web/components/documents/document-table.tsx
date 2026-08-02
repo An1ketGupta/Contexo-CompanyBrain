@@ -6,7 +6,6 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronRight,
-  Clock,
   Loader2,
   MessageSquare,
   Mic,
@@ -28,7 +27,6 @@ import { DeleteDocumentDialog } from "./delete-document-dialog";
 import { ShareTranscriptDialog } from "./share-transcript-dialog";
 import { ProcessingIndicator } from "./processing-indicator";
 import { TagDialog } from "./tag-dialog";
-import { ReviewSettingsDialog } from "./review-settings-dialog";
 import { UploadVersionButton } from "./upload-version-button";
 import { DocumentSummary } from "./document-summary";
 import { TableOfContents } from "./table-of-contents";
@@ -228,7 +226,6 @@ function Row({
 }) {
   const [tagOpen, setTagOpen] = useState(false);
   const [savingTags, setSavingTags] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const { user } = useCurrentUser();
   const isAdmin = user?.role === "admin";
@@ -413,24 +410,6 @@ function Row({
               onUploaded={onRefresh}
             />
           )}
-          {isAdmin && doc.status === "ready" && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setReviewOpen(true)}
-              title={
-                doc.review_frequency_days
-                  ? `Review every ${doc.review_frequency_days} days`
-                  : "Set review schedule"
-              }
-              aria-label={`Review schedule for ${doc.name}`}
-            >
-              <Clock className="h-3.5 w-3.5" />
-              {doc.review_frequency_days
-                ? `${doc.review_frequency_days}d`
-                : "Review"}
-            </Button>
-          )}
           {(doc.status === "failed" || hasFailedChunks(doc.metadata)) && (
             <RetryButton id={doc.id} name={doc.name} onRetry={onRetry} />
           )}
@@ -458,17 +437,6 @@ function Row({
           }
         }}
       />
-      {isAdmin && (
-        <ReviewSettingsDialog
-          open={reviewOpen}
-          onOpenChange={setReviewOpen}
-          documentId={doc.id}
-          documentName={doc.name}
-          currentFrequencyDays={doc.review_frequency_days ?? null}
-          lastReviewedAt={doc.last_reviewed_at ?? null}
-          reviewDueAt={doc.review_due_at ?? null}
-        />
-      )}
     </tr>
     {expanded && canExpand && (
       <tr className="bg-muted/20">

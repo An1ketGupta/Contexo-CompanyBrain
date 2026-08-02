@@ -58,7 +58,6 @@ export async function proxy(request: NextRequest) {
     "/compliance",
     "/help",
     "/history",
-    "/insights",
     "/notifications",
   ];
   const isProtected = protectedRoutes.some(

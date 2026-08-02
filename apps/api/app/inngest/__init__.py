@@ -5,7 +5,6 @@ from app.services.email.worker import FUNCTIONS as _EMAIL_FUNCTIONS
 from .api_trigger_functions import FUNCTIONS as _API_TRIGGER_FUNCTIONS
 from .approval_functions import FUNCTIONS as _APPROVAL_FUNCTIONS
 from .archive_functions import FUNCTIONS as _ARCHIVE_FUNCTIONS
-from .curator_functions import FUNCTIONS as _CURATOR_FUNCTIONS
 from .customer_support_functions import FUNCTIONS as _CUSTOMER_SUPPORT_FUNCTIONS
 from .duplicate_detection_functions import FUNCTIONS as _DUPLICATE_DETECTION_FUNCTIONS
 from .announcement_functions import FUNCTIONS as _ANNOUNCEMENT_FUNCTIONS
@@ -20,8 +19,6 @@ from .functions import process_document
 from .gmail_functions import FUNCTIONS as _GMAIL_FUNCTIONS
 from .integration_functions import FUNCTIONS as _INTEGRATION_FUNCTIONS
 from .integration_write_functions import FUNCTIONS as _INTEGRATION_WRITE_FUNCTIONS
-from .knowledge_gap_functions import FUNCTIONS as _KNOWLEDGE_GAP_FUNCTIONS
-from .knowledge_gap_weekly_functions import FUNCTIONS as _KNOWLEDGE_GAP_WEEKLY_FUNCTIONS
 from .briefing_functions import FUNCTIONS as _BRIEFING_FUNCTIONS
 from .meeting_functions import FUNCTIONS as _MEETING_FUNCTIONS
 from .onboarding_functions import FUNCTIONS as _ONBOARDING_FUNCTIONS
@@ -45,8 +42,6 @@ FUNCTIONS = [
     *_SLACK_FUNCTIONS,
     *_SLACK_INBOUND_FUNCTIONS,
     *_INTEGRATION_WRITE_FUNCTIONS,
-    *_KNOWLEDGE_GAP_FUNCTIONS,
-    *_KNOWLEDGE_GAP_WEEKLY_FUNCTIONS,
     *_BRIEFING_FUNCTIONS,
     *_APPROVAL_FUNCTIONS,
     *_ONBOARDING_FUNCTIONS,
@@ -65,7 +60,6 @@ FUNCTIONS = [
     *_REPORT_FUNCTIONS,
     *_EMBEDDING_FT_FUNCTIONS,
     *_DUPLICATE_DETECTION_FUNCTIONS,
-    *_CURATOR_FUNCTIONS,
     *_ANNOUNCEMENT_FUNCTIONS,
     *_CALENDAR_FUNCTIONS,
     *_QUALITY_FUNCTIONS,

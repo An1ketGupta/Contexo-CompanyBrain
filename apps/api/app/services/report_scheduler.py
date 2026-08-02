@@ -201,8 +201,8 @@ async def gather_usage_summary(org_id: str, *, window_days: int = 7) -> dict[str
 
 async def gather_knowledge_health(org_id: str) -> dict[str, Any]:
     """Knowledge-base health snapshot: corpus size, staleness, never-cited
-    docs, knowledge gaps in the last 30 days. Independent of any time window
-    — it's a "state of the KB right now" report."""
+    docs. Independent of any time window — it's a "state of the KB right
+    now" report."""
     svc = get_service_client()
     since_30d = _last_n_days_iso(30)
 
@@ -252,28 +252,14 @@ async def gather_knowledge_health(org_id: str) -> dict[str, Any]:
             .data
             or []
         )
-        gaps = (
-            svc.table("knowledge_gaps")
-            .select("topic")
-            .eq("org_id", org_id)
-            .gte("created_at", since_30d)
-            .limit(2000)
-            .execute()
-            .data
-            or []
-        )
         return {
             "org": org,
             "total_docs": total,
             "top_docs": top,
             "stale_docs": stale,
-            "gap_rows": gaps,
         }
 
     raw = await asyncio.to_thread(_query)
-    gap_counter = Counter(
-        (g.get("topic") or "").strip() for g in raw["gap_rows"] if (g.get("topic") or "").strip()
-    )
 
     return {
         "org_name": raw["org"].get("name", "Your team"),
@@ -287,10 +273,6 @@ async def gather_knowledge_health(org_id: str) -> dict[str, Any]:
             {"name": d.get("name")} for d in raw["stale_docs"] if d.get("name")
         ],
         "stale_count": len(raw["stale_docs"]),
-        "knowledge_gaps_count": len(raw["gap_rows"]),
-        "top_gap_topics": [
-            {"topic": t, "count": c} for t, c in gap_counter.most_common(5)
-        ],
     }
 
 

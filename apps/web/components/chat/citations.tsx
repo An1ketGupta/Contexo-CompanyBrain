@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
-import { ChevronDown, Clock, ExternalLink, FileText } from "lucide-react";
+import { ChevronDown, ExternalLink, FileText } from "lucide-react";
 import type { MessageSource } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { DocumentPreviewSheet } from "./document-preview-sheet";
@@ -21,11 +20,9 @@ export function Citations({ sources }: CitationsProps) {
 
   // Group by document so two chunks from the same doc don't shout twice.
   const grouped = groupByDocument(sources);
-  const overdue = pickOverdueDocs(grouped);
 
   return (
     <div className="mt-4 border-t border-border/70 pt-3">
-      {overdue.length > 0 && <OverdueBanner overdue={overdue} />}
       <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
         <span>Based on {grouped.length} {grouped.length === 1 ? "source" : "sources"}</span>
       </div>
@@ -38,59 +35,6 @@ export function Citations({ sources }: CitationsProps) {
   );
 }
 
-interface OverdueDoc {
-  document_id: string;
-  document_name: string;
-}
-
-function pickOverdueDocs(groups: CitationGroup[]): OverdueDoc[] {
-  const now = Date.now();
-  const out: OverdueDoc[] = [];
-  for (const g of groups) {
-    if (!g.document_id || !g.review_due_at) continue;
-    const due = Date.parse(g.review_due_at);
-    if (Number.isFinite(due) && due < now) {
-      out.push({ document_id: g.document_id, document_name: g.document_name });
-    }
-  }
-  return out;
-}
-
-function OverdueBanner({ overdue }: { overdue: OverdueDoc[] }) {
-  const first = overdue[0];
-  const extra = overdue.length - 1;
-  return (
-    <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber/20 bg-amber-tint px-3 py-2 text-xs text-amber">
-      <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-      <div className="min-w-0 flex-1">
-        {overdue.length === 1 ? (
-          <>
-            This answer is based on a document that may be outdated:{" "}
-            <span className="font-medium">{first.document_name}</span>.{" "}
-            <Link
-              href="/documents"
-              className="font-medium underline-offset-2 hover:underline"
-            >
-              Review →
-            </Link>
-          </>
-        ) : (
-          <>
-            This answer cites {overdue.length} documents that may be outdated.{" "}
-            <Link
-              href="/documents"
-              className="font-medium underline-offset-2 hover:underline"
-            >
-              Review {first.document_name}
-              {extra > 0 ? ` (+${extra} more)` : ""} →
-            </Link>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
 interface CitationGroup {
   key: string;
   document_name: string;
@@ -98,7 +42,6 @@ interface CitationGroup {
   version_number: number | null;
   pages: (number | null)[];
   excerpts: { page_number: number | null; excerpt: string }[];
-  review_due_at: string | null;
 }
 
 function groupByDocument(sources: MessageSource[]): CitationGroup[] {
@@ -114,7 +57,6 @@ function groupByDocument(sources: MessageSource[]): CitationGroup[] {
         version_number: s.version_number ?? null,
         pages: [],
         excerpts: [],
-        review_due_at: s.review_due_at ?? null,
       });
     }
     const g = map.get(key)!;
@@ -124,9 +66,6 @@ function groupByDocument(sources: MessageSource[]): CitationGroup[] {
     g.excerpts.push({ page_number: s.page_number, excerpt: s.excerpt });
     if (g.version_number == null && s.version_number != null) {
       g.version_number = s.version_number;
-    }
-    if (g.review_due_at == null && s.review_due_at) {
-      g.review_due_at = s.review_due_at;
     }
   }
   for (const g of map.values()) {

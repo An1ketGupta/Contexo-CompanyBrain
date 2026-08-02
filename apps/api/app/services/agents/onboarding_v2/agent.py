@@ -1,81 +1,43 @@
 """OnboardingV2Agent — autonomous pre-join HR pipeline.
 
 Triggered when HR clicks "Mark Hired & Start Onboarding" on a recruiting
-candidate. The run is checkpointed in `onboarding_runs.status` so it can
-park between human steps without losing context:
+candidate. What the pipeline *is* comes from the org's step catalog
+(`onboarding_step_defs`), snapshotted onto the run at creation time as
+`onboarding_run_steps`. There is no fixed sequence in this file: `run()` walks
+the run's steps in position order and advances the first one that still needs
+something.
 
-  draft
-    │
-    ▼
-  loi_generating ─── BLOCKED if no LOItemplate in KB
-    │
-    ▼
-  loi_pending_hr_review  ── HR previews the filled LOIand may edit its text
-    │                       in place, or download the .docx, edit in Word and
-    │                       re-upload. Either way a new revision is stored.
-    │                       Repeats until HR clicks "Send for signature".
-    │                       Agent parks until then.
-    │
-    ├─(apps/esign configured)─▶ loi_pending_esign_signature ── HR → candidate
-    │                             signing envelope routed via apps/esign. Both
-    │                             sign in-app; apps/esign stamps the LOIdoc and
-    │                             fires onboarding_v2/loi_signed_uploaded (the
-    │                             run status stays loi_pending_esign_signature —
-    │                             we advance off the doc's esign_status). ──┐
-    ▼                                                                       │
-  loi_pending_hr_sign  ── (fallback: apps/esign not configured) HR is        │
-    │                       emailed the LOI; downloads, prints, signs, scans, │
-    │                       uploads the signed PDF                            │
-    ▼                                                                        │
-  loi_signed_uploaded                                                        │
-    │◀───────────────────────────────────────────────────────────────────────┘
-    ▼
-  loi_sent_to_candidate ── Candidate email contains the signed LOI+ a
-    │                       token-gated public link to submit BGV refs.
-    ▼
-  awaiting_candidate_references ── Candidate fills the references form.
-    │                                Cron sends reminders every 3 days. HR has
-    │                                an override button to enter refs manually.
-    ▼
-  bgv_pending  ── References each get a tokenised URL; wait for responses
-    │             (Inngest cron sends reminders after 3 days)
-    ▼
-  bgv_complete
-    │
-    ▼
-  appointment_bundle_generating ── BLOCKED if no AL or NDA template
-    │
-    ▼
-  appointment_pending_hr_review ── HR one-click approve
-    │
-    ▼
-  appointment_sent_to_candidate
-    │
-    ▼
-  policies_assigned  ── reuses the compliance ack table from migration 031
-    │
-    ▼
-  policies_acknowledged
-    │
-    ▼
-  induction_generating  ── BLOCKED if no induction template in KB
-    │
-    ▼
-  induction_sent
-    │
-    ▼
-  completed
+Steps come in three kinds.
 
-The agent's `run()` method is re-entrant — it inspects the current status
-and dispatches to the right step. Inngest functions kick it with the
-current status hint so it can resume cleanly from any checkpoint.
+  generate  Render a document through the 099 generation pipeline, show the
+            draft to HR, route it to whoever `signer_roles` names, then send it
+            to the candidate. Steps sharing a `bundle_key` are generated,
+            approved and signed as one unit.
 
-Four of these steps are optional per org (BGV, the appointment bundle,
-policies, induction — see `org_config.OnboardingStepConfig`). A disabled step
-writes the same status a real completion would and hands straight to the next
-one, so the diagram above still describes the possible states; a run just
-passes through some of them without stopping. The LOI steps are not
-optional — everything downstream reads state they write. Order is fixed.
+  collect   Ask the candidate to upload a checklist of documents. Completes on
+            submission — HR approving or rejecting a scan happens afterwards
+            and never moves the pipeline, so a hire cannot stall on a review
+            queue nobody opened.
+
+  system    Behaviour that lives here rather than in a template: `bgv` (ask the
+            candidate for referees, then email each one a verification form)
+            and `policies` (assign acknowledgements and wait). Dispatched on
+            `system_action`, not `step_key`, so an org may rename or duplicate
+            them.
+
+Per-step state lives on the step row. `onboarding_runs.status` is a coarse
+label derived from it — built-in steps keep writing their historical values
+(`loi_pending_hr_review`, `bgv_pending`, …) so the dashboards built against
+that vocabulary go on working, and org-composed steps write generic ones.
+
+Every wait is a park, not an error: HR reviewing a draft, a candidate
+uploading, a referee replying. Inngest re-kicks the run when they act, `run()`
+finds the same step and moves it on.
+
+This replaced a twenty-branch if/elif over `onboarding_runs.status` that could
+only express the one sequence it was written for — LOI → BGV → appointment
+letter + NDA → policies → induction, with four booleans to skip parts of it.
+That default is now just the catalog every org is seeded with.
 """
 from __future__ import annotations
 
@@ -86,14 +48,10 @@ from typing import Any
 from app.config import get_settings
 from app.database import get_service_client
 from app.observability import get_logger
-from app.services import org_config
 from app.services.agents.base_agent import BaseAgent
 from app.services.agents.onboarding_v2 import catalog as ob_catalog
 from app.services.agents.onboarding_v2 import storage as ob_storage
-from app.services.agents.onboarding_v2.pre_join import (
-    ensure_pre_join_user,
-    send_magic_link,
-)
+from app.services.agents.onboarding_v2.pre_join import ensure_pre_join_user
 from app.services.documents import templates as doc_templates
 from app.services.documents.generation import service as doc_generation
 from app.services.email import send_email_event
@@ -110,6 +68,14 @@ _DOCUMENT_TYPE_KEY_FOR_KIND = {
     "nda": "nda",
     "induction": "induction",
 }
+
+# How many steps one invocation may walk through. A pipeline advances several
+# steps in a single kick whenever the ones in between finish instantly — a
+# disabled step, a policy step for an org with no policies — so returning after
+# the first transition would need one Inngest kick per step. The ceiling is far
+# above any real catalog; reaching it means a step is failing to change state,
+# and the run parks rather than spinning.
+MAX_STEP_TRANSITIONS_PER_RUN = 50
 
 
 def _format_ctc(run: dict[str, Any]) -> str:
@@ -151,7 +117,6 @@ class OnboardingV2Agent(BaseAgent):
         self.onboarding_run_id = run_id
         self.resume_from = resume_from
         self._run_row: dict[str, Any] | None = None
-        self._steps: org_config.OnboardingStepConfig | None = None
         # Bound logger — every emit carries run/org context without per-call boilerplate.
         self.log = log.bind(
             onboarding_run_id=run_id,
@@ -181,19 +146,6 @@ class OnboardingV2Agent(BaseAgent):
         self._run_row = None
         return await self._load_run()
 
-    async def _step_config(self) -> org_config.OnboardingStepConfig:
-        """Which optional steps this org runs.
-
-        Cached per agent instance, and an instance is constructed per Inngest
-        invocation — so a run picks up a toggle change on its next kick rather
-        than being pinned to whatever was configured when it started. A run
-        already parked on a step is unaffected: the checks live at the entry
-        points of the steps that follow, not on the parked step itself.
-        """
-        if self._steps is None:
-            self._steps = await org_config.get_onboarding_steps(self.org_id)
-        return self._steps
-
     async def _set_status(
         self,
         status: str,
@@ -214,21 +166,40 @@ class OnboardingV2Agent(BaseAgent):
         )
         self._run_row = None
 
-        # Mirror the transition onto the run's step rows. The step engine does
-        # not drive anything yet — this runs in shadow so the new model can be
-        # checked against real runs before it takes over dispatch. Every status
-        # change funnels through here, which is why the mirror lives here and
-        # not in the individual steps.
-        await ob_catalog.sync_from_legacy_status(
-            org_id=self.org_id,
-            run_id=self.onboarding_run_id,
-            status=status,
-            blocked_template_kind=payload.get("blocked_template_kind"),
-            blocked_reason=payload.get("blocked_reason"),
+    async def _set_step(
+        self,
+        step: dict[str, Any],
+        step_status: str,
+        *,
+        extra: dict[str, Any] | None = None,
+        siblings: list[dict[str, Any]] | None = None,
+        blocked_reason: str | None = None,
+    ) -> None:
+        """Move a step (and its bundle) to a state, and relabel the run.
+
+        The step rows are authoritative — `onboarding_runs.status` is a label
+        for list views, derived here so the two can never be set independently
+        and drift. Built-in steps keep writing their historical status values,
+        which is what lets the existing dashboards go on working while the
+        pipeline underneath them became configurable.
+        """
+        for target in siblings or [step]:
+            await ob_catalog.set_step_status(
+                target["id"], step_status, blocked_reason=blocked_reason
+            )
+        step["status"] = step_status
+        await self._set_status(
+            ob_catalog.run_status_for(step, step_status),
+            extra={**(extra or {}), "active_step_key": step["step_key"]},
         )
 
     async def _block_missing_template(
-        self, template_kind: str, reason: str | None = None
+        self,
+        template_kind: str,
+        reason: str | None = None,
+        *,
+        step: dict[str, Any] | None = None,
+        siblings: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Park the run in blocked_missing_template; HR will see a clear
         prompt to fix the template and the agent will be re-kicked once it is.
@@ -242,13 +213,20 @@ class OnboardingV2Agent(BaseAgent):
             f"No {template_kind.replace('_', ' ')} template is set as the default. "
             "Upload one in Document templates and mark it as the default."
         )
-        await self._set_status(
-            "blocked_missing_template",
-            extra={
-                "blocked_reason": detail,
-                "blocked_template_kind": template_kind,
-            },
-        )
+        extra = {
+            "blocked_reason": detail,
+            "blocked_template_kind": template_kind,
+        }
+        if step is not None:
+            await self._set_step(
+                step,
+                ob_catalog.STATUS_BLOCKED_MISSING_TEMPLATE,
+                siblings=siblings,
+                blocked_reason=detail,
+                extra=extra,
+            )
+        else:
+            await self._set_status("blocked_missing_template", extra=extra)
         await ob_storage.log_onboarding_event(
             org_id=self.org_id,
             run_id=self.onboarding_run_id,
@@ -292,8 +270,23 @@ class OnboardingV2Agent(BaseAgent):
 
     # ── Rendering ─────────────────────────────────────────────────────────
 
-    async def _template_is_ready(self, kind: str) -> bool:
-        """Is there an active default template for this kind?
+    def _type_key(self, kind: str) -> str:
+        """The `document_types.key` behind a step key.
+
+        A fallback for callers that only have the key. The step row carries
+        `document_type_key` and that is authoritative — step keys are unique
+        per org, so a second step rendering the same template gets a suffixed
+        key (`nda_2`) that is not a document type at all. Prefer
+        `_step_type_key`.
+        """
+        return _DOCUMENT_TYPE_KEY_FOR_KIND.get(kind, kind)
+
+    def _step_type_key(self, step: dict[str, Any]) -> str:
+        """Which template this step renders."""
+        return step.get("document_type_key") or self._type_key(step["step_key"])
+
+    async def _template_is_ready(self, type_key: str) -> bool:
+        """Is there an active default template for this document type?
 
         A cheap pre-check so the caller can bail BEFORE flipping the run to a
         `*_generating` status. Without it, a missing template (or a crash
@@ -302,7 +295,7 @@ class OnboardingV2Agent(BaseAgent):
         template first.
         """
         resolved = await doc_templates.resolve_default_version(
-            org_id=self.org_id, type_key=_DOCUMENT_TYPE_KEY_FOR_KIND[kind]
+            org_id=self.org_id, type_key=type_key
         )
         return resolved is not None
 
@@ -324,7 +317,7 @@ class OnboardingV2Agent(BaseAgent):
             metadata={"kind": kind, "warnings": outcome.warnings},
         )
 
-    async def _generate_document(self, kind: str) -> Any:
+    async def _generate_document(self, type_key: str) -> Any:
         """Produce one document through the document generation pipeline.
 
         The agent's single seam into `services/documents`. Everything the old
@@ -348,20 +341,29 @@ class OnboardingV2Agent(BaseAgent):
         run = await self._refresh_run()
         return await doc_generation.generate(
             org_id=self.org_id,
-            type_key=_DOCUMENT_TYPE_KEY_FOR_KIND[kind],
+            type_key=type_key,
             onboarding_run_id=self.onboarding_run_id,
             variable_values=run.get("field_values") or {},
         )
 
     async def _handle_generation_failure(
-        self, *, kind: str, step: str, outcome: Any, unavailable_status: str
+        self,
+        *,
+        kind: str,
+        log_step: str,
+        outcome: Any,
+        run_step: dict[str, Any],
+        siblings: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
-        """Turn a non-ok generation outcome into the right run state.
+        """Turn a non-ok generation outcome into the right step state.
 
         Returns the step's return value, or None when the outcome was fine and
-        the caller should carry on. Centralised because all three generation
-        steps need identical handling and previously had three drifting copies
-        of it.
+        the caller should carry on. Centralised because every generation step
+        needs identical handling and previously had three drifting copies of it.
+
+        A failure blocks the step, not the run: the retry re-enters at exactly
+        this step rather than restarting the pipeline, and a bundle blocks as a
+        unit because generating half of it is not a state anyone can act on.
         """
         if outcome.ok:
             return None
@@ -372,20 +374,29 @@ class OnboardingV2Agent(BaseAgent):
             doc_generation.OUTCOME_MISSING_TEMPLATE,
             doc_generation.OUTCOME_NO_FIELDS,
         ):
-            await self.log_step(step, "skipped", {"reason": outcome.outcome, "kind": kind})
-            return await self._block_missing_template(kind, reason=error)
+            await self.log_step(
+                log_step, "skipped", {"reason": outcome.outcome, "kind": kind}
+            )
+            return await self._block_missing_template(
+                kind, reason=error, step=run_step, siblings=siblings
+            )
 
         if outcome.outcome == doc_generation.OUTCOME_DRIFT:
-            await self.log_step(step, "blocked", error=f"{kind}: {error}")
-            return await self._block_template_drift(kind, RuntimeError(error))
+            await self.log_step(log_step, "blocked", error=f"{kind}: {error}")
+            return await self._block_template_drift(
+                kind, RuntimeError(error), step=run_step, siblings=siblings
+            )
 
         if outcome.outcome == doc_generation.OUTCOME_VALIDATION_FAILED:
             # Missing or invalid candidate data. Actionable by HR, so it is a
             # blocked state with the specific fields named — never a document
             # with a gap where the manager's name should be.
-            await self.log_step(step, "blocked", error=f"{kind}: {error}")
-            await self._set_status(
-                "blocked_missing_template",
+            await self.log_step(log_step, "blocked", error=f"{kind}: {error}")
+            await self._set_step(
+                run_step,
+                ob_catalog.STATUS_BLOCKED_MISSING_TEMPLATE,
+                siblings=siblings,
+                blocked_reason=error,
                 extra={"blocked_reason": error, "blocked_template_kind": kind},
             )
             await ob_storage.log_onboarding_event(
@@ -402,14 +413,25 @@ class OnboardingV2Agent(BaseAgent):
             )
             return {"status": "blocked_missing_template", "reason": "validation_failed"}
 
-        # Render or storage failure — retryable, so park the run somewhere it
-        # can resume from rather than failing it outright.
-        await self.log_step(step, "blocked", error=f"{kind}: {error}")
-        await self._set_status(unavailable_status, extra={"blocked_reason": error})
-        return {"status": unavailable_status, "error": outcome.outcome}
+        # Render or storage failure — retryable. Rewind the step to pending so
+        # the next kick re-runs it from the top, rather than leaving it parked
+        # under a "Generating…" label nothing will ever move off.
+        await self.log_step(log_step, "blocked", error=f"{kind}: {error}")
+        await self._set_step(
+            run_step,
+            ob_catalog.STATUS_PENDING,
+            siblings=siblings,
+            extra={"blocked_reason": error},
+        )
+        return {"status": "generation_unavailable", "error": outcome.outcome}
 
     async def _block_template_drift(
-        self, template_kind: str, exc: Exception
+        self,
+        template_kind: str,
+        exc: Exception,
+        *,
+        step: dict[str, Any] | None = None,
+        siblings: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Park the run because the template changed after its fields were
         confirmed.
@@ -420,13 +442,20 @@ class OnboardingV2Agent(BaseAgent):
         Recovery is HR re-confirming in the mapper, which fires
         `onboarding_v2/template_uploaded` and re-drives the run.
         """
-        await self._set_status(
-            "blocked_template_drift",
-            extra={
-                "blocked_reason": str(exc),
-                "blocked_template_kind": template_kind,
-            },
-        )
+        extra = {
+            "blocked_reason": str(exc),
+            "blocked_template_kind": template_kind,
+        }
+        if step is not None:
+            await self._set_step(
+                step,
+                ob_catalog.STATUS_BLOCKED_TEMPLATE_DRIFT,
+                siblings=siblings,
+                blocked_reason=str(exc),
+                extra=extra,
+            )
+        else:
+            await self._set_status("blocked_template_drift", extra=extra)
         await ob_storage.log_onboarding_event(
             org_id=self.org_id,
             run_id=self.onboarding_run_id,
@@ -443,12 +472,18 @@ class OnboardingV2Agent(BaseAgent):
     # ── Main dispatcher ────────────────────────────────────────────────────
 
     async def run(self) -> dict[str, Any]:
-        """Re-entrant: inspect the run's current status and dispatch.
+        """Re-entrant: walk the run's steps and advance the first unfinished one.
 
-        Each step transitions status forward. Steps that wait for human input
-        (loi_pending_hr_sign, bgv_pending, appointment_pending_hr_review,
-        policies_assigned) exit the agent without erroring — the run is
-        re-kicked when the human acts.
+        The pipeline is whatever the org composed — `onboarding_run_steps`, in
+        position order, snapshotted from the catalog when the run started. This
+        replaced a twenty-branch if/elif over `onboarding_runs.status`, which
+        could only ever express the one sequence it was written for.
+
+        Steps that wait on a human (HR reviewing a draft, a candidate uploading
+        documents, a referee replying) return without erroring; the run is
+        re-kicked when they act. Steps that finish instantly — a disabled one, a
+        policy step with no policies — hand straight to the next, which is why
+        this loops rather than returning after one transition.
         """
         run = await self._load_run()
         current = run.get("status") or "draft"
@@ -464,151 +499,452 @@ class OnboardingV2Agent(BaseAgent):
         if current in ("cancelled", "completed", "failed"):
             return {"status": current, "terminal": True}
 
-        # Document-collection gates. These are steps the org added to its
-        # catalog at a position of its choosing, so they cannot live in the
-        # ladder below — the ladder is a fixed sequence and their whole point
-        # is that the org decides where they fall. Instead they hold the run
-        # at the point they were placed: the ladder decides what happens next,
-        # this decides whether it may happen yet.
-        gate = await self._check_collect_gate(current)
-        if gate is not None:
-            return gate
+        steps = await ob_catalog.materialize_run_steps(
+            org_id=self.org_id, run_id=self.onboarding_run_id
+        )
+        if not steps:
+            # An org with no catalog at all. Parking beats completing: a run
+            # that reports "done" without having done anything is worse than
+            # one visibly waiting for someone to configure the pipeline.
+            await self.log_step("dispatch", "skipped", {"reason": "no_steps"})
+            return {"status": current, "no_steps": True}
 
-        if current in ("draft", "loi_generating"):
-            return await self._step_generate_loi()
-        if current == "loi_pending_hr_review":
-            # HR is reviewing/editing the LOIdraft. The run is re-kicked
-            # from the approve-draft route which transitions us to
-            # loi_pending_hr_sign and dispatches into the signature step.
-            return {"status": current, "waiting_for": "hr_to_approve_loi_draft"}
-        if current == "loi_pending_hr_sign":
-            return await self._step_send_to_hr_for_signature()
-        if current == "loi_pending_esign_signature":
-            # Parked while the HR → candidate signing envelope is out. apps/esign
-            # fires onboarding_v2/loi_signed_uploaded once BOTH signers complete,
-            # re-kicking us here. It only updates onboarding_documents (not the
-            # run status), so advance off the doc's esign state. Guard against a
-            # stray kick mid-signing emailing the candidate before both signed.
-            if await self._loi_esign_completed():
-                return await self._step_send_loi_to_candidate()
-            return {"status": current, "waiting_for": "loi_esign_signatures"}
-        if current == "loi_signed_uploaded":
-            return await self._step_send_loi_to_candidate()
-        if current == "loi_sent_to_candidate":
-            # Candidate has the LOI; references-form link is in their email.
-            # Park until the candidate submits (or HR overrides).
-            return await self._step_wait_for_candidate_references()
-        if current == "awaiting_candidate_references":
-            return await self._step_wait_for_candidate_references()
-        if current == "bgv_pending":
-            return await self._step_check_bgv_completion()
-        if current == "bgv_complete":
-            return await self._step_after_bgv()
-        if current == "appointment_pending_hr_review":
-            return {"status": current, "waiting_for": "hr_to_approve_bundle"}
-        if current == "appointment_sent_to_candidate":
-            return await self._step_assign_policies()
-        if current == "policies_assigned":
-            return await self._step_check_policy_acks()
-        if current == "policies_acknowledged":
-            return await self._step_generate_induction()
-        if current == "induction_sent":
-            return await self._step_finalise()
-        if current in ("blocked_missing_template", "blocked_template_drift"):
-            # Re-kicked after HR uploads a template, or re-confirms the fields of
-            # one that drifted — either way, re-attempt the step that blocked.
-            # Both states record which template kind stalled, so the retry is
-            # targeted rather than restarting the run.
-            # Routed through the same entry points a normal run uses, not
-            # straight at the generation step, so turning a step off is also a
-            # way to unblock a run stuck on a template for it.
-            missing = (run.get("blocked_template_kind") or "loi").lower()
-            if missing == "loi":
-                return await self._step_generate_loi()
-            if missing in ("appointment_letter", "nda"):
-                return await self._step_after_bgv()
-            if missing == "induction":
-                return await self._step_generate_induction()
+        # Bounded so a bug that leaves a step in the state it started in costs
+        # one invocation rather than spinning. The ceiling is well clear of any
+        # real pipeline; hitting it means something is wrong, and the run parks
+        # where the next kick can retry.
+        for _ in range(MAX_STEP_TRANSITIONS_PER_RUN):
+            step = ob_catalog.next_actionable(steps)
+            if step is None:
+                return await self._step_finalise()
 
-        return {"status": current, "no_op": True}
+            result = await self._advance(steps, step)
+            if not result.pop("_continue", False):
+                return result
+            steps = await ob_catalog.get_run_steps(self.onboarding_run_id)
 
-    # ── Document collection gates ─────────────────────────────────────────
+        await self.log_step("dispatch", "blocked", error="step_transition_limit")
+        return {"status": (await self._refresh_run()).get("status"), "throttled": True}
 
-    async def _check_collect_gate(self, current_status: str) -> dict[str, Any] | None:
-        """Hold the run if the candidate still owes documents from a step the
-        run has already reached.
+    async def _advance(
+        self, steps: list[dict[str, Any]], step: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Move one step forward. `_continue` asks run() for another lap."""
+        kind = step.get("kind")
+        if kind == ob_catalog.KIND_COLLECT:
+            return await self._advance_collect(step)
+        if kind == ob_catalog.KIND_SYSTEM:
+            return await self._advance_system(step)
+        return await self._advance_generate(steps, step)
 
-        Returns None when nothing is outstanding and the ladder should carry
-        on. Never raises: a gate that fails to evaluate must not strand a
-        hire, so a broken gate lets the run through rather than parking it
-        somewhere nobody is watching.
+    # ── Collect steps ─────────────────────────────────────────────────────
+
+    async def _advance_collect(self, step: dict[str, Any]) -> dict[str, Any]:
+        """Ask the candidate for documents, and wait until they are all in.
+
+        Submitted, not approved: HR rejecting a blurry scan re-opens the ask
+        without rewinding the run, because a hire should not stall on a review
+        queue nobody has opened.
         """
-        try:
-            placement = ob_catalog.resolve_legacy_placement(
-                status=current_status,
-                blocked_template_kind=(await self._load_run()).get(
-                    "blocked_template_kind"
-                ),
-            )
-            if placement is None:
-                return None
-
-            steps = await ob_catalog.materialize_run_steps(
-                org_id=self.org_id, run_id=self.onboarding_run_id
-            )
-            current_step = next(
-                (s for s in steps if s["step_key"] == placement[0]), None
-            )
-            if current_step is None:
-                return None
-
-            submissions = await ob_catalog.get_submissions(self.onboarding_run_id)
-            pending = ob_catalog.pending_collect_steps(
-                steps,
-                submissions,
-                reached_position=current_step.get("position") or 0,
-            )
-            if not pending:
-                return None
-
-            step = pending[0]
-            # First time the run reaches this step, put it in front of the
-            # candidate. Later kicks (a partial upload, an unrelated event)
-            # find it already active and stay quiet rather than re-emailing.
-            if step.get("status") != ob_catalog.STATUS_ACTIVE:
-                await ob_catalog.set_step_status(
-                    step["id"], ob_catalog.STATUS_ACTIVE
-                )
-                await self._notify_candidate_documents_due(step)
-
-            outstanding = [
-                i["item_key"]
-                for i in ob_catalog.required_items(step)
-                if i["item_key"]
-                not in {
-                    s["item_key"]
-                    for s in submissions
-                    if s.get("run_step_id") == step["id"]
-                }
-            ]
-            await self.log_step(
-                "collect_gate",
-                "waiting",
-                {"step_key": step["step_key"], "outstanding": outstanding},
-            )
-            return {
-                "status": current_status,
-                "waiting_for": "candidate_documents",
-                "step_key": step["step_key"],
-                "outstanding": outstanding,
+        submissions = await ob_catalog.get_submissions(self.onboarding_run_id)
+        outstanding = [
+            i["item_key"]
+            for i in ob_catalog.required_items(step)
+            if i["item_key"]
+            not in {
+                s["item_key"]
+                for s in submissions
+                if s.get("run_step_id") == step["id"]
             }
+        ]
+
+        if not outstanding:
+            await self._set_step(step, ob_catalog.STATUS_DONE)
+            await self.log_step(
+                "collect", "completed", {"step_key": step["step_key"]}
+            )
+            return {"_continue": True}
+
+        # First time the run reaches this step, put it in front of the
+        # candidate. Later kicks (a partial upload, an unrelated event) find it
+        # already active and stay quiet rather than re-emailing.
+        if step.get("status") != ob_catalog.STATUS_ACTIVE:
+            await self._set_step(step, ob_catalog.STATUS_ACTIVE)
+            await self._notify_candidate_documents_due(step)
+
+        await self.log_step(
+            "collect",
+            "waiting",
+            {"step_key": step["step_key"], "outstanding": outstanding},
+        )
+        return {
+            "status": (await self._load_run()).get("status"),
+            "waiting_for": "candidate_documents",
+            "step_key": step["step_key"],
+            "outstanding": outstanding,
+        }
+
+    # ── System steps ──────────────────────────────────────────────────────
+
+    async def _advance_system(self, step: dict[str, Any]) -> dict[str, Any]:
+        """Background verification and policy acknowledgement.
+
+        Dispatched on `system_action` rather than `step_key` so an org can
+        rename the step, or run two of them, without changing what it does.
+        """
+        action = step.get("system_action")
+        if action == ob_catalog.SYSTEM_ACTION_BGV:
+            return await self._advance_bgv(step)
+        if action == ob_catalog.SYSTEM_ACTION_POLICIES:
+            return await self._advance_policies(step)
+
+        # A system step with no action does nothing knowable. Skipping beats
+        # parking the run on it forever.
+        await self.log_step(
+            "system", "skipped", {"step_key": step["step_key"], "reason": "no_action"}
+        )
+        await self._set_step(step, ob_catalog.STATUS_SKIPPED)
+        return {"_continue": True}
+
+    async def _advance_bgv(self, step: dict[str, Any]) -> dict[str, Any]:
+        """Ask the candidate for references, then each referee for a reply.
+
+        Three waits in one step: for the candidate to name their referees, for
+        the verification emails to go out, and for the referees to answer. The
+        references form token is minted here rather than inherited from the LOI
+        email, which is what lets background verification run first, or without
+        an LOI at all.
+        """
+        run = await self._refresh_run()
+
+        if not run.get("references_form_token"):
+            await self._request_candidate_references(step)
+            return {
+                "status": (await self._load_run()).get("status"),
+                "waiting_for": "candidate_to_submit_references",
+                "step_key": step["step_key"],
+            }
+
+        if not run.get("references_submitted_at"):
+            if step.get("status") != ob_catalog.STATUS_ACTIVE:
+                await self._set_step(step, ob_catalog.STATUS_ACTIVE)
+            return {
+                "status": (await self._load_run()).get("status"),
+                "waiting_for": "candidate_to_submit_references",
+                "step_key": step["step_key"],
+            }
+
+        svc = get_service_client()
+        refs = await asyncio.to_thread(
+            lambda: svc.table("onboarding_bgv_references")
+            .select("id, token, reference_email, reference_name, status")
+            .eq("run_id", self.onboarding_run_id)
+            .execute()
+        )
+        rows: list[dict[str, Any]] = refs.data or []
+        if not rows:
+            # The candidate submitted the form without naming anyone, or HR
+            # overrode it empty. Nothing to verify, and blocking here would
+            # strand the hire on a step no one can action.
+            await self.log_step(
+                "bgv", "skipped", {"reason": "no_references_entered"}
+            )
+            await self._set_step(step, ob_catalog.STATUS_DONE)
+            return {"_continue": True}
+
+        unsent = [r for r in rows if r.get("status") in (None, "pending")]
+        if unsent:
+            await self._email_bgv_references(unsent)
+            await self._set_step(step, ob_catalog.STATUS_ACTIVE)
+            rows = [
+                {**r, "status": "sent"} if r in unsent else r for r in rows
+            ]
+
+        if any(r.get("status") != "submitted" for r in rows):
+            return {
+                "status": (await self._load_run()).get("status"),
+                "waiting_for": "bgv_responses",
+                "step_key": step["step_key"],
+            }
+
+        await self._set_step(
+            step,
+            ob_catalog.STATUS_DONE,
+            extra={"bgv_completed_at": datetime.now(UTC).isoformat()},
+        )
+        await ob_storage.log_onboarding_event(
+            org_id=self.org_id,
+            run_id=self.onboarding_run_id,
+            actor_kind="agent",
+            event_type="bgv_complete",
+            message="All references have responded.",
+        )
+        return {"_continue": True}
+
+    async def _request_candidate_references(self, step: dict[str, Any]) -> None:
+        """Mint the references form token and email the candidate its link."""
+        from datetime import timedelta
+        from uuid import uuid4
+
+        run = await self._load_run()
+        settings = get_settings()
+        token = str(uuid4())
+        # 14 days matches the referee-token convention so the cron reminder
+        # window has room to fire before it lapses.
+        expires_at = (datetime.now(UTC) + timedelta(days=14)).isoformat()
+        form_url = (
+            f"{settings.app_url.rstrip('/')}/references/{token}"
+            if settings.app_url
+            else None
+        )
+
+        await self._set_step(
+            step,
+            ob_catalog.STATUS_ACTIVE,
+            extra={
+                "references_form_token": token,
+                "references_form_expires_at": expires_at,
+            },
+        )
+
+        try:
+            await send_email_event(
+                event_type="onboarding_references_requested",
+                to=run["candidate_email"],
+                user_id=run.get("pre_join_user_id"),
+                org_id=self.org_id,
+                dedupe_key=f"refs-{self.onboarding_run_id}",
+                data={
+                    "candidate_name": run["candidate_name"],
+                    "role_title": run["role_title"],
+                    "company_name": (await self._resolve_org_branding())["name"],
+                    "references_form_url": form_url,
+                    "app_url": settings.app_url.rstrip("/") if settings.app_url else None,
+                },
+            )
         except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "onboarding_v2.collect_gate_failed run=%s err=%s",
-                self.onboarding_run_id,
-                exc,
+            log.warning("onboarding_v2.references_email_failed err=%s", exc)
+
+        await ob_storage.log_onboarding_event(
+            org_id=self.org_id,
+            run_id=self.onboarding_run_id,
+            actor_kind="agent",
+            event_type="candidate_references_requested",
+            message=f"Asked {run['candidate_name']} to submit BGV references.",
+            metadata={"step_key": step["step_key"]},
+        )
+
+    async def _email_bgv_references(self, refs: list[dict[str, Any]]) -> int:
+        """Send each referee their verification form. Returns how many went."""
+        run = await self._load_run()
+        settings = get_settings()
+        base_url = (
+            settings.bgv_public_url.rstrip("/")
+            if settings.bgv_public_url
+            else settings.app_url.rstrip("/")
+        )
+        svc = get_service_client()
+        company = await self._resolve_org_name()
+
+        sent = 0
+        for ref in refs:
+            try:
+                await send_email_event(
+                    event_type="onboarding_bgv_request",
+                    to=ref["reference_email"],
+                    user_id=None,
+                    org_id=self.org_id,
+                    dedupe_key=f"bgv-req-{ref['id']}",
+                    data={
+                        "reference_name": ref["reference_name"],
+                        "candidate_name": run["candidate_name"],
+                        "company_name": company,
+                        "role_title": run["role_title"],
+                        "form_url": f"{base_url}/bgv/{ref['token']}",
+                    },
+                )
+                await asyncio.to_thread(
+                    lambda r=ref: svc.table("onboarding_bgv_references")
+                    .update(
+                        {
+                            "status": "sent",
+                            "email_sent_at": datetime.now(UTC).isoformat(),
+                        }
+                    )
+                    .eq("id", r["id"])
+                    .execute()
+                )
+                sent += 1
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "onboarding_v2.bgv_email_failed ref=%s err=%s", ref["id"], exc
+                )
+
+        await self.log_step("kick_off_bgv", "completed", {"sent_count": sent})
+        await ob_storage.log_onboarding_event(
+            org_id=self.org_id,
+            run_id=self.onboarding_run_id,
+            actor_kind="agent",
+            event_type="bgv_emails_sent",
+            message=f"Verification emails sent to {sent} reference(s).",
+            metadata={"sent_count": sent},
+        )
+        return sent
+
+    async def _advance_policies(self, step: dict[str, Any]) -> dict[str, Any]:
+        """Assign policy acknowledgements, then wait for the candidate."""
+        run = await self._refresh_run()
+        user_id = run.get("pre_join_user_id")
+        if not user_id:
+            # Provisioned at run creation; retry rather than fail, since a
+            # transient auth error at creation time should not cost the hire.
+            try:
+                user_id = await ensure_pre_join_user(
+                    org_id=self.org_id,
+                    run_id=self.onboarding_run_id,
+                    candidate_email=run["candidate_email"],
+                    candidate_name=run["candidate_name"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                await self.log_step(
+                    "assign_policies",
+                    "failed",
+                    error=f"pre_join_provisioning_failed: {exc}",
+                )
+                await self._set_step(
+                    step,
+                    ob_catalog.STATUS_FAILED,
+                    blocked_reason=f"pre_join_provisioning_failed: {exc}",
+                )
+                await self._set_status(
+                    "failed",
+                    extra={"blocked_reason": f"pre_join_provisioning_failed: {exc}"},
+                )
+                raise
+
+        if step.get("status") != ob_catalog.STATUS_ACTIVE:
+            assigned = await self._assign_policy_acks(user_id)
+            if assigned is None:
+                await self._set_step(step, ob_catalog.STATUS_DONE)
+                return {"_continue": True}
+            await self._set_step(
+                step,
+                ob_catalog.STATUS_ACTIVE,
+                extra={"policies_assigned_at": datetime.now(UTC).isoformat()},
+            )
+            await self._notify_candidate_policies(user_id, assigned)
+            return {
+                "status": (await self._load_run()).get("status"),
+                "waiting_for": "policy_acknowledgements",
+                "step_key": step["step_key"],
+            }
+
+        svc = get_service_client()
+        pending = await asyncio.to_thread(
+            lambda: svc.table("acknowledgements")
+            .select("id", count="exact")
+            .eq("org_id", self.org_id)
+            .eq("user_id", user_id)
+            .eq("status", "pending")
+            .execute()
+        )
+        if (pending.count or 0) > 0:
+            return {
+                "status": (await self._load_run()).get("status"),
+                "waiting_for": "policy_acknowledgements",
+                "pending": pending.count,
+            }
+
+        await self._set_step(
+            step,
+            ob_catalog.STATUS_DONE,
+            extra={"policies_acknowledged_at": datetime.now(UTC).isoformat()},
+        )
+        await ob_storage.log_onboarding_event(
+            org_id=self.org_id,
+            run_id=self.onboarding_run_id,
+            actor_kind="agent",
+            event_type="policies_acknowledged",
+            message="All policy acknowledgements complete.",
+        )
+        return {"_continue": True}
+
+    async def _assign_policy_acks(self, user_id: str) -> int | None:
+        """Create acknowledgement rows for every policy doc. None = no policies.
+
+        Reuses the compliance system from migration 031, so the existing
+        acknowledgement UI works on these without knowing they came from a hire.
+        """
+        svc = get_service_client()
+        policy_docs = await asyncio.to_thread(
+            lambda: svc.table("documents")
+            .select("id, name, current_version_id")
+            .eq("org_id", self.org_id)
+            .eq("requires_acknowledgement", True)
+            .is_("template_kind", "null")
+            .execute()
+        )
+        rows = policy_docs.data or []
+        if not rows:
+            await self.log_step(
+                "assign_policies", "skipped", {"reason": "no_policy_docs"}
             )
             return None
+
+        inserted = 0
+        for d in rows:
+            payload = {
+                "org_id": self.org_id,
+                "document_id": d["id"],
+                "document_version_id": d.get("current_version_id"),
+                "user_id": user_id,
+                "status": "pending",
+            }
+            try:
+                await asyncio.to_thread(
+                    lambda p=payload: svc.table("acknowledgements").insert(p).execute()
+                )
+                inserted += 1
+            except Exception as exc:
+                # Duplicate (already assigned) — skip silently.
+                if "duplicate" not in str(exc).lower():
+                    log.warning(
+                        "onboarding_v2.ack_insert_failed doc=%s err=%s", d["id"], exc
+                    )
+
+        await self.log_step(
+            "assign_policies",
+            "completed",
+            {"assigned_count": inserted, "total_policies": len(rows)},
+        )
+        await ob_storage.log_onboarding_event(
+            org_id=self.org_id,
+            run_id=self.onboarding_run_id,
+            actor_kind="agent",
+            event_type="policies_assigned",
+            message=f"Assigned {inserted} policy acknowledgement(s).",
+            metadata={"count": inserted},
+        )
+        return inserted
+
+    async def _notify_candidate_policies(self, user_id: str, count: int) -> None:
+        run = await self._load_run()
+        settings = get_settings()
+        try:
+            await send_email_event(
+                event_type="onboarding_policies_pending",
+                to=run["candidate_email"],
+                user_id=user_id,
+                org_id=self.org_id,
+                dedupe_key=f"policies-{self.onboarding_run_id}",
+                data={
+                    "candidate_name": run["candidate_name"],
+                    "policy_count": count,
+                    "app_url": settings.app_url.rstrip("/"),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("onboarding_v2.policy_email_failed err=%s", exc)
 
     async def _notify_candidate_documents_due(self, step: dict[str, Any]) -> None:
         """Ask the candidate for this step's documents.
@@ -656,528 +992,92 @@ class OnboardingV2Agent(BaseAgent):
             metadata={"step_key": step["step_key"]},
         )
 
-    # ── Step 1: LOI────────────────────────────────────────────────────────
+    # ── Generate steps ────────────────────────────────────────────────────
 
-    async def _step_generate_loi(self) -> dict[str, Any]:
-        await self.log_step("generate_loi", "started")
+    async def _advance_generate(
+        self, steps: list[dict[str, Any]], step: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Render a document (or a bundle of them), get it signed, send it on.
 
-        # Check the template exists BEFORE flipping status to loi_generating —
-        # otherwise a missing template leaves the run stuck on a misleading
-        # "Generating LOI" label.
-        if not await self._template_is_ready("loi"):
-            await self.log_step("generate_loi", "skipped", {"reason": "no_template"})
-            return await self._block_missing_template("loi")
-
-        await self._set_status("loi_generating")
-
-        outcome = await self._generate_document("loi")
-        # `draft` on an unrecoverable render error: the run is retryable once
-        # the underlying problem (Gotenberg down, storage unreachable) is fixed.
-        handled = await self._handle_generation_failure(
-            kind="loi",
-            step="generate_loi",
-            outcome=outcome,
-            unavailable_status="draft",
-        )
-        if handled is not None:
-            return handled
-
-        ctx = outcome.context
-        storage = await ob_storage.upload_onboarding_artifact(
-            org_id=self.org_id,
-            run_id=self.onboarding_run_id,
-            kind="loi",
-            pdf_bytes=outcome.pdf_bytes or b"",
-            docx_bytes=outcome.docx_bytes,
-        )
-        doc_id = await ob_storage.upsert_onboarding_document(
-            org_id=self.org_id,
-            run_id=self.onboarding_run_id,
-            kind="loi",
-            storage=storage,
-            source_template_id=outcome.template_id,
-            render_context=ctx,
-            sign_status="draft",
-        )
-        await self._warn_generation(kind="loi", outcome=outcome)
-
-        await self._set_status("loi_pending_hr_review")
-        await self.log_step(
-            "generate_loi",
-            "completed",
-            {"document_id": doc_id, "size_bytes": storage["file_bytes"]},
-        )
-        await ob_storage.log_onboarding_event(
-            org_id=self.org_id,
-            run_id=self.onboarding_run_id,
-            actor_kind="agent",
-            event_type="loi_ready_for_review",
-            message=(
-                "LOIdraft ready for HR review. Preview on the run page, "
-                "download to edit if needed, then click Send for signature."
-            ),
-            metadata={"document_id": doc_id},
-        )
-        return {"status": "loi_pending_hr_review", "document_id": doc_id}
-
-    # ── Step 1b: HR has reviewed the draft → send for signature ────────────
-
-    async def _step_send_to_hr_for_signature(self) -> dict[str, Any]:
-        """Called after HR approves the LOIdraft (POST .../loi/approve-draft).
-        Stamps the signing timestamp, emails HR with the (possibly-edited)
-        LOIPDF link, and parks the run in loi_pending_hr_sign waiting for
-        the signed-scan upload."""
-        await self.log_step("send_to_hr_for_signature", "started")
-
-        # Resolve which PDF to send: HR's edited copy if present, else the
-        # agent's original render. Edited copy lives at hr_edited_pdf_path.
-        svc = get_service_client()
-        doc = await asyncio.to_thread(
-            lambda: svc.table("onboarding_documents")
-            .select("id, storage_path, hr_edited_pdf_path")
-            .eq("run_id", self.onboarding_run_id)
-            .eq("kind", "loi")
-            .maybe_single()
-            .execute()
-        )
-        if not doc or not doc.data:
-            await self.log_step(
-                "send_to_hr_for_signature", "failed", error="loi_document_missing"
-            )
-            raise RuntimeError("loi_document_row_missing")
-
-        pdf_path = doc.data.get("hr_edited_pdf_path") or doc.data["storage_path"]
-
-        def _signed_url() -> str | None:
-            try:
-                res = svc.storage.from_(ob_storage.STORAGE_BUCKET).create_signed_url(
-                    path=pdf_path,
-                    expires_in=ob_storage.SIGNED_URL_TTL_SECONDS,
-                )
-                return res.get("signedURL") or res.get("signed_url")
-            except Exception:
-                return None
-
-        signed_url = await asyncio.to_thread(_signed_url)
-        await asyncio.to_thread(
-            lambda: svc.table("onboarding_documents")
-            .update({"sign_status": "sent_to_hr"})
-            .eq("id", doc.data["id"])
-            .execute()
-        )
-
-        now = datetime.now(UTC).isoformat()
-        await self._set_status(
-            "loi_pending_hr_sign", extra={"loi_sent_to_hr_at": now}
-        )
-        await self._notify_hr_loi_ready(
-            {"signed_url": signed_url, "file_bytes": None}
-        )
-        await self.log_step("send_to_hr_for_signature", "completed")
-        await ob_storage.log_onboarding_event(
-            org_id=self.org_id,
-            run_id=self.onboarding_run_id,
-            actor_kind="agent",
-            event_type="loi_sent_to_hr_for_signature",
-            message=(
-                "HR approved the LOIdraft — signing email dispatched. "
-                "Awaiting scanned-signed-PDF upload."
-            ),
-            metadata={"used_edited_copy": bool(doc.data.get("hr_edited_pdf_path"))},
-        )
-        return {"status": "loi_pending_hr_sign", "document_id": doc.data["id"]}
-
-    async def _notify_hr_loi_ready(self, storage: dict[str, Any]) -> None:
-        """Email HR (the user who triggered the run) with a download link to
-        the LOIso they can sign + scan it back."""
-        settings = get_settings()
-        run = await self._load_run()
-        triggered_by = run.get("triggered_by_user_id")
-        if not triggered_by:
-            await self.log_step("notify_hr_loi_ready", "skipped", {"reason": "no_hr"})
-            return
-
-        svc = get_service_client()
-        try:
-            au = await asyncio.to_thread(
-                lambda: svc.auth.admin.get_user_by_id(triggered_by)
-            )
-            hr_email = getattr(getattr(au, "user", None), "email", None)
-        except Exception:
-            hr_email = None
-        if not hr_email:
-            await self.log_step("notify_hr_loi_ready", "skipped", {"reason": "no_hr_email"})
-            return
-
-        try:
-            await send_email_event(
-                event_type="onboarding_loi_ready",
-                to=hr_email,
-                user_id=triggered_by,
-                org_id=self.org_id,
-                dedupe_key=f"loi-ready-{self.onboarding_run_id}",
-                data={
-                    "candidate_name": run["candidate_name"],
-                    "role_title": run["role_title"],
-                    "ctc": _format_ctc(run),
-                    "start_date": str(run["start_date"]),
-                    "loi_signed_url": storage.get("signed_url"),
-                    "app_url": settings.app_url.rstrip("/"),
-                    "run_id": self.onboarding_run_id,
-                },
-            )
-            await self.log_step("notify_hr_loi_ready", "completed")
-        except Exception as exc:  # noqa: BLE001
-            await self.log_step("notify_hr_loi_ready", "failed", error=str(exc))
-
-    async def _loi_esign_completed(self) -> bool:
-        """True once apps/esign has marked the LOIenvelope fully signed.
-        apps/esign stamps onboarding_documents on the last signer (see
-        apps/esign/app/routers/public_sign.py) — the run status is not touched."""
-        svc = get_service_client()
-        doc = await asyncio.to_thread(
-            lambda: svc.table("onboarding_documents")
-            .select("esign_status, sign_status")
-            .eq("run_id", self.onboarding_run_id)
-            .eq("kind", "loi")
-            .maybe_single()
-            .execute()
-        )
-        row = (doc.data if doc else None) or {}
-        return (
-            row.get("esign_status") == "completed"
-            or row.get("sign_status") == "signed_by_candidate"
-        )
-
-    # ── Step 2: Send signed LOIto candidate ───────────────────────────────
-
-    async def _step_send_loi_to_candidate(self) -> dict[str, Any]:
-        await self.log_step("send_loi_to_candidate", "started")
-        run = await self._load_run()
-        settings = get_settings()
-
-        # Look up the signed-by-HR LOI; HR's upload handler sets this path.
-        svc = get_service_client()
-        doc = await asyncio.to_thread(
-            lambda: svc.table("onboarding_documents")
-            .select("id, storage_path, signed_pdf_path")
-            .eq("run_id", self.onboarding_run_id)
-            .eq("kind", "loi")
-            .maybe_single()
-            .execute()
-        )
-        if not doc or not doc.data:
-            await self.log_step(
-                "send_loi_to_candidate",
-                "failed",
-                error="loi_document_row_missing",
-            )
-            raise RuntimeError("loi_document_row_missing")
-
-        # Prefer the HR-signed PDF; fall back to the generated draft if HR
-        # skipped the upload step (e.g. running a dry-run flow).
-        signed_path = doc.data.get("signed_pdf_path") or doc.data["storage_path"]
-
-        def _signed_url() -> str | None:
-            try:
-                res = svc.storage.from_(ob_storage.STORAGE_BUCKET).create_signed_url(
-                    path=signed_path,
-                    expires_in=ob_storage.SIGNED_URL_TTL_SECONDS,
-                )
-                return res.get("signedURL") or res.get("signed_url")
-            except Exception:
-                return None
-
-        signed_url = await asyncio.to_thread(_signed_url)
-
-        # Mint the public-form token the candidate uses to submit BGV refs.
-        # 14-day expiry matches the existing referee-token convention so the
-        # cron reminder window has room to fire.
-        from datetime import timedelta
-        from uuid import uuid4
-        refs_token = str(uuid4())
-        refs_expires_at = (datetime.now(UTC) + timedelta(days=14)).isoformat()
-        refs_form_url = (
-            f"{settings.app_url.rstrip('/')}/references/{refs_token}"
-            if settings.app_url else None
-        )
-
-        try:
-            await send_email_event(
-                event_type="onboarding_loi_to_candidate",
-                to=run["candidate_email"],
-                user_id=None,
-                org_id=self.org_id,
-                dedupe_key=f"loi-cand-{self.onboarding_run_id}",
-                data={
-                    "candidate_name": run["candidate_name"],
-                    "role_title": run["role_title"],
-                    "company_name": (await self._resolve_org_branding())["name"],
-                    "start_date": str(run["start_date"]),
-                    "loi_signed_url": signed_url,
-                    "references_form_url": refs_form_url,
-                    "app_url": settings.app_url.rstrip("/"),
-                },
-            )
-        except Exception as exc:  # noqa: BLE001
-            await self.log_step("send_loi_to_candidate", "failed", error=str(exc))
-            raise
-
-        now = datetime.now(UTC).isoformat()
-        await self._set_status(
-            "loi_sent_to_candidate",
-            extra={
-                "loi_sent_to_candidate_at": now,
-                "references_form_token": refs_token,
-                "references_form_expires_at": refs_expires_at,
-            },
-        )
-        await self.log_step("send_loi_to_candidate", "completed")
-        await ob_storage.log_onboarding_event(
-            org_id=self.org_id,
-            run_id=self.onboarding_run_id,
-            actor_kind="agent",
-            event_type="loi_sent_to_candidate",
-            message=(
-                f"Signed LOIemailed to {run['candidate_email']}. "
-                "Candidate was asked to submit BGV references via the form link."
-            ),
-        )
-
-        # Provision the pre-join users row + send the candidate's magic link
-        # so the policy step (further down the pipeline) has a user_id to
-        # attach acknowledgements to. Best-effort — failures here don't
-        # block the run; the policy step will retry.
-        try:
-            user_id = await ensure_pre_join_user(
-                org_id=self.org_id,
-                run_id=self.onboarding_run_id,
-                candidate_email=run["candidate_email"],
-                candidate_name=run["candidate_name"],
-            )
-            settings = get_settings()
-            await send_magic_link(
-                email=run["candidate_email"],
-                redirect_to=(
-                    f"{settings.app_url.rstrip('/')}/compliance"
-                    if settings.app_url else None
-                ),
-            )
-            await ob_storage.log_onboarding_event(
-                org_id=self.org_id,
-                run_id=self.onboarding_run_id,
-                actor_kind="agent",
-                event_type="pre_join_user_provisioned",
-                message="Pre-join user account created and magic-link sent.",
-                metadata={"user_id": user_id},
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "onboarding_v2.pre_join_provision_failed run=%s err=%s",
-                self.onboarding_run_id,
-                exc,
-            )
-
-        steps = await self._step_config()
-        if not steps.bgv:
-            # No references form, no reference emails, no waiting. `bgv_complete`
-            # without `bgv_completed_at`: the timestamp means "every reference
-            # responded", which is not what happened here.
-            await self.log_step(
-                "send_loi_to_candidate", "bgv_skipped", {"reason": "step_disabled"}
-            )
-            await self._set_status("bgv_complete")
-            return await self._step_after_bgv()
-
-        # Park in awaiting_candidate_references — BGV kicks off only after
-        # the candidate (or an HR override) writes refs and re-kicks the agent.
-        await self._set_status("awaiting_candidate_references")
-        return {
-            "status": "awaiting_candidate_references",
-            "waiting_for": "candidate_to_submit_references",
-        }
-
-    # ── Step 2b: wait for candidate references ─────────────────────────────
-
-    async def _step_wait_for_candidate_references(self) -> dict[str, Any]:
-        """Park until the candidate submits the references form. The public
-        route at /api/public/onboarding/references/{token} writes the refs
-        and stamps references_submitted_at, then re-kicks the agent. HR can
-        also force-submit via /runs/{id}/references-override (same effect)."""
-        run = await self._load_run()
-        if run.get("references_submitted_at"):
-            return await self._step_kick_off_bgv()
-        return {
-            "status": "awaiting_candidate_references",
-            "waiting_for": "candidate_to_submit_references",
-        }
-
-    # ── Step 3: BGV ────────────────────────────────────────────────────────
-
-    async def _step_kick_off_bgv(self) -> dict[str, Any]:
-        await self.log_step("kick_off_bgv", "started")
-        run = await self._load_run()
-        settings = get_settings()
-        base_url = (
-            settings.bgv_public_url.rstrip("/") if settings.bgv_public_url
-            else settings.app_url.rstrip("/")
-        )
-
-        svc = get_service_client()
-        refs = await asyncio.to_thread(
-            lambda: svc.table("onboarding_bgv_references")
-            .select("id, token, reference_email, reference_name, status")
-            .eq("run_id", self.onboarding_run_id)
-            .execute()
-        )
-        ref_rows: list[dict[str, Any]] = refs.data or []
-        if not ref_rows:
-            # No references entered — surface as a blocked state HR can fix.
-            await self.log_step(
-                "kick_off_bgv", "skipped", {"reason": "no_references_entered"}
-            )
-            await self._set_status(
-                "failed",
-                extra={"blocked_reason": "no_bgv_references_entered"},
-            )
-            return {"status": "failed", "reason": "no_bgv_references_entered"}
-
-        sent_count = 0
-        for ref in ref_rows:
-            if ref.get("status") not in (None, "pending"):
-                continue
-            url = f"{base_url}/bgv/{ref['token']}"
-            try:
-                await send_email_event(
-                    event_type="onboarding_bgv_request",
-                    to=ref["reference_email"],
-                    user_id=None,
-                    org_id=self.org_id,
-                    dedupe_key=f"bgv-req-{ref['id']}",
-                    data={
-                        "reference_name": ref["reference_name"],
-                        "candidate_name": run["candidate_name"],
-                        "company_name": (await self._resolve_org_name()),
-                        "role_title": run["role_title"],
-                        "form_url": url,
-                    },
-                )
-                await asyncio.to_thread(
-                    lambda r=ref: svc.table("onboarding_bgv_references")
-                    .update(
-                        {
-                            "status": "sent",
-                            "email_sent_at": datetime.now(UTC).isoformat(),
-                        }
-                    )
-                    .eq("id", r["id"])
-                    .execute()
-                )
-                sent_count += 1
-            except Exception as exc:  # noqa: BLE001
-                log.warning(
-                    "onboarding_v2.bgv_email_failed ref=%s err=%s", ref["id"], exc
-                )
-
-        now = datetime.now(UTC).isoformat()
-        await self._set_status("bgv_pending", extra={"bgv_sent_at": now})
-        await self.log_step(
-            "kick_off_bgv", "completed", {"sent_count": sent_count}
-        )
-        await ob_storage.log_onboarding_event(
-            org_id=self.org_id,
-            run_id=self.onboarding_run_id,
-            actor_kind="agent",
-            event_type="bgv_emails_sent",
-            message=f"Verification emails sent to {sent_count} reference(s).",
-            metadata={"sent_count": sent_count},
-        )
-        return {"status": "bgv_pending", "sent_count": sent_count}
-
-    async def _step_check_bgv_completion(self) -> dict[str, Any]:
-        """Called from the BGV-response Inngest handler. If all references
-        have responded, transition forward."""
-        svc = get_service_client()
-        refs = await asyncio.to_thread(
-            lambda: svc.table("onboarding_bgv_references")
-            .select("status")
-            .eq("run_id", self.onboarding_run_id)
-            .execute()
-        )
-        rows = refs.data or []
-        if not rows:
-            return {"status": "bgv_pending", "no_refs": True}
-        if any(r.get("status") != "submitted" for r in rows):
-            return {"status": "bgv_pending", "waiting": True}
-
-        now = datetime.now(UTC).isoformat()
-        await self._set_status("bgv_complete", extra={"bgv_completed_at": now})
-        await ob_storage.log_onboarding_event(
-            org_id=self.org_id,
-            run_id=self.onboarding_run_id,
-            actor_kind="agent",
-            event_type="bgv_complete",
-            message="All references have responded.",
-        )
-        return await self._step_after_bgv()
-
-    # ── Step 4: Appointment Letter + NDA bundle ────────────────────────────
-
-    async def _step_after_bgv(self) -> dict[str, Any]:
-        """Fan-in for everything that lands on `bgv_complete`: BGV finishing
-        for real, BGV being skipped, and a re-kick of a run parked there.
-
-        When the bundle is disabled we hand straight to `_step_assign_policies`,
-        which is the same thing `run()` does on an `appointment_sent_to_candidate`
-        re-kick — so that step is already written to tolerate a second call
-        (duplicate acknowledgement inserts are swallowed, its candidate email
-        carries a dedupe key). Keep it that way.
+        A bundle moves as one: every member is generated before any is shown to
+        HR, one approval covers all of them, and they go into a single signing
+        envelope. That was hardcoded for appointment-letter-plus-NDA; it is now
+        whatever documents an org grouped together.
         """
-        steps = await self._step_config()
-        if steps.appointment_bundle:
-            return await self._step_generate_offer_bundle()
+        bundle = ob_catalog.bundle_siblings(steps, step)
+        status = step.get("status")
+
+        if status in (
+            ob_catalog.STATUS_PENDING,
+            ob_catalog.STATUS_GENERATING,
+            ob_catalog.STATUS_BLOCKED_MISSING_TEMPLATE,
+            ob_catalog.STATUS_BLOCKED_TEMPLATE_DRIFT,
+        ):
+            return await self._generate_bundle(bundle)
+
+        if status == ob_catalog.STATUS_PENDING_HR_REVIEW:
+            return {
+                "status": (await self._load_run()).get("status"),
+                "waiting_for": "hr_to_approve_draft",
+                "step_key": step["step_key"],
+            }
+
+        if status == ob_catalog.STATUS_PENDING_SIGNATURE:
+            if await self._signatures_complete(bundle):
+                return await self._deliver_bundle(bundle)
+            return {
+                "status": (await self._load_run()).get("status"),
+                "waiting_for": "signatures",
+                "step_key": step["step_key"],
+            }
+
+        if status == ob_catalog.STATUS_ACTIVE:
+            # Signed and uploaded, or approved with nobody to sign. Either way
+            # the documents are final and the candidate should have them.
+            return await self._deliver_bundle(bundle)
 
         await self.log_step(
-            "generate_offer_bundle", "skipped", {"reason": "step_disabled"}
+            "generate", "skipped", {"step_key": step["step_key"], "status": status}
         )
-        await self._set_status("appointment_sent_to_candidate")
-        return await self._step_assign_policies()
+        return {"status": (await self._load_run()).get("status"), "no_op": True}
 
-    async def _step_generate_offer_bundle(self) -> dict[str, Any]:
-        await self.log_step("generate_offer_bundle", "started")
+    async def _generate_bundle(self, bundle: list[dict[str, Any]]) -> dict[str, Any]:
+        """Render every document in the bundle and hand them to HR."""
+        lead = bundle[0]
+        label = lead.get("bundle_label") or lead.get("label") or lead["step_key"]
+        await self.log_step("generate", "started", {"step_key": lead["step_key"]})
 
-        # Verify BOTH templates exist BEFORE flipping status — see comment
-        # in _step_generate_LOIfor why we check first.
-        for kind in ("appointment_letter", "nda"):
-            if not await self._template_is_ready(kind):
+        # Check every template BEFORE flipping to `generating` — otherwise a
+        # missing one leaves the run stuck under a misleading "Generating…"
+        # label with nothing coming.
+        for member in bundle:
+            if not await self._template_is_ready(self._step_type_key(member)):
                 await self.log_step(
-                    "generate_offer_bundle",
+                    "generate",
                     "skipped",
-                    {"reason": f"no_template:{kind}"},
+                    {"reason": f"no_template:{member['step_key']}"},
                 )
-                return await self._block_missing_template(kind)
+                # Blocked on the *type*, because that is what HR uploads and
+                # what `onboarding_v2/template_uploaded` fans out on.
+                return await self._block_missing_template(
+                    self._step_type_key(member), step=lead, siblings=bundle
+                )
 
-        await self._set_status("appointment_bundle_generating")
-        ctx: dict[str, Any] = {}
+        await self._set_step(lead, ob_catalog.STATUS_GENERATING, siblings=bundle)
 
-        for kind, label in (
-            ("appointment_letter", "Appointment Letter"),
-            ("nda", "NDA"),
-        ):
-            outcome = await self._generate_document(kind)
-            # `bgv_complete` is the step's own entry state, so a retry re-runs
-            # the whole bundle rather than resuming mid-way with one document
-            # generated and one not.
+        for member in bundle:
+            kind = member["step_key"]
+            outcome = await self._generate_document(self._step_type_key(member))
             handled = await self._handle_generation_failure(
                 kind=kind,
-                step="generate_offer_bundle",
+                log_step="generate",
                 outcome=outcome,
-                unavailable_status="bgv_complete",
+                run_step=lead,
+                siblings=bundle,
             )
             if handled is not None:
                 return handled
 
-            ctx = outcome.context
             storage = await ob_storage.upload_onboarding_artifact(
                 org_id=self.org_id,
                 run_id=self.onboarding_run_id,
@@ -1191,32 +1091,206 @@ class OnboardingV2Agent(BaseAgent):
                 kind=kind,
                 storage=storage,
                 source_template_id=outcome.template_id,
-                render_context=ctx,
-                sign_status="sent_to_hr",
+                render_context=outcome.context,
+                sign_status="draft",
+                run_step_id=member["id"],
             )
             await self._warn_generation(kind=kind, outcome=outcome)
-            await ob_storage.log_onboarding_event(
-                org_id=self.org_id,
-                run_id=self.onboarding_run_id,
-                actor_kind="agent",
-                event_type=f"{kind}_generated",
-                message=f"{label} generated.",
+
+        await self._set_step(lead, ob_catalog.STATUS_PENDING_HR_REVIEW, siblings=bundle)
+        await self.log_step("generate", "completed", {"step_key": lead["step_key"]})
+        await ob_storage.log_onboarding_event(
+            org_id=self.org_id,
+            run_id=self.onboarding_run_id,
+            actor_kind="agent",
+            event_type="documents_ready_for_review",
+            message=(
+                f"{label} ready for HR review. Preview on the run page, edit if "
+                "needed, then approve to send it on."
+            ),
+            metadata={"step_key": lead["step_key"], "documents": len(bundle)},
+        )
+        await self._notify_hr_documents_ready(bundle)
+        return {
+            "status": (await self._load_run()).get("status"),
+            "waiting_for": "hr_to_approve_draft",
+            "step_key": lead["step_key"],
+        }
+
+    async def _signatures_complete(self, bundle: list[dict[str, Any]]) -> bool:
+        """Has every signer finished with this bundle's documents?
+
+        apps/esign stamps `onboarding_documents` when the last signer completes
+        and does not touch the run, so the document rows are the only place
+        that knows. A manually-uploaded scan sets `signed_pdf_path` instead.
+        """
+        docs = await self._bundle_documents(bundle)
+        if not docs:
+            return False
+        return all(
+            d.get("esign_status") == "completed"
+            or d.get("sign_status") == "signed_by_candidate"
+            or d.get("signed_pdf_path")
+            for d in docs
+        )
+
+    async def _bundle_documents(
+        self, bundle: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """This bundle's `onboarding_documents` rows, in bundle order."""
+        svc = get_service_client()
+        kinds = [m["step_key"] for m in bundle]
+        res = await asyncio.to_thread(
+            lambda: svc.table("onboarding_documents")
+            .select(
+                "id, kind, storage_path, signed_pdf_path, hr_edited_pdf_path, "
+                "sign_status, esign_status, esign_signing_url"
             )
+            .eq("run_id", self.onboarding_run_id)
+            .in_("kind", kinds)
+            .execute()
+        )
+        by_kind = {d["kind"]: d for d in (res.data or [])}
+        return [by_kind[k] for k in kinds if k in by_kind]
 
-        await self._set_status("appointment_pending_hr_review")
-        await self.log_step("generate_offer_bundle", "completed")
-        await self._notify_hr_bundle_ready()
-        return {"status": "appointment_pending_hr_review"}
+    async def _deliver_bundle(self, bundle: list[dict[str, Any]]) -> dict[str, Any]:
+        """Email the finished documents to the candidate and close the step."""
+        lead = bundle[0]
+        run = await self._load_run()
+        settings = get_settings()
+        branding = await self._resolve_org_branding()
+        docs = await self._bundle_documents(bundle)
+        by_key = {m["step_key"]: m for m in bundle}
 
-    async def _notify_hr_bundle_ready(self) -> None:
-        # Reads the run, not the document's render context. Template variables
-        # are now named by whoever authored the template, so `ctx` is no longer
-        # guaranteed to contain `candidate_name` — and a notification about a
-        # run should come from the run regardless.
+        svc = get_service_client()
+
+        def _signed_url(path: str) -> str | None:
+            try:
+                res = svc.storage.from_(ob_storage.STORAGE_BUCKET).create_signed_url(
+                    path=path, expires_in=ob_storage.SIGNED_URL_TTL_SECONDS
+                )
+                return res.get("signedURL") or res.get("signed_url")
+            except Exception:
+                return None
+
+        links: list[dict[str, Any]] = []
+        for doc in docs:
+            path = (
+                doc.get("signed_pdf_path")
+                or doc.get("hr_edited_pdf_path")
+                or doc.get("storage_path")
+            )
+            url = (
+                await asyncio.to_thread(lambda p=path: _signed_url(p)) if path else None
+            )
+            member = by_key.get(doc["kind"], {})
+            links.append({"label": member.get("label") or doc["kind"], "url": url})
+
+        event, payload = self._delivery_email(lead, run, branding, links, settings)
+        try:
+            await send_email_event(
+                event_type=event,
+                to=run["candidate_email"],
+                user_id=run.get("pre_join_user_id"),
+                org_id=self.org_id,
+                dedupe_key=f"deliver-{self.onboarding_run_id}-{lead['step_key']}",
+                data=payload,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("onboarding_v2.delivery_email_failed err=%s", exc)
+
+        await asyncio.to_thread(
+            lambda: svc.table("onboarding_documents")
+            .update({"sign_status": "sent_to_candidate"})
+            .eq("run_id", self.onboarding_run_id)
+            .in_("kind", [m["step_key"] for m in bundle])
+            .execute()
+        )
+
+        label = lead.get("bundle_label") or lead.get("label") or lead["step_key"]
+        await self._set_step(lead, ob_catalog.STATUS_DONE, siblings=bundle)
+        await self.log_step("deliver", "completed", {"step_key": lead["step_key"]})
+        await ob_storage.log_onboarding_event(
+            org_id=self.org_id,
+            run_id=self.onboarding_run_id,
+            actor_kind="agent",
+            event_type="documents_sent_to_candidate",
+            message=f"{label} sent to {run['candidate_email']}.",
+            metadata={"step_key": lead["step_key"]},
+        )
+        return {"_continue": True}
+
+    def _delivery_email(
+        self,
+        lead: dict[str, Any],
+        run: dict[str, Any],
+        branding: dict[str, Any],
+        links: list[dict[str, Any]],
+        settings: Any,
+    ) -> tuple[str, dict[str, Any]]:
+        """Which email announces this step's documents, and what it needs.
+
+        The two built-in documents keep their bespoke copy — the LOI is the
+        candidate's first contact and the induction pack is a welcome, and a
+        generic "here are your documents" would be a downgrade for both.
+        Anything an org composed gets the generic template, which names the step
+        and lists what is attached.
+
+        Dispatched on the document type rather than `step_key` for the same
+        reason the LOI review panel is: an org that renamed or re-created the
+        step renders the same document under a key of its own choosing.
+        """
+        app_url = settings.app_url.rstrip("/") if settings.app_url else None
+        type_key = self._step_type_key(lead)
+        first_url = links[0]["url"] if links else None
+
+        if type_key == ob_catalog.DOCUMENT_TYPE_LOI:
+            token = run.get("references_form_token")
+            return "onboarding_loi_to_candidate", {
+                "candidate_name": run["candidate_name"],
+                "role_title": run["role_title"],
+                "company_name": branding["name"],
+                "start_date": str(run["start_date"]),
+                "loi_signed_url": first_url,
+                # Only when background verification has already asked. If it
+                # runs later, or not at all, the template omits the section.
+                "references_form_url": (
+                    f"{app_url}/references/{token}" if token and app_url else None
+                ),
+                "app_url": app_url,
+            }
+
+        if type_key == ob_catalog.DOCUMENT_TYPE_INDUCTION:
+            return "onboarding_induction_ready", {
+                "candidate_name": run["candidate_name"],
+                "role_title": run["role_title"],
+                "company_name": branding["name"],
+                "start_date": str(run["start_date"]),
+                "induction_signed_url": first_url,
+                "app_url": app_url,
+            }
+
+        return "onboarding_documents_sent", {
+            "candidate_name": run["candidate_name"],
+            "role_title": run["role_title"],
+            "company_name": branding["name"],
+            "step_label": (
+                lead.get("bundle_label") or lead.get("label") or lead["step_key"]
+            ),
+            "documents": links,
+            "signing_url": None,
+            "app_url": app_url,
+        }
+
+    async def _notify_hr_documents_ready(self, bundle: list[dict[str, Any]]) -> None:
+        """Tell the HR user who started the run that a draft needs approving."""
+        lead = bundle[0]
         run = await self._load_run()
         triggered_by = run.get("triggered_by_user_id")
         if not triggered_by:
+            await self.log_step("notify_hr", "skipped", {"reason": "no_hr"})
             return
+
         svc = get_service_client()
         try:
             au = await asyncio.to_thread(
@@ -1226,297 +1300,49 @@ class OnboardingV2Agent(BaseAgent):
         except Exception:
             hr_email = None
         if not hr_email:
+            await self.log_step("notify_hr", "skipped", {"reason": "no_hr_email"})
             return
+
         settings = get_settings()
+        # Bespoke copy is earned by what the step renders, not what it is
+        # called: an org that re-created the LOI step still gets the LOI email,
+        # which carries the CTC and start date and is what makes it reviewable
+        # at a glance. Everything an org composed itself gets the generic
+        # notice, which names their step and lists its documents — telling HR
+        # "the Appointment Letter and NDA are ready" about a step they named
+        # something else is worse than saying nothing.
+        event_type = "onboarding_step_review_ready"
+        if self._step_type_key(lead) == ob_catalog.DOCUMENT_TYPE_LOI:
+            event_type = "onboarding_loi_ready"
+        elif lead.get("bundle_key") == ob_catalog.BUNDLE_APPOINTMENT:
+            event_type = "onboarding_offer_bundle_ready"
+
         try:
             await send_email_event(
-                event_type="onboarding_offer_bundle_ready",
+                event_type=event_type,
                 to=hr_email,
                 user_id=triggered_by,
                 org_id=self.org_id,
-                dedupe_key=f"bundle-ready-{self.onboarding_run_id}",
+                dedupe_key=f"review-{self.onboarding_run_id}-{lead['step_key']}",
                 data={
                     "candidate_name": run["candidate_name"],
                     "role_title": run["role_title"],
+                    "ctc": _format_ctc(run),
+                    "start_date": str(run["start_date"]),
+                    "loi_signed_url": None,
+                    "step_label": (
+                        lead.get("bundle_label") or lead.get("label") or lead["step_key"]
+                    ),
+                    "document_labels": [
+                        m.get("label") or m["step_key"] for m in bundle
+                    ],
                     "app_url": settings.app_url.rstrip("/"),
                     "run_id": self.onboarding_run_id,
                 },
             )
+            await self.log_step("notify_hr", "completed")
         except Exception as exc:  # noqa: BLE001
-            log.warning("onboarding_v2.notify_hr_bundle_failed err=%s", exc)
-
-    # ── Step 5: Policies ───────────────────────────────────────────────────
-
-    async def _step_assign_policies(self) -> dict[str, Any]:
-        """Pull policy docs from the KB via search and create acknowledgement
-        rows for the candidate. Reuses the compliance system from migration
-        031 — the dashboard ack UI works as-is.
-
-        The candidate's pre_join users row was provisioned at LOI-sent time
-        (see `_step_send_loi_to_candidate` → `ensure_pre_join_user`). If
-        provisioning had failed back then, retry it now — we'd rather slow
-        the run by one round-trip than block on it.
-        """
-        await self.log_step("assign_policies", "started")
-
-        steps = await self._step_config()
-        if not steps.policies:
-            # Same shape as the no-policy-docs branch below: stamp the step as
-            # acknowledged and fall through, so the run never parks on a step
-            # nobody is going to action.
-            await self.log_step(
-                "assign_policies", "skipped", {"reason": "step_disabled"}
-            )
-            await self._set_status(
-                "policies_acknowledged",
-                extra={"policies_acknowledged_at": datetime.now(UTC).isoformat()},
-            )
-            return await self._step_generate_induction()
-
-        svc = get_service_client()
-        run = await self._load_run()
-
-        user_id = run.get("pre_join_user_id")
-        if not user_id:
-            # Provisioning didn't run at LOIsign time (e.g. failed); retry
-            # now. If it fails again, we surface a clean failure rather than
-            # silently stalling.
-            try:
-                user_id = await ensure_pre_join_user(
-                    org_id=self.org_id,
-                    run_id=self.onboarding_run_id,
-                    candidate_email=run["candidate_email"],
-                    candidate_name=run["candidate_name"],
-                )
-            except Exception as exc:  # noqa: BLE001
-                await self.log_step(
-                    "assign_policies", "failed",
-                    error=f"pre_join_provisioning_failed: {exc}",
-                )
-                await self._set_status(
-                    "failed",
-                    extra={"blocked_reason": f"pre_join_provisioning_failed: {exc}"},
-                )
-                raise
-
-        # Find policy docs: any with template_kind not set AND tag/flag-based
-        # selection. The simplest reliable signal in this codebase is
-        # `requires_acknowledgement=true`. Skip our own generated artifacts.
-        policy_docs = await asyncio.to_thread(
-            lambda: svc.table("documents")
-            .select("id, name, current_version_id")
-            .eq("org_id", self.org_id)
-            .eq("requires_acknowledgement", True)
-            .is_("template_kind", "null")
-            .execute()
-        )
-        rows = policy_docs.data or []
-        if not rows:
-            await self.log_step(
-                "assign_policies", "skipped", {"reason": "no_policy_docs"}
-            )
-            await self._set_status(
-                "policies_acknowledged",
-                extra={"policies_acknowledged_at": datetime.now(UTC).isoformat()},
-            )
-            return await self._step_generate_induction()
-
-        inserted = 0
-        for d in rows:
-            payload = {
-                "org_id": self.org_id,
-                "document_id": d["id"],
-                "document_version_id": d.get("current_version_id"),
-                "user_id": user_id,
-                "status": "pending",
-            }
-            try:
-                await asyncio.to_thread(
-                    lambda p=payload: svc.table("acknowledgements")
-                    .insert(p)
-                    .execute()
-                )
-                inserted += 1
-            except Exception as exc:
-                # Duplicate (already assigned) — skip silently.
-                if "duplicate" not in str(exc).lower():
-                    log.warning(
-                        "onboarding_v2.ack_insert_failed doc=%s err=%s",
-                        d["id"],
-                        exc,
-                    )
-
-        await self._set_status(
-            "policies_assigned",
-            extra={"policies_assigned_at": datetime.now(UTC).isoformat()},
-        )
-        await self.log_step(
-            "assign_policies",
-            "completed",
-            {"assigned_count": inserted, "total_policies": len(rows)},
-        )
-        await ob_storage.log_onboarding_event(
-            org_id=self.org_id,
-            run_id=self.onboarding_run_id,
-            actor_kind="agent",
-            event_type="policies_assigned",
-            message=f"Assigned {inserted} policy acknowledgement(s).",
-            metadata={"count": inserted},
-        )
-
-        # Notify candidate to acknowledge.
-        settings = get_settings()
-        try:
-            await send_email_event(
-                event_type="onboarding_policies_pending",
-                to=run["candidate_email"],
-                user_id=user_id,
-                org_id=self.org_id,
-                dedupe_key=f"policies-{self.onboarding_run_id}",
-                data={
-                    "candidate_name": run["candidate_name"],
-                    "policy_count": inserted,
-                    "app_url": settings.app_url.rstrip("/"),
-                },
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning("onboarding_v2.policy_email_failed err=%s", exc)
-
-        return {"status": "policies_assigned", "assigned": inserted}
-
-    async def _step_check_policy_acks(self) -> dict[str, Any]:
-        """Called from the compliance ack handler. Move forward if all
-        assigned policies are acknowledged."""
-        svc = get_service_client()
-        run = await self._load_run()
-
-        user_id = run.get("pre_join_user_id")
-        if not user_id:
-            return {"status": "policies_assigned", "waiting_for": "user_row"}
-
-        pending = await asyncio.to_thread(
-            lambda: svc.table("acknowledgements")
-            .select("id", count="exact")
-            .eq("org_id", self.org_id)
-            .eq("user_id", user_id)
-            .eq("status", "pending")
-            .execute()
-        )
-        if (pending.count or 0) > 0:
-            return {"status": "policies_assigned", "pending": pending.count}
-
-        await self._set_status(
-            "policies_acknowledged",
-            extra={"policies_acknowledged_at": datetime.now(UTC).isoformat()},
-        )
-        await ob_storage.log_onboarding_event(
-            org_id=self.org_id,
-            run_id=self.onboarding_run_id,
-            actor_kind="agent",
-            event_type="policies_acknowledged",
-            message="All policy acknowledgements complete.",
-        )
-        return await self._step_generate_induction()
-
-    # ── Step 6: Induction PDF ──────────────────────────────────────────────
-
-    async def _step_generate_induction(self) -> dict[str, Any]:
-        """Render the org's KB-tagged induction DOCX template with the same
-        variable-substitution pipeline used for LOI/ AL / NDA. If no
-        template is tagged, block and prompt HR to upload one — we never
-        synthesize induction content."""
-        await self.log_step("generate_induction", "started")
-
-        steps = await self._step_config()
-        if not steps.induction:
-            await self.log_step(
-                "generate_induction", "skipped", {"reason": "step_disabled"}
-            )
-            return await self._step_finalise()
-
-        if not await self._template_is_ready("induction"):
-            await self.log_step(
-                "generate_induction",
-                "skipped",
-                {"reason": "no_template:induction"},
-            )
-            return await self._block_missing_template("induction")
-
-        await self._set_status("induction_generating")
-        run = await self._load_run()
-
-        outcome = await self._generate_document("induction")
-        # `policies_acknowledged` is this step's entry state, so a retry re-runs
-        # induction generation cleanly.
-        handled = await self._handle_generation_failure(
-            kind="induction",
-            step="generate_induction",
-            outcome=outcome,
-            unavailable_status="policies_acknowledged",
-        )
-        if handled is not None:
-            return handled
-
-        storage = await ob_storage.upload_onboarding_artifact(
-            org_id=self.org_id,
-            run_id=self.onboarding_run_id,
-            kind="induction",
-            pdf_bytes=outcome.pdf_bytes or b"",
-            docx_bytes=outcome.docx_bytes,
-        )
-        doc_id = await ob_storage.upsert_onboarding_document(
-            org_id=self.org_id,
-            run_id=self.onboarding_run_id,
-            kind="induction",
-            storage=storage,
-            source_template_id=outcome.template_id,
-            render_context=outcome.context,
-            sign_status="sent_to_candidate",
-        )
-        await self._warn_generation(kind="induction", outcome=outcome)
-
-        settings = get_settings()
-        branding = await self._resolve_org_branding()
-        try:
-            await send_email_event(
-                event_type="onboarding_induction_ready",
-                to=run["candidate_email"],
-                user_id=None,
-                org_id=self.org_id,
-                dedupe_key=f"induction-{self.onboarding_run_id}",
-                data={
-                    # From the run and the org, not the document's render
-                    # context: template variables are named by whoever authored
-                    # the template, so `candidate_name` is no longer guaranteed
-                    # to be a key.
-                    "candidate_name": run["candidate_name"],
-                    "role_title": run["role_title"],
-                    "company_name": branding["name"],
-                    "start_date": str(run["start_date"]),
-                    "induction_signed_url": storage.get("signed_url"),
-                    "app_url": settings.app_url.rstrip("/"),
-                },
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning("onboarding_v2.induction_email_failed err=%s", exc)
-
-        await self._set_status(
-            "induction_sent",
-            extra={"induction_sent_at": datetime.now(UTC).isoformat()},
-        )
-        await self.log_step(
-            "generate_induction",
-            "completed",
-            {"document_id": doc_id},
-        )
-        await ob_storage.log_onboarding_event(
-            org_id=self.org_id,
-            run_id=self.onboarding_run_id,
-            actor_kind="agent",
-            event_type="induction_sent",
-            message="Induction PDF sent to candidate.",
-        )
-        return await self._step_finalise()
+            await self.log_step("notify_hr", "failed", error=str(exc))
 
     async def _step_finalise(self) -> dict[str, Any]:
         await self._set_status(

@@ -13,9 +13,7 @@ import {
   HelpCircle,
   Keyboard,
   LayoutTemplate,
-  LineChart,
   MessageSquare,
-  PieChart,
   Plus,
   Search,
   Settings,
@@ -84,13 +82,6 @@ const NAV_ACTIONS: NavAction[] = [
     keywords: ["prompts", "snippets", "presets"],
   },
   {
-    label: "Insights",
-    icon: LineChart,
-    href: "/insights",
-    keywords: ["activity", "history", "usage"],
-    adminOnly: true,
-  },
-  {
     label: "Analytics",
     icon: BarChart3,
     href: "/admin/analytics",
@@ -102,13 +93,6 @@ const NAV_ACTIONS: NavAction[] = [
     icon: HeartPulse,
     href: "/admin/health",
     keywords: ["health", "stale", "documents"],
-    adminOnly: true,
-  },
-  {
-    label: "Coverage",
-    icon: PieChart,
-    href: "/admin/coverage",
-    keywords: ["gaps", "coverage", "topics"],
     adminOnly: true,
   },
   {

@@ -52,8 +52,7 @@ export default function ModerationPage() {
           </h1>
         </div>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Prompts the moderator caught. Blocked queries never reached the LLM;
-          flagged queries proceeded with a log.
+          Prompts the moderator caught.
         </p>
       </header>
 

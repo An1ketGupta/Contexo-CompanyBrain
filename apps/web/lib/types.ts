@@ -62,10 +62,6 @@ export interface Document {
   health_score?: number | null;
   health_label?: DocumentHealthLabel | null;
   last_accessed_at?: string | null;
-  // V2 Day 13 / #38
-  review_frequency_days?: number | null;
-  review_due_at?: string | null;
-  last_reviewed_at?: string | null;
   current_version_id?: string | null;
   current_version_number?: number | null;
   current_version_uploaded_at?: string | null;
@@ -119,7 +115,6 @@ export interface MessageSource {
   section_heading: string | null;
   excerpt: string;
   snippet: string | null;
-  review_due_at?: string | null;
 }
 
 export type ConfidenceLevel = "high" | "medium" | "low";

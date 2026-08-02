@@ -63,7 +63,7 @@ The platform is multi-tenant (per-organization), enforces tenant isolation via P
 - **Writing-vs-analysis** intent classification
 - **Source panel** ("Based on:") attached to every answer
 - **Confidence badges** (low / medium / high) from retrieval confidence signals
-- Per-message **feedback** (thumbs + reasons) used by `feedback_functions.py` to flag knowledge gaps
+- Per-message **feedback** (thumbs + reasons) aggregated by `feedback_functions.py`
 
 ### Integrations (5 live)
 | Integration | Direction | What it does |
@@ -89,9 +89,8 @@ The platform is multi-tenant (per-organization), enforces tenant isolation via P
 - `VersionDiffAgent` — summarizes changes between document versions
 
 ### Admin & Insights
-- 9 admin pages: analytics, coverage, health, knowledge gaps, moderation, confidence tuning, compliance status, agent runs
+- 7 admin pages: analytics, health, knowledge health, moderation, confidence tuning, compliance status, agent runs
 - **Time-savings analytics** computed per use
-- **Knowledge gap detection** from under-served queries
 
 ### Developer Surface
 - API keys with hash-based validation + revocation
@@ -509,7 +508,7 @@ All integrations are **opt-in at the org level**. OAuth state is signed with `OA
 - **Structured logs** — `LOG_FORMAT=json` for prod, plain text in dev.
 - **`analytics_events`** — product telemetry written by `services/analytics.py`.
 - **`activity_feed`** — per-user activity stream (respects `users.activity_private`).
-- **Admin → Analytics / Coverage / Health / Knowledge Gaps** — UI on top of the above.
+- **Admin → Analytics / Health / Knowledge Health** — UI on top of the above.
 
 ---
 

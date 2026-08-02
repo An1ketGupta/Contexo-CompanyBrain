@@ -10,7 +10,9 @@ version differs. The adapter fails safe — any error here raises and apps/api
 falls back to the print/scan flow.
 
 Signing flow this client drives:
-    create (upload PDF + recipients)  → envelopeId (and nothing else)
+    create (upload PDF + recipients, meta.signingOrder=SEQUENTIAL so a
+            recipient's numeric signingOrder is actually enforced)
+                                      → envelopeId (and nothing else)
     GET envelope/{id}                 → recipient ids + envelope item id
     field/create-many (SIGNATURE @ %) → fields bound to recipients
     distribute (meta.distributionMethod=NONE) → signable, no Documenso email;
@@ -226,6 +228,19 @@ async def create_and_distribute(
     cfg = _require_configured()
 
     # 1) Create envelope with the PDF + recipients (multipart/form-data).
+    #
+    # `meta.signingOrder` is the envelope-level mode and it is NOT optional for
+    # us. A recipient's numeric `signingOrder` is only honoured when the
+    # envelope is SEQUENTIAL; Documenso defaults to PARALLEL, under which every
+    # recipient becomes signable the moment the envelope is distributed. That
+    # silently discards the whole point of the step's `signer_roles` order —
+    # "HR signs, then the candidate" became "either may sign, in any order".
+    #
+    # `meta.distributionMethod` is repeated on distribute, but it has to be set
+    # here too: it is stored on create, and the default is EMAIL, so a
+    # PARALLEL-plus-EMAIL envelope mails every recipient at once. Only
+    # `distributionMethod` is settable on distribute — `signingOrder` is not —
+    # so create is the only place the ordering can be established at all.
     create_payload = {
         "type": "DOCUMENT",
         "title": title,
@@ -238,6 +253,10 @@ async def create_and_distribute(
             }
             for r in recipients
         ],
+        "meta": {
+            "signingOrder": "SEQUENTIAL",
+            "distributionMethod": "NONE",
+        },
     }
     created = await _request(
         "POST", "/api/v2/envelope/create",

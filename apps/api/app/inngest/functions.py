@@ -140,12 +140,6 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
                     doc_id, "ready", chunk_count=total, embedding_stats=s,
                 ),
             )
-            # Newly-ready doc may shift coverage. Drop the cache eagerly so the
-            # admin Coverage page reflects this upload without waiting on TTL.
-            await step.run(
-                "invalidate-coverage-cache",
-                lambda: _invalidate_coverage(org_id=org_id),
-            )
             # V3 #80 — the doc list & search caches still show 'processing';
             # bump the version so the next list call (and any in-flight chat
             # search) sees the new ready state without waiting on TTL.
@@ -314,23 +308,9 @@ async def _refresh_after_retry(*, doc_id: str, org_id: str) -> dict[str, Any]:
     else:
         stats = {"embedded": embedded, "failed": failed, "total": total} if failed else None
         await mark_status(doc_id, "ready", chunk_count=total, embedding_stats=stats)
-        await _invalidate_coverage(org_id=org_id)
         await _invalidate_doc_list(org_id=org_id)
 
     return {"total": total, "embedded": embedded, "failed": failed}
-
-
-async def _invalidate_coverage(*, org_id: str) -> dict[str, str]:
-    """Drop the cached coverage_scores row. Wrapper for Inngest step.run.
-
-    Imported lazily to keep the inngest module's cold-start light and to
-    avoid a circular import with services.coverage which itself only pulls
-    from database + embedder.
-    """
-    from app.services.coverage import invalidate_coverage
-
-    await invalidate_coverage(org_id)
-    return {"status": "invalidated"}
 
 
 async def _invalidate_doc_list(*, org_id: str) -> dict[str, str]:

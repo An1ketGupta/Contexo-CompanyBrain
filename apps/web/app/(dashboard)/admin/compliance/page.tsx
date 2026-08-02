@@ -403,7 +403,6 @@ function DigestCard() {
     stats: {
       time_saved_hours: number;
       query_count: number;
-      knowledge_gaps_count: number;
       ack_pending_count: number;
       new_document_count: number;
     };
@@ -442,7 +441,6 @@ function DigestCard() {
           <Mini label="Time saved" value={`${s.time_saved_hours} hr`} />
           <Mini label="Queries" value={String(s.query_count)} />
           <Mini label="New docs" value={String(s.new_document_count)} />
-          <Mini label="Gaps" value={String(s.knowledge_gaps_count)} />
           <Mini label="Acks pending" value={String(s.ack_pending_count)} />
         </div>
       )}

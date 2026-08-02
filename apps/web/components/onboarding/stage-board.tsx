@@ -2,127 +2,45 @@
 
 import { AlertTriangle, Check } from "lucide-react";
 
+import type { RunStep } from "@/components/onboarding/step-panel";
 import { cn } from "@/lib/utils";
 
 /**
  * The subset of an onboarding run the board reads. Kept structural so the
  * detail page can pass its own `RunDetail` without a cast.
+ *
+ * Only the candidate's identity and whether the run itself has been halted —
+ * everything about *where* the run has got to comes from its steps. This used
+ * to also read five pairs of legacy timestamp columns (`loi_signed_at`,
+ * `bgv_sent_at`, …) because the board's columns were the five stages that used
+ * to be hardcoded. They are the org's steps now, so the run row has nothing
+ * left to say about progress.
  */
 export interface StageBoardRun {
   candidate_name: string;
   role_title: string;
   designation: string | null;
   status: string;
-  blocked_reason: string | null;
-  blocked_template_kind: string | null;
-  loi_sent_to_hr_at: string | null;
-  loi_signed_at: string | null;
-  bgv_sent_at: string | null;
-  bgv_completed_at: string | null;
-  appointment_sent_at: string | null;
-  policies_assigned_at: string | null;
-  policies_acknowledged_at: string | null;
-  induction_sent_at: string | null;
-  completed_at: string | null;
 }
 
-export type StageKey =
-  | "loi"
-  | "bgv"
-  | "appointment"
-  | "policies"
-  | "induction";
+/** A step in one of these needs nothing further — mirrors the agent's set. */
+const TERMINAL = new Set(["done", "skipped"]);
 
-/**
- * The stages an org actually runs. Every stage but LOI can be switched off in
- * settings, and a run then passes through it without stopping — so a disabled
- * stage is dropped from the board rather than shown as permanently "not
- * started". Defaults to all of them, which is what a caller that hasn't loaded
- * the org's settings yet should render.
- */
-export type EnabledStages = Set<StageKey>;
-
-const ALL_STAGES: EnabledStages = new Set<StageKey>([
-  "loi",
-  "bgv",
-  "appointment",
-  "policies",
-  "induction",
+/** A step that has stopped and needs someone to intervene. */
+const HALTED_STEP = new Set([
+  "blocked_missing_template",
+  "blocked_template_drift",
+  "failed",
 ]);
 
-const STAGES: {
-  key: StageKey;
-  label: string;
-  /** Abbreviated form, for running the pipeline inline as one line of prose. */
-  short: string;
-  doneAt: (r: StageBoardRun) => string | null;
-}[] = [
-  {
-    key: "loi",
-    label: "LOI",
-    short: "LOI",
-    doneAt: (r) => r.loi_signed_at ?? r.loi_sent_to_hr_at,
-  },
-  {
-    key: "bgv",
-    label: "Background verification",
-    short: "BGV",
-    doneAt: (r) => r.bgv_completed_at ?? r.bgv_sent_at,
-  },
-  {
-    key: "appointment",
-    label: "Appointment + NDA",
-    short: "Appointment + NDA",
-    doneAt: (r) => r.appointment_sent_at,
-  },
-  {
-    key: "policies",
-    label: "Policies",
-    short: "Policies",
-    doneAt: (r) => r.policies_acknowledged_at ?? r.policies_assigned_at,
-  },
-  {
-    key: "induction",
-    label: "Induction",
-    short: "Induction",
-    doneAt: (r) => r.induction_sent_at,
-  },
-];
+/** A run that has stopped, whatever its steps say. */
+const HALTED_RUN = new Set(["failed", "cancelled"]);
 
-/** Every non-terminal status, mapped to the stage it belongs to. */
-const STATUS_STAGE: Record<string, StageKey> = {
-  draft: "loi",
-  loi_generating: "loi",
-  loi_pending_hr_review: "loi",
-  loi_pending_hr_sign: "loi",
-  loi_pending_esign_signature: "loi",
-  loi_signed_uploaded: "loi",
-  loi_sent_to_candidate: "loi",
-  awaiting_candidate_references: "bgv",
-  bgv_pending: "bgv",
-  bgv_complete: "bgv",
-  appointment_bundle_generating: "appointment",
-  appointment_pending_hr_review: "appointment",
-  appointment_sent_to_candidate: "appointment",
-  policies_assigned: "policies",
-  policies_acknowledged: "policies",
-  induction_generating: "induction",
-  induction_sent: "induction",
-};
-
-/** Template kinds the agent can block on, mapped to their stage. */
-const TEMPLATE_KIND_STAGE: Record<string, StageKey> = {
-  loi: "loi",
-  appointment_letter: "appointment",
-  appointment: "appointment",
-  nda: "appointment",
-  policies: "policies",
-  induction: "induction",
-};
-
-const HALTED = new Set(["blocked_missing_template", "failed", "cancelled"]);
-
-/** Spelled out because Tailwind can't see a class name built at runtime. */
+/**
+ * Spelled out because Tailwind can't see a class name built at runtime. A
+ * pipeline longer than five wraps at five rather than squeezing an arbitrary
+ * number of columns onto one row — the numbering still reads in order.
+ */
 const GRID_COLUMNS: Record<number, string> = {
   1: "lg:grid-cols-1",
   2: "lg:grid-cols-2",
@@ -131,81 +49,62 @@ const GRID_COLUMNS: Record<number, string> = {
   5: "lg:grid-cols-5",
 };
 
-/** The stages this org runs, in pipeline order. LOI is never optional. */
-export function visibleStages(
-  enabled: EnabledStages = ALL_STAGES,
-): typeof STAGES {
-  return STAGES.filter((s) => s.key === "loi" || enabled.has(s.key));
-}
-
-/** The org's pipeline as one arrow-joined line, e.g. `LOI → Policies`. */
-export function pipelineSummary(enabled: EnabledStages = ALL_STAGES): string {
-  return visibleStages(enabled)
-    .map((s) => s.short)
-    .join(" → ");
-}
-
 /**
- * Which stage the run is sitting in, before any filtering.
+ * This run's pipeline as board columns: one per step, bundle members sharing
+ * one, in position order.
  *
- * Blocked and failed runs carry no stage in their status, so they fall back to
- * the template kind the agent choked on, then to the timestamps the run has
- * already written.
+ * Skipped steps are dropped: a column reading "Not run" is a column spent on
+ * nothing.
  */
-function resolveStage(run: StageBoardRun): StageKey {
-  const fromStatus = STATUS_STAGE[run.status];
-  if (fromStatus !== undefined) return fromStatus;
-
-  if (HALTED.has(run.status) && run.blocked_template_kind) {
-    const fromTemplate = TEMPLATE_KIND_STAGE[run.blocked_template_kind];
-    if (fromTemplate !== undefined) return fromTemplate;
+export function stageGroups(steps: RunStep[]): RunStep[][] {
+  const groups: RunStep[][] = [];
+  const seen = new Set<string>();
+  for (const step of [...steps].sort((a, b) => a.position - b.position)) {
+    if (step.status === "skipped") continue;
+    if (!step.bundle_key) {
+      groups.push([step]);
+      continue;
+    }
+    if (seen.has(step.bundle_key)) continue;
+    seen.add(step.bundle_key);
+    groups.push(
+      steps
+        .filter((s) => s.bundle_key === step.bundle_key && s.status !== "skipped")
+        .sort((a, b) => a.position - b.position),
+    );
   }
-
-  if (run.induction_sent_at) return "induction";
-  if (run.policies_assigned_at) return "policies";
-  if (run.appointment_sent_at) return "appointment";
-  if (run.bgv_sent_at) return "bgv";
-  return "loi";
+  return groups;
 }
 
 /**
- * Which column the candidate box sits in, counted against the stages this org
- * actually runs.
+ * The column the run is sitting in — the first group that still needs
+ * something, in pipeline order. Null means every step is done.
  *
- * `completed` returns past the last index so every column reads as done.
+ * This is the same rule the agent dispatches on (`catalog.next_actionable`),
+ * which is the point: the board shows where the run is because it asks the
+ * same question of the same rows, rather than inferring a stage from a status
+ * string and a spread of timestamps that could disagree with it.
+ *
+ * A group, not a step, because a bundle is reviewed and signed as one thing —
+ * the panel for it has to name every document in it.
  */
-export function currentStageIndex(
-  run: StageBoardRun,
-  enabled: EnabledStages = ALL_STAGES,
-): number {
-  const stages = visibleStages(enabled);
-  if (run.status === "completed") return stages.length;
-
-  const key = resolveStage(run);
-  const i = stages.findIndex((s) => s.key === key);
-  if (i !== -1) return i;
-
-  // The run is in a stage this org no longer runs — it started before the
-  // stage was switched off. Count the visible stages it has already cleared,
-  // which lands the box on the next one it will actually stop at.
-  const canonical = STAGES.findIndex((s) => s.key === key);
-  return stages.filter(
-    (s) => STAGES.findIndex((x) => x.key === s.key) < canonical,
-  ).length;
+export function currentStageGroup(steps: RunStep[]): RunStep[] | null {
+  for (const group of stageGroups(steps)) {
+    if (!TERMINAL.has(group[0].status)) return group;
+  }
+  return null;
 }
 
 /**
- * The stage whose panel the detail page shows. A completed run indexes past the
- * last stage, so it clamps back onto the final one rather than falling off the
- * end.
+ * The group whose panel the run page shows.
+ *
+ * The one the run is sitting in, or the last one once it has finished — a
+ * completed hire should still be able to open the documents its pipeline
+ * produced, which is what the old board's clamp past the final stage did.
  */
-export function currentStageKey(
-  run: StageBoardRun,
-  enabled: EnabledStages = ALL_STAGES,
-): StageKey {
-  const stages = visibleStages(enabled);
-  const i = Math.min(currentStageIndex(run, enabled), stages.length - 1);
-  return stages[i].key;
+export function panelStageGroup(steps: RunStep[]): RunStep[] | null {
+  const groups = stageGroups(steps);
+  return currentStageGroup(steps) ?? groups[groups.length - 1] ?? null;
 }
 
 function relativeTime(iso: string | null): string | null {
@@ -229,39 +128,47 @@ function initials(name: string): string {
 }
 
 /**
- * The stages this org runs as columns, with the candidate box parked in
- * whichever column the run is sitting in. The page shows only the current
- * stage's panel below, so the columns are a status readout rather than
- * navigation.
+ * The steps this run is walking as columns, with the candidate box parked in
+ * whichever one it is sitting in. The page shows only the current step's panel
+ * below, so the columns are a status readout rather than navigation.
  */
 export function StageBoard({
   run,
+  steps,
   statusLabel,
-  enabledStages = ALL_STAGES,
 }: {
   run: StageBoardRun;
+  steps: RunStep[];
   statusLabel: string;
-  enabledStages?: EnabledStages;
 }) {
-  const stages = visibleStages(enabledStages);
-  const current = currentStageIndex(run, enabledStages);
-  const halted = HALTED.has(run.status);
+  const groups = stageGroups(steps);
+  if (groups.length === 0) return null;
+
+  const current = currentStageGroup(steps);
+  // No current step means every one is done, so every column reads as done.
+  const currentIndex = current
+    ? groups.findIndex((g) => g[0].id === current[0].id)
+    : groups.length;
+  const runHalted = HALTED_RUN.has(run.status);
 
   return (
     <ol
       className={cn(
         "grid grid-cols-1 gap-4 sm:grid-cols-2",
-        GRID_COLUMNS[stages.length],
+        GRID_COLUMNS[groups.length] ?? "lg:grid-cols-5",
       )}
     >
-      {stages.map((stage, i) => {
-        const isDone = i < current;
-        const isCurrent = i === current;
-        const doneAt = relativeTime(stage.doneAt(run));
+      {groups.map((group, i) => {
+        const lead = group[0];
+        const label = lead.bundle_label ?? lead.label;
+        const isDone = i < currentIndex;
+        const isCurrent = i === currentIndex;
+        const halted = runHalted || HALTED_STEP.has(lead.status);
+        const doneAt = relativeTime(lead.completed_at);
 
         return (
           <li
-            key={stage.key}
+            key={lead.id}
             className={cn(
               "flex h-full flex-col rounded-2xl border p-4",
               isCurrent && halted
@@ -293,9 +200,9 @@ export function StageBoard({
                   "min-w-0 flex-1 truncate font-mono text-[11px] font-bold uppercase tracking-wider",
                   isCurrent ? "text-foreground" : "text-muted-foreground",
                 )}
-                title={stage.label}
+                title={label}
               >
-                {stage.label}
+                {label}
               </span>
             </div>
 
