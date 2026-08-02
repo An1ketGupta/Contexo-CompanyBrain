@@ -263,11 +263,7 @@ export default function SupportSettingsPage() {
           Support inbox
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          Connect the mailbox your customers actually email — support@yourcompany.com.
-          It&apos;s polled for new mail, and replies go back out from the same
-          address so threads hold together. Use a dedicated support account, not
-          a personal one: everything that lands in this inbox is read by the
-          agent.
+          Connect your support email (Eg: support@yourcompany.com). The agent reads every email that arrives and sends replies from the same address to keep conversations in one thread. Use a dedicated support inbox instead of a personal email.
         </p>
 
         {mailbox && !mailbox.available ? (

@@ -31,25 +31,20 @@ export interface RunStep {
   approval_round: number;
 }
 
-/** The letter of intent's document type — see `catalog.DOCUMENT_TYPE_LOI`. */
-export const DOCUMENT_TYPE_LOI = "letter_of_intent";
-
 /** The panels the run page shows for the step it is sitting in. */
-export type BuiltInPanel =
-  | "loi"
-  | "bgv"
-  | "appointment"
-  | "policies"
-  | "induction";
-
-/** Document types that belong to the appointment panel. */
-const APPOINTMENT_TYPES = new Set(["appointment_letter", "nda"]);
+export type BuiltInPanel = "document" | "bgv" | "policies" | "induction";
 
 /**
  * Which panel a step wants, or null if it has none.
  *
  * A step is classified by what it *does* — its document type or its system
  * action — never by `step_key`, which is whatever the org named it.
+ *
+ * Every `generate` step gets the document panel. It used to be enumerated —
+ * one panel for the LOI, one for the appointment-letter-and-NDA pair, nothing
+ * for anything else — so a catalog with an offer letter in it stopped at the
+ * review gate with no preview to open and no way to send it for signature.
+ * What HR does with a generated document is the same whatever it is called.
  */
 export function builtInPanelFor(step: RunStep | null): BuiltInPanel | null {
   if (!step) return null;
@@ -62,8 +57,8 @@ export function builtInPanelFor(step: RunStep | null): BuiltInPanel | null {
   // `step_key` as a fallback only: it is the document type for a run whose
   // steps predate `document_type_key` being carried onto the snapshot.
   const type = step.document_type_key ?? step.step_key;
-  if (type === DOCUMENT_TYPE_LOI || type === "loi") return "loi";
-  if (APPOINTMENT_TYPES.has(type)) return "appointment";
+  // The induction pack is generated but never signed — it has no review gate
+  // and nothing to approve, just a link once it has gone out.
   if (type === "induction") return "induction";
-  return null;
+  return "document";
 }

@@ -96,15 +96,25 @@ export function currentStageGroup(steps: RunStep[]): RunStep[] | null {
 }
 
 /**
- * The group whose panel the run page shows.
+ * The group whose panel the run page shows, or null when there is nothing left
+ * to act on.
  *
- * The one the run is sitting in, or the last one once it has finished — a
- * completed hire should still be able to open the documents its pipeline
- * produced, which is what the old board's clamp past the final stage did.
+ * Strictly the group the run is sitting in. This used to clamp to the last
+ * group once every step was done, so a finished hire could still open the
+ * documents its pipeline produced — but the panel it landed on was the *live*
+ * one, offering Edit, Send for signature and Upload signed PDF on a run that
+ * had already closed. The documents archive answers that need now, read-only
+ * and for the whole pipeline rather than just its final stage.
+ *
+ * A run that was cancelled or failed is done being worked too, whatever its
+ * steps still say, so it gets no panel either.
  */
-export function panelStageGroup(steps: RunStep[]): RunStep[] | null {
-  const groups = stageGroups(steps);
-  return currentStageGroup(steps) ?? groups[groups.length - 1] ?? null;
+export function panelStageGroup(
+  steps: RunStep[],
+  runStatus: string,
+): RunStep[] | null {
+  if (runStatus === "completed" || HALTED_RUN.has(runStatus)) return null;
+  return currentStageGroup(steps);
 }
 
 function relativeTime(iso: string | null): string | null {

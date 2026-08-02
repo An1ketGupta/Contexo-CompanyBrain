@@ -71,6 +71,9 @@ class OnboardingDocumentRead(BaseModel):
     kind: str
     storage_path: str
     signed_url: str | None = None
+    # Link to the countersigned PDF only, where signed_url falls back through
+    # the HR-edited draft and the original render. Null until someone signs.
+    signed_pdf_url: str | None = None
     sign_status: str
     signed_pdf_path: str | None = None
     signed_uploaded_at: datetime | None = None
@@ -212,17 +215,17 @@ class LOIApproveDraftResponse(BaseModel):
     document_id: str
 
 
-class LOIReplaceDraftResponse(BaseModel):
-    """Returned by POST /runs/{id}/loi/replace-draft. The preview_url points
-    to a freshly-rendered PDF of HR's edited .docx so the UI can refresh the
-    inline preview immediately after upload."""
+class ReplaceDraftResponse(BaseModel):
+    """Returned by POST /runs/{id}/steps/{key}/replace-draft. The preview_url
+    points to a freshly-rendered PDF of HR's edited .docx so the UI can refresh
+    the inline preview immediately after upload."""
     status: str
     revision: int
     preview_url: str | None = None
 
 
-class LOIDraftParagraph(BaseModel):
-    """One editable line of the LOIdraft.
+class DraftParagraph(BaseModel):
+    """One editable line of a generated draft.
 
     `index` is a `canonical_paragraphs()` position, not a position in this
     list — blank paragraphs are omitted but the numbering is the document's, so
@@ -236,8 +239,8 @@ class LOIDraftParagraph(BaseModel):
     kind: str = "body"
 
 
-class LOIDraftTextResponse(BaseModel):
-    """Returned by GET /runs/{id}/loi/draft-text.
+class DraftTextResponse(BaseModel):
+    """Returned by GET /runs/{id}/steps/{key}/draft-text.
 
     `fingerprint` identifies the exact .docx these lines came from; the editor
     hands it back on save so a draft that was re-rendered underneath HR is
@@ -246,20 +249,20 @@ class LOIDraftTextResponse(BaseModel):
 
     revision: int
     fingerprint: str
-    paragraphs: list[LOIDraftParagraph] = Field(default_factory=list)
+    paragraphs: list[DraftParagraph] = Field(default_factory=list)
 
 
-class LOIEditTextRequest(BaseModel):
+class EditTextRequest(BaseModel):
     """Only the paragraphs HR actually changed. A line whose text matches the
     stored one is ignored server-side, so re-sending the whole document is
     harmless but pointless."""
 
     fingerprint: str = Field(..., min_length=1, max_length=64)
-    edits: list[LOIDraftParagraph] = Field(..., min_length=1, max_length=400)
+    edits: list[DraftParagraph] = Field(..., min_length=1, max_length=400)
 
     @field_validator("edits")
     @classmethod
-    def _bounded(cls, v: list[LOIDraftParagraph]) -> list[LOIDraftParagraph]:
+    def _bounded(cls, v: list[DraftParagraph]) -> list[DraftParagraph]:
         seen: set[int] = set()
         for edit in v:
             if edit.index < 0:
@@ -275,9 +278,9 @@ class LOIEditTextRequest(BaseModel):
         return v
 
 
-class LOIEditTextResponse(BaseModel):
-    """Returned by POST /runs/{id}/loi/edit-text. Same shape as the .docx
-    re-upload path — HR's edits land as a new revision either way."""
+class EditTextResponse(BaseModel):
+    """Returned by POST /runs/{id}/steps/{key}/edit-text. Same shape as the
+    .docx re-upload path — HR's edits land as a new revision either way."""
 
     status: str
     revision: int

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import useSWR, { mutate as globalMutate } from "swr";
 import {
   AlertTriangle,
@@ -11,31 +11,27 @@ import {
   CheckCircle2,
   ExternalLink,
   FileSignature,
-  FileText,
   Loader2,
-  Pencil,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
-  Upload,
   XCircle,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill, type PillTone } from "@/components/actual/kit";
-import { LOIDraftEditor } from "@/components/onboarding/loi-draft-editor";
+import { DocumentReviewPanel } from "@/components/onboarding/document-review-panel";
+import { DocumentsPanel } from "@/components/onboarding/documents-panel";
 import {
   StageBoard,
   panelStageGroup,
 } from "@/components/onboarding/stage-board";
 import { StepApprovalPanel } from "@/components/onboarding/step-approval-panel";
-import { SubmissionsPanel } from "@/components/onboarding/submissions-panel";
 import {
   builtInPanelFor,
   type RunStep,
 } from "@/components/onboarding/step-panel";
-import { DOCUMENT_KIND_LABEL as DOC_LABEL } from "@/lib/onboarding-documents";
 
 interface ReferenceRow {
   id: string;
@@ -67,6 +63,7 @@ interface DocumentRow {
   kind: string;
   storage_path: string;
   signed_url: string | null;
+  signed_pdf_url: string | null;
   sign_status: string;
   signed_pdf_path: string | null;
   signed_uploaded_at: string | null;
@@ -167,12 +164,6 @@ const STATUS_LABELS: Record<string, string> = {
   awaiting_candidate_documents: "Awaiting candidate documents",
 };
 
-/** How a signer role reads in the routing summary. */
-const SIGNER_LABEL: Record<string, string> = {
-  hr: "HR",
-  candidate: "candidate",
-};
-
 const fetcher = async <T,>(url: string): Promise<T> => {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed (${res.status})`);
@@ -218,138 +209,6 @@ export default function OnboardingDetailPage() {
 
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const loiFileInput = useRef<HTMLInputElement>(null);
-  const loiDraftInput = useRef<HTMLInputElement>(null);
-
-  async function uploadSignedLOI(file: File) {
-    setBusy("upload-loi");
-    setActionError(null);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch(
-        `/api/onboarding/runs/${id}/loi/upload-signed`,
-        { method: "POST", body: form },
-      );
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
-          detail?: string;
-          message?: string;
-        };
-        setActionError(
-          body.detail || body.message || "Couldn't upload the signed PDF.",
-        );
-        return;
-      }
-      await mutate();
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function replaceLOIDraft(file: File) {
-    setBusy("replace-loi-draft");
-    setActionError(null);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch(
-        `/api/onboarding/runs/${id}/loi/replace-draft`,
-        { method: "POST", body: form },
-      );
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
-          detail?: string;
-          message?: string;
-        };
-        setActionError(
-          body.detail || body.message || "Couldn't upload the edited .docx.",
-        );
-        return;
-      }
-      await mutate();
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function approveLOIDraft() {
-    if (
-      !confirm(
-        "Send this LOI to HR for signature? You won't be able to edit further once sent.",
-      )
-    ) {
-      return;
-    }
-    setBusy("approve-loi-draft");
-    setActionError(null);
-    try {
-      const res = await fetch(
-        `/api/onboarding/runs/${id}/loi/approve-draft`,
-        { method: "POST" },
-      );
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
-          detail?: string;
-          message?: string;
-        };
-        setActionError(
-          body.detail || body.message || "Couldn't send the LOI for signature.",
-        );
-        return;
-      }
-      await mutate();
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function downloadLOIDocx() {
-    setBusy("download-loi-docx");
-    setActionError(null);
-    try {
-      const res = await fetch(`/api/onboarding/runs/${id}/loi/docx-url`);
-      if (!res.ok) {
-        setActionError("Couldn't get a download link. Try again.");
-        return;
-      }
-      const body = (await res.json()) as { docx_url?: string };
-      if (body.docx_url) window.open(body.docx_url, "_blank");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function openLOISigningLink() {
-    setBusy("loi-signing");
-    setActionError(null);
-    try {
-      const res = await fetch(`/api/onboarding/runs/${id}/loi/signing-url`);
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
-          detail?: string;
-          message?: string;
-        };
-        // 409 means the backend reconciled and found HR already signed —
-        // refresh so the UI picks up the updated per-signer statuses.
-        if (res.status === 409) {
-          await mutate();
-        }
-        setActionError(
-          body.detail
-            || body.message
-            || "Couldn't open the signing link.",
-        );
-        return;
-      }
-      const body = (await res.json()) as { signing_url?: string };
-      if (body.signing_url) {
-        window.open(body.signing_url, "_blank");
-      }
-    } finally {
-      setBusy(null);
-    }
-  }
 
   async function nudgeCandidate() {
     setBusy("nudge-candidate");
@@ -436,30 +295,6 @@ export default function OnboardingDetailPage() {
     }
   }
 
-  async function approveBundle() {
-    setBusy("approve");
-    setActionError(null);
-    try {
-      const res = await fetch(
-        `/api/onboarding/runs/${id}/offer-bundle/approve`,
-        { method: "POST" },
-      );
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
-          detail?: string;
-          message?: string;
-        };
-        setActionError(
-          body.detail || body.message || "Couldn't approve the bundle.",
-        );
-        return;
-      }
-      await mutate();
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function resume() {
     setBusy("resume");
     setActionError(null);
@@ -515,8 +350,9 @@ export default function OnboardingDetailPage() {
   const isBlocked = data.status === "blocked_missing_template";
   const steps = data.steps ?? [];
   // Where the run actually is, asked of its own steps. A step an org composed
-  // beyond the built-ins answers null and shows no panel.
-  const currentGroup = panelStageGroup(steps);
+  // beyond the built-ins answers null and shows no panel, and so does a run
+  // that has finished — its documents live in the archive below instead.
+  const currentGroup = panelStageGroup(steps, data.status);
   const currentStep = currentGroup?.[0] ?? null;
   // The approval gate is not one of the five built-in panels — any step can
   // reach it, including one an org composed itself, so it is keyed off the
@@ -672,9 +508,7 @@ export default function OnboardingDetailPage() {
 
       {/* The gate, first and above everything: the run is stopped here and
           nothing else on the page can move it. Shown for any step in
-          `pending_hr_approval`, built-in or composed by the org — which is the
-          point, since the panels further down only exist for the five steps
-          the product ships. */}
+          `pending_hr_approval`, built-in or composed by the org. */}
       {awaitingReview && currentGroup ? (
         <>
           <SectionHeader
@@ -693,37 +527,44 @@ export default function OnboardingDetailPage() {
         </>
       ) : null}
 
-      {/* Everything the candidate has ever filed, wherever the pipeline has
-          got to. The panel above is the decision on the step the run is
-          waiting at; this is the archive, and stays readable after the fact.
-          Renders nothing until something has actually been filed. */}
+      {/* The shelf to download from: what the candidate filed on steps HR has
+          already accepted, plus the letters the company signed and sent back.
+          A step still at its gate is reviewed in the panel above and
+          deliberately absent here; two lists of the same files, each with its
+          own controls, read as two contradictory decisions. */}
       <div className="mb-8">
-        <SubmissionsPanel runId={data.id} />
+        <DocumentsPanel
+          runId={data.id}
+          steps={steps}
+          documents={data.documents}
+        />
       </div>
 
-      {/* Only the step the run is actually sitting in, and only when it is one
-          of the built-ins these panels were written for. The rest of the
-          pipeline is in the board above — an empty panel for a step nobody has
-          reached yet is noise, not information. */}
-      {panel === "loi" && currentStep ? (
+      {/* Only the step the run is actually sitting in. The rest of the pipeline
+          is in the board above — an empty panel for a step nobody has reached
+          yet is noise, not information.
+
+          Every step that generates a document gets the same panel, whatever the
+          org called it: read it, correct it, send it for signature. */}
+      {panel === "document" && currentGroup ? (
         <>
           <SectionHeader
             icon={FileSignature}
-            title={currentStep.bundle_label ?? currentStep.label}
+            title={currentGroup[0].bundle_label ?? currentGroup[0].label}
           />
-          <div className="mb-12 rounded-2xl border border-border bg-card p-4">
-            <LOIPanel
-              data={data}
-              step={currentStep}
-              busy={busy}
-              fileRef={loiFileInput}
-              draftFileRef={loiDraftInput}
-              onUpload={uploadSignedLOI}
-              onReplaceDraft={replaceLOIDraft}
-              onApproveDraft={approveLOIDraft}
-              onDownloadDocx={downloadLOIDocx}
-              onDraftSaved={mutate}
-              onOpenSigningLink={openLOISigningLink}
+          {/* `#offer-bundle` is where the "documents are ready" email lands.
+              Only one document panel is ever on the page, so whichever step the
+              run is at, this is what that link means. */}
+          <div
+            id="offer-bundle"
+            className="mb-12 rounded-2xl border border-border bg-card p-4"
+          >
+            <DocumentReviewPanel
+              runId={data.id}
+              steps={currentGroup}
+              documents={data.documents}
+              candidateName={data.candidate_name}
+              onChanged={mutate}
             />
           </div>
         </>
@@ -740,23 +581,6 @@ export default function OnboardingDetailPage() {
               onHrOverride={submitHrReferencesOverride}
               onNudge={nudgeCandidate}
               onExtendToken={extendReferencesToken}
-            />
-          </div>
-        </>
-      ) : null}
-
-      {panel === "appointment" && currentStep ? (
-        <>
-          <SectionHeader
-            icon={FileText}
-            title={currentStep.bundle_label ?? currentStep.label}
-          />
-          <div className="mb-12 rounded-2xl border border-border bg-card p-4">
-            <BundlePanel
-              data={data}
-              steps={currentGroup ?? []}
-              busy={busy}
-              onApprove={approveBundle}
             />
           </div>
         </>
@@ -972,327 +796,6 @@ function BlockingFieldsForm({
             : "The agent picks the run back up automatically."}
         </p>
       </div>
-    </div>
-  );
-}
-
-function LOIPanel({
-  data,
-  step,
-  busy,
-  fileRef,
-  draftFileRef,
-  onUpload,
-  onReplaceDraft,
-  onApproveDraft,
-  onDownloadDocx,
-  onDraftSaved,
-  onOpenSigningLink,
-}: {
-  data: RunDetail;
-  step: RunStep;
-  busy: string | null;
-  fileRef: React.RefObject<HTMLInputElement | null>;
-  draftFileRef: React.RefObject<HTMLInputElement | null>;
-  onUpload: (f: File) => void;
-  onReplaceDraft: (f: File) => void;
-  onApproveDraft: () => void;
-  onDownloadDocx: () => void;
-  onDraftSaved: () => Promise<unknown>;
-  onOpenSigningLink: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-
-  // Everything here is addressed by the step, not by the literal key `loi`.
-  // The document row's `kind` is the step key the org chose, and the run status
-  // only spells `loi_pending_hr_review` while that key happens to be `loi` —
-  // for any other name it reads `step_pending_hr_review`, which used to hide
-  // this whole panel behind a document that appeared never to have generated.
-  const loi = data.documents.find((d) => d.kind === step.step_key);
-  const inReview = step.status === "pending_hr_review";
-
-  // One step status covers both ways of getting signed. An envelope on the
-  // document is what tells them apart: with one, signing happens in the
-  // browser; without one, HR prints, signs and uploads the scan.
-  const hasEnvelope = Boolean(loi?.esign_envelope_id);
-  const awaitingSign = step.status === "pending_signature" && !hasEnvelope;
-  const inEsign = step.status === "pending_signature" && hasEnvelope;
-
-  // What HR calls this document. The step's own name, falling back to the
-  // built-in label for a run whose steps predate the catalog.
-  const label = step.bundle_label ?? step.label ?? DOC_LABEL.loi;
-
-  // Per-signer progress from the signing envelope, in the routing order the
-  // step defines. `esign_signers` is authoritative once an envelope exists;
-  // before that the step's roles are all there is to show.
-  const signerRoles = step.signer_roles.length
-    ? step.signer_roles
-    : (loi?.esign_signers ?? []).map((s) => s.role);
-  const signers = signerRoles.map((role) => {
-    const fromEnvelope = loi?.esign_signers?.find((s) => s.role === role);
-    return {
-      role,
-      name:
-        role === "candidate"
-          ? data.candidate_name || "Candidate"
-          : fromEnvelope?.name || "You (HR)",
-      signed: fromEnvelope?.status === "completed",
-    };
-  });
-  const hrSigned = signers.find((s) => s.role === "hr")?.signed ?? false;
-  const firstUnsigned = signers.find((s) => !s.signed);
-  const myTurn = firstUnsigned?.role === "hr";
-
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm">
-          <span className="font-medium">{label}</span>
-          {loi ? (
-            <span className="ml-2 text-xs text-muted-foreground">
-              {loi.sign_status.replace(/_/g, " ")}
-              {loi.hr_edit_revision > 0 ? (
-                <span className="ml-2 rounded-full bg-amber-tint px-2 py-0.5 text-[10px] font-bold text-amber">
-                  edited (rev {loi.hr_edit_revision})
-                </span>
-              ) : null}
-            </span>
-          ) : (
-            <span className="ml-2 text-xs text-muted-foreground">
-              Not generated yet
-            </span>
-          )}
-        </p>
-      </div>
-
-      {inReview ? (
-        <div className="space-y-3 rounded-xl border border-amber/30 bg-amber-tint p-4">
-          <div>
-            <p className="text-sm font-medium">
-              {editing
-                ? "Editing the LOI"
-                : "Review the LOI before sending for signature"}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {editing ? (
-                <>
-                  Change any line below and save — the PDF re-renders straight
-                  away. Lines you don&rsquo;t touch keep their original
-                  formatting.
-                </>
-              ) : (
-                <>
-                  When you click <em>Send for signature</em>, an email
-                  goes to you with the LOI to print, sign, and scan back.
-                </>
-              )}
-            </p>
-          </div>
-
-          {editing ? (
-            <LOIDraftEditor
-              runId={data.id}
-              onSaved={onDraftSaved}
-              onClose={() => setEditing(false)}
-            />
-          ) : (
-            <>
-              <div className="flex flex-wrap items-center gap-2">
-                {loi?.signed_url ? (
-                  <Button variant="outline" size="sm" asChild>
-                    <a
-                      href={loi.signed_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-                      Preview LOI in new tab
-                    </a>
-                  </Button>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Generating the preview…
-                  </p>
-                )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setEditing(true)}
-                >
-                  <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                  Edit LOI here
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={onApproveDraft}
-                  disabled={busy === "approve-loi-draft"}
-                >
-                  {busy === "approve-loi-draft" ? (
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                  ) : null}
-                  Send for signature
-                </Button>
-              </div>
-
-              {/* The Word round-trip stays for edits the text editor can't
-                  express — new clauses, tables, layout. */}
-              <div className="flex flex-wrap items-center gap-3 border-t border-amber/20 pt-2.5">
-                <input
-                  ref={draftFileRef}
-                  type="file"
-                  accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) onReplaceDraft(f);
-                    if (draftFileRef.current) draftFileRef.current.value = "";
-                  }}
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Need to restructure it in Word?
-                </p>
-                <button
-                  type="button"
-                  onClick={onDownloadDocx}
-                  disabled={busy === "download-loi-docx"}
-                  className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground underline hover:no-underline disabled:opacity-60"
-                >
-                  {busy === "download-loi-docx" ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : null}
-                  Download .docx
-                </button>
-                <button
-                  type="button"
-                  onClick={() => draftFileRef.current?.click()}
-                  disabled={busy === "replace-loi-draft"}
-                  className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground underline hover:no-underline disabled:opacity-60"
-                >
-                  {busy === "replace-loi-draft" ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <Upload className="h-3 w-3" />
-                  )}
-                  Upload an edited .docx
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      ) : null}
-
-      {awaitingSign ? (
-        <div className="rounded-xl border border-dashed border-border bg-muted/40 p-4">
-          <p className="text-sm">
-            Print the draft, sign it, scan, then upload the signed PDF here.
-          </p>
-          <div className="mt-3 flex items-center gap-2">
-            <input
-              ref={fileRef}
-              type="file"
-              accept="application/pdf"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) onUpload(f);
-              }}
-            />
-            <Button
-              size="sm"
-              onClick={() => fileRef.current?.click()}
-              disabled={busy === "upload-loi"}
-            >
-              {busy === "upload-loi" ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Upload className="mr-1.5 h-3.5 w-3.5" />
-              )}
-              Upload signed PDF
-            </Button>
-          </div>
-        </div>
-      ) : null}
-
-      {inEsign ? (
-        <div className="space-y-3 rounded-xl border border-brand/30 bg-brand-tint p-4">
-          <div>
-            <p className="text-sm font-medium">Signing {label}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {!firstUnsigned ? (
-                <>Everyone has signed. Sending it on.</>
-              ) : hrSigned || !signerRoles.includes("hr") ? (
-                <>
-                  Waiting on{" "}
-                  <strong>{firstUnsigned.name}</strong>. They&apos;ve been
-                  emailed a signing link.
-                </>
-              ) : (
-                <>
-                  The envelope is routed{" "}
-                  <strong>
-                    {signers.map((s) => SIGNER_LABEL[s.role] ?? s.role).join(" → ")}
-                  </strong>
-                  . Each signer is emailed automatically when it reaches them.
-                </>
-              )}
-            </p>
-          </div>
-
-          <dl className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-            {signers.map((signer, i) => (
-              <div
-                key={signer.role}
-                className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
-                  signer.signed
-                    ? "border-success/30 bg-success-tint"
-                    : "border-border bg-muted/40"
-                }`}
-              >
-                <dt className="font-medium text-foreground">{signer.name}</dt>
-                <dd
-                  className={
-                    signer.signed
-                      ? "font-medium text-success-ink"
-                      : "text-muted-foreground"
-                  }
-                >
-                  {signer.signed
-                    ? "Signed ✓"
-                    : signer.role === firstUnsigned?.role
-                      ? "Pending"
-                      : `Waiting for ${signers[i - 1]?.name ?? "the previous signer"}`}
-                </dd>
-              </div>
-            ))}
-          </dl>
-
-          {myTurn ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                size="sm"
-                onClick={onOpenSigningLink}
-                disabled={busy === "loi-signing"}
-              >
-                {busy === "loi-signing" ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-                )}
-                Open my signing link
-              </Button>
-              <p className="text-[11px] text-muted-foreground">
-                Link expires after 5 minutes — click again for a fresh one.
-              </p>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {loi?.signed_pdf_path ? (
-        <p className="text-xs text-muted-foreground">
-          Signed copy uploaded {relativeTime(loi.signed_uploaded_at)}.
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -1613,116 +1116,5 @@ function InductionLink({ data, step }: { data: RunDetail; step: RunStep }) {
     >
       Open {step.label} PDF <ExternalLink className="h-3 w-3" />
     </a>
-  );
-}
-
-function BundlePanel({
-  data,
-  steps,
-  busy,
-  onApprove,
-}: {
-  data: RunDetail;
-  /** Every document in the bundle, in the order the org arranged them. */
-  steps: RunStep[];
-  busy: string | null;
-  onApprove: () => void;
-}) {
-  // One card per member rather than a fixed appointment-letter-and-NDA pair —
-  // a bundle is whatever documents the org grouped, and each is addressed by
-  // its step key because that is what the document row's `kind` holds.
-  const docs = steps.map((step) => ({
-    key: step.id,
-    label: step.label,
-    doc: data.documents.find((d) => d.kind === step.step_key),
-  }));
-  const awaitingApproval = steps[0]?.status === "pending_hr_review";
-
-  return (
-    <div className="space-y-3" id="offer-bundle">
-      <div className="grid gap-2 sm:grid-cols-2">
-        {docs.map((d) => (
-          <DocCard key={d.key} label={d.label} doc={d.doc} />
-        ))}
-      </div>
-
-      {awaitingApproval ? (
-        <div className="rounded-xl border border-dashed border-border bg-muted/40 p-4">
-          <p className="text-sm">
-            Review both documents above. When you&apos;re ready, send the
-            bundle to the candidate.
-          </p>
-          <Button
-            size="sm"
-            className="mt-3"
-            onClick={onApprove}
-            disabled={busy === "approve"}
-          >
-            {busy === "approve" ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
-            )}
-            Approve and send to candidate
-          </Button>
-        </div>
-      ) : null}
-
-      {data.appointment_sent_at ? (
-        <p className="text-xs text-muted-foreground">
-          Sent to candidate {relativeTime(data.appointment_sent_at)}.
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-function DocCard({
-  label,
-  doc,
-}: {
-  label: string;
-  doc: DocumentRow | undefined;
-}) {
-  return (
-    <div className="rounded-xl border border-border bg-muted/40 p-3">
-      <p className="text-xs font-bold text-foreground">{label}</p>
-      {doc ? (
-        <>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {doc.sign_status.replace(/_/g, " ")}
-            {doc.esign_status ? (
-              <span className="ml-1 rounded-full bg-brand-tint px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand">
-                Signing: {doc.esign_status}
-              </span>
-            ) : null}
-          </p>
-          {doc.signed_url ? (
-            <a
-              href={doc.signed_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-foreground underline hover:no-underline"
-            >
-              Open PDF <ExternalLink className="h-3 w-3" />
-            </a>
-          ) : null}
-          {doc.esign_signing_url && doc.esign_status !== "completed" ? (
-            <a
-              href={doc.esign_signing_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-2 mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-brand underline hover:no-underline"
-            >
-              Open signing link <ExternalLink className="h-3 w-3" />
-            </a>
-          ) : null}
-        </>
-      ) : (
-        <p className="mt-0.5 text-[11px] text-muted-foreground">
-          Not generated yet
-        </p>
-      )}
-    </div>
   );
 }

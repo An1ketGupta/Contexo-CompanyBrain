@@ -1,14 +1,14 @@
 import { NextRequest } from "next/server";
 import { proxyJson } from "@/lib/api-proxy";
 
-export async function POST(
-  req: NextRequest,
+export async function GET(
+  request: NextRequest,
   { params }: { params: Promise<{ id: string; stepKey: string }> },
-): Promise<Response> {
+) {
   const { id, stepKey } = await params;
   return proxyJson(
-    req,
-    `/onboarding/runs/${id}/steps/${encodeURIComponent(stepKey)}/approve`,
-    { method: "POST" },
+    request,
+    `/onboarding/runs/${id}/steps/${encodeURIComponent(stepKey)}/draft-text`,
+    { method: "GET" },
   );
 }

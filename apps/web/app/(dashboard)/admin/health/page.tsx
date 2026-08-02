@@ -100,10 +100,6 @@ export default function KnowledgeHealthPage() {
         <h1 className="text-2xl font-extrabold tracking-tight">
           Knowledge base health
         </h1>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          Which documents the AI is actually drawing on — and which look stale.
-          Recomputed nightly.
-        </p>
       </header>
 
       {error ? (

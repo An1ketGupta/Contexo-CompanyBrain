@@ -116,10 +116,6 @@ export default function PublicDocumentsPage() {
         <h1 className="mt-1 text-2xl font-bold tracking-tight text-foreground">
           Hi {data.candidate_name.split(" ")[0]}, we need a few documents
         </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Upload them here before your first day as {data.role_title}. No
-          account or password needed.
-        </p>
       </header>
 
       <div className="mb-6 flex items-start gap-3 rounded-xl border border-border bg-muted/30 p-4">

@@ -139,10 +139,7 @@ export function StepApprovalPanel({
         <p className="text-sm font-semibold text-foreground">
           {resent
             ? `Check ${label} again (attempt ${lead.approval_round + 1})`
-            : `Check ${label} before onboarding continues`}
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {GATE_BLURB[lead.kind]}
+            : `Review`}
         </p>
       </div>
 

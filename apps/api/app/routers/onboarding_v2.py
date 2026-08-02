@@ -26,15 +26,14 @@ from app.errors import NoOrganization
 from app.inngest.client import get_inngest_client
 from app.models.onboarding_v2 import (
     BlockingFieldsResponse,
+    DraftTextResponse,
+    EditTextRequest,
+    EditTextResponse,
     HrReferencesOverrideRequest,
     LOIApproveDraftResponse,
-    LOIDraftParagraph,
-    LOIDraftTextResponse,
-    LOIEditTextRequest,
-    LOIEditTextResponse,
-    LOIReplaceDraftResponse,
     OnboardingRunDetailRead,
     OnboardingRunRead,
+    ReplaceDraftResponse,
     RunFieldValuesRequest,
     RunFieldValuesResponse,
     SourcesResponse,
@@ -47,7 +46,6 @@ from app.services.agents.onboarding_v2.pre_join import (
     send_magic_link,
 )
 from app.services.documents import schema as doc_schema
-from app.services.documents import text_edit
 from app.services.documents.constants import STATUS_CONFIRMED
 
 log = logging.getLogger(__name__)
@@ -564,6 +562,16 @@ async def get_run(
                 or fresh_urls.get(d["storage_path"])
                 or d.get("signed_url")
             ),
+            # The executed copy, specifically. `signed_url` above prefers the
+            # HR-edited draft so the review panel previews the latest wording;
+            # the documents archive wants the countersigned artifact and
+            # nothing else, so it gets its own link rather than a preference
+            # order it would have to argue with.
+            "signed_pdf_url": (
+                fresh_urls.get(d["signed_pdf_path"])
+                if d.get("signed_pdf_path")
+                else None
+            ),
             "sign_status": d.get("sign_status") or "draft",
             "signed_pdf_path": d.get("signed_pdf_path"),
             "signed_uploaded_at": d.get("signed_uploaded_at"),
@@ -643,20 +651,6 @@ async def approve_offer_bundle(
     )
 
 
-def _loi_docx_path(doc_row: dict[str, Any]) -> str:
-    """Storage path of the LOI's current .docx.
-
-    HR's edited copy when there is one, else the agent's render — whose
-    `storage_path` column points at the PDF, with the .docx stored beside it
-    under the same stem.
-    """
-    edited = doc_row.get("hr_edited_storage_path")
-    if edited:
-        return str(edited)
-    pdf_path = doc_row.get("storage_path") or ""
-    return pdf_path[:-4] + ".docx" if pdf_path.endswith(".pdf") else pdf_path
-
-
 async def _loi_step(run_id: str) -> dict[str, Any]:
     """The step that renders this run's letter of intent.
 
@@ -680,343 +674,63 @@ async def _loi_step(run_id: str) -> dict[str, Any]:
     return step
 
 
-async def _load_loi_for_review(
-    *, run_id: str, org_id: str, svc: Any
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """Fetch the run, the LOI step and its document row, asserting the step is
-    parked in review. Every mutation below is only legal in that window: once an
-    envelope exists, the bytes HR is looking at are the bytes someone is signing.
-
-    The gate reads the step's own status rather than the run's. `onboarding_runs
-    .status` is a derived label since 108 and only spells `loi_pending_hr_review`
-    while the step happens to be keyed `loi` — for any other key it reads
-    `step_pending_hr_review`, and gating on that string locked HR out of editing
-    their own draft.
-    """
-    run = await asyncio.to_thread(
-        lambda: svc.table("onboarding_runs")
-        .select("id, status, loi_draft_revision")
-        .eq("id", run_id)
-        .eq("org_id", org_id)
-        .maybe_single()
-        .execute()
-    )
-    if not run or not run.data:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found.")
-
-    step = await _loi_step(run_id)
-    if step["status"] != ob_catalog.STATUS_PENDING_HR_REVIEW:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"'{step['label']}' is {step['status'].replace('_', ' ')}, "
-            "not waiting for your review.",
-        )
-
-    doc = await asyncio.to_thread(
-        lambda: svc.table("onboarding_documents")
-        .select("id, storage_path, hr_edited_storage_path, hr_edit_revision")
-        .eq("run_id", run_id)
-        .eq("kind", step["step_key"])
-        .maybe_single()
-        .execute()
-    )
-    if not doc or not doc.data:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND, "LOIdocument not found for this run."
-        )
-    return run.data, doc.data, step
-
-
-async def _download_loi_docx(*, doc_row: dict[str, Any], svc: Any) -> bytes:
-    """The LOI's current .docx bytes."""
-    path = _loi_docx_path(doc_row)
-    if not path.endswith(".docx"):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "This LOIhas no Word version stored, so it can't be edited here. "
-            "Regenerate the draft and try again.",
-        )
-    try:
-        return await asyncio.to_thread(
-            lambda: svc.storage.from_(ob_storage.STORAGE_BUCKET).download(path)
-        )
-    except Exception as exc:  # noqa: BLE001 — storage miss, not a bug
-        log.warning("onboarding_v2.loi_docx_download_failed path=%s err=%s", path, exc)
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "Couldn't open the LOIdraft from storage. Try again.",
-        ) from exc
-
-
-async def _store_loi_revision(
-    *,
-    org_id: str,
-    run_id: str,
-    user_id: str,
-    step_key: str,
-    docx_bytes: bytes,
-    revision: int,
-    event_type: str,
-    message: str,
-    metadata: dict[str, Any],
-    svc: Any,
-) -> str | None:
-    """Persist a new HR revision of the LOIdraft: .docx + rendered PDF to
-    storage, `hr_edited_*` onto the document row, revision onto the run, one
-    audit event. Returns a signed URL for the fresh PDF.
-
-    The PDF is rendered before anything is stamped, so a conversion failure
-    leaves the previous revision intact rather than pointing the document row
-    at a PDF that doesn't exist.
-
-    `step_key` addresses both the storage path and the document row, so a run
-    whose LOI step the org renamed writes its revisions beside its own draft
-    rather than over a `loi_*` path no document on this run points at.
-    """
-    prefix = f"orgs/{org_id}/onboarding/{run_id}/{step_key}_hr_edit_r{revision}"
-    docx_path = f"{prefix}.docx"
-    pdf_path = f"{prefix}.pdf"
-
-    from app.services.pdf import (
-        PdfRenderError,
-        PdfRenderUnavailable,
-        convert_docx_to_pdf,
-    )
-
-    try:
-        pdf_bytes = await convert_docx_to_pdf(docx_bytes)
-    except (PdfRenderError, PdfRenderUnavailable) as exc:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Couldn't convert the edited draft to PDF for preview: {exc}",
-        ) from exc
-
-    def _upload(path: str, body: bytes, mime: str) -> None:
-        svc.storage.from_(ob_storage.STORAGE_BUCKET).upload(
-            path=path,
-            file=body,
-            file_options={"content-type": mime, "upsert": "true"},
-        )
-
-    await asyncio.to_thread(
-        _upload,
-        docx_path,
-        docx_bytes,
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    )
-    await asyncio.to_thread(_upload, pdf_path, pdf_bytes, "application/pdf")
-
-    now = datetime.now(UTC).isoformat()
-    await asyncio.to_thread(
-        lambda: svc.table("onboarding_documents")
-        .update(
-            {
-                "hr_edited_storage_path": docx_path,
-                "hr_edited_pdf_path": pdf_path,
-                "hr_edited_by_user_id": user_id,
-                "hr_edited_at": now,
-                "hr_edit_revision": revision,
-            }
-        )
-        .eq("run_id", run_id)
-        .eq("kind", step_key)
-        .execute()
-    )
-    await asyncio.to_thread(
-        lambda: svc.table("onboarding_runs")
-        .update({"loi_draft_revision": revision, "loi_draft_edited_at": now})
-        .eq("id", run_id)
-        .execute()
-    )
-    await ob_storage.log_onboarding_event(
-        org_id=org_id,
-        run_id=run_id,
-        actor_kind="hr",
-        event_type=event_type,
-        message=message,
-        actor_user_id=user_id,
-        metadata={"revision": revision, **metadata},
-    )
-    return await ob_storage.mint_signed_url(pdf_path)
-
-
 @router.get(
     "/runs/{run_id}/loi/draft-text",
-    response_model=LOIDraftTextResponse,
+    response_model=DraftTextResponse,
 )
 async def get_loi_draft_text(
     run_id: str,
     current_user: dict = Depends(verify_jwt),
-) -> LOIDraftTextResponse:
-    """The LOIdraft as editable lines, for the in-page editor.
+) -> DraftTextResponse:
+    """Legacy alias. Every generated draft is editable by step key now."""
+    from app.routers.onboarding_steps import get_step_draft_text
 
-    Read-only and safe to call repeatedly. Filled values are already in the
-    text — HR is correcting a rendered document, not a template, so there are
-    no placeholders to protect."""
-    _user_id, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    run_row, doc_row, _step = await _load_loi_for_review(
-        run_id=run_id, org_id=org_id, svc=svc
-    )
-    docx_bytes = await _download_loi_docx(doc_row=doc_row, svc=svc)
-
-    try:
-        paragraphs = text_edit.extract_editable_paragraphs(docx_bytes)
-    except text_edit.TextEditError as exc:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)
-        ) from exc
-
-    return LOIDraftTextResponse(
-        revision=run_row.get("loi_draft_revision") or 0,
-        fingerprint=text_edit.draft_fingerprint(docx_bytes),
-        paragraphs=[
-            LOIDraftParagraph(index=p.index, kind=p.kind, text=p.text)
-            for p in paragraphs
-        ],
+    step = await _loi_step(run_id)
+    return await get_step_draft_text(
+        run_id=run_id, step_key=step["step_key"], current_user=current_user
     )
 
 
 @router.post(
     "/runs/{run_id}/loi/edit-text",
-    response_model=LOIEditTextResponse,
+    response_model=EditTextResponse,
 )
 async def edit_loi_draft_text(
     run_id: str,
-    body: LOIEditTextRequest,
+    body: EditTextRequest,
     current_user: dict = Depends(verify_jwt),
-) -> LOIEditTextResponse:
-    """Write HR's edited lines back into the LOIdraft and re-render the PDF.
+) -> EditTextResponse:
+    """Legacy alias for editing the LOI draft in place."""
+    from app.routers.onboarding_steps import edit_step_draft_text
 
-    Each edit's `index` locates a paragraph; its `text` overwrites that
-    paragraph. Paragraphs HR didn't touch are not rewritten at all, so tables,
-    headers, fonts and inline links survive.
-
-    `fingerprint` must match the .docx the lines were read from. A mismatch
-    means the draft moved underneath the editor, and the indices can no longer
-    be trusted — HR is asked to reload rather than have their edits land on the
-    wrong lines."""
-    user_id, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    run_row, doc_row, step = await _load_loi_for_review(
-        run_id=run_id, org_id=org_id, svc=svc
-    )
-    docx_bytes = await _download_loi_docx(doc_row=doc_row, svc=svc)
-
-    if text_edit.draft_fingerprint(docx_bytes) != body.fingerprint:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "This draft changed since you opened the editor. Reload the page "
-            "to pick up the current version, then re-apply your changes.",
-        )
-
-    try:
-        new_docx, changed = text_edit.apply_paragraph_edits(
-            docx_bytes=docx_bytes,
-            edits={e.index: e.text for e in body.edits},
-        )
-    except text_edit.TextEditError as exc:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)
-        ) from exc
-
-    if changed == 0:
-        # Nothing to persist — don't burn a revision number or re-render a PDF
-        # for a save that changed no text.
-        return LOIEditTextResponse(
-            status="unchanged",
-            revision=run_row.get("loi_draft_revision") or 0,
-            changed_count=0,
-            fingerprint=body.fingerprint,
-            preview_url=None,
-        )
-
-    revision = (run_row.get("loi_draft_revision") or 0) + 1
-    preview_url = await _store_loi_revision(
-        org_id=org_id,
+    step = await _loi_step(run_id)
+    return await edit_step_draft_text(
         run_id=run_id,
-        user_id=user_id,
         step_key=step["step_key"],
-        docx_bytes=new_docx,
-        revision=revision,
-        event_type="loi_draft_edited",
-        message=(
-            f"HR edited the LOIdraft in place — {changed} line"
-            f"{'' if changed == 1 else 's'} changed (revision {revision})."
-        ),
-        metadata={
-            "source": "inline_editor",
-            "changed_count": changed,
-            "paragraph_indices": sorted(e.index for e in body.edits),
-            "file_bytes": len(new_docx),
-        },
-        svc=svc,
-    )
-
-    log.info(
-        "onboarding_v2.loi_edit_text org=%s run=%s revision=%d changed=%d",
-        org_id, run_id, revision, changed,
-    )
-    return LOIEditTextResponse(
-        status="ok",
-        revision=revision,
-        changed_count=changed,
-        fingerprint=text_edit.draft_fingerprint(new_docx),
-        preview_url=preview_url,
+        body=body,
+        current_user=current_user,
     )
 
 
 @router.post(
     "/runs/{run_id}/loi/replace-draft",
-    response_model=LOIReplaceDraftResponse,
+    response_model=ReplaceDraftResponse,
 )
 async def replace_loi_draft(
     run_id: str,
     file: UploadFile = File(...),
     current_user: dict = Depends(verify_jwt),
-) -> dict[str, Any]:
-    """HR replaces the agent-rendered LOI.docx with an edited version during
-    the loi_pending_hr_review step. The uploaded .docx is stored as-is — we
-    don't run variable substitution on it (HR has already seen filled values
-    in the original render; their edits are final). We convert it to PDF for
-    the inline preview and stamp the document row + run row.
+) -> ReplaceDraftResponse:
+    """Legacy alias for swapping in a .docx edited in Word."""
+    from app.routers.onboarding_steps import replace_step_draft
 
-    Only valid while the run is parked in loi_pending_hr_review. The
-    signature-request step picks `hr_edited_pdf_path` over the original."""
-    user_id, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    run_row, _doc_row, step = await _load_loi_for_review(
-        run_id=run_id, org_id=org_id, svc=svc
-    )
-
-    body = await file.read()
-    if not body or not body.startswith(b"PK"):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Upload must be a .docx file (PK zip header missing).",
-        )
-    if len(body) > 25 * 1024 * 1024:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, ".docx too large (>25MB)."
-        )
-
-    revision = (run_row.get("loi_draft_revision") or 0) + 1
-    preview_url = await _store_loi_revision(
-        org_id=org_id,
+    step = await _loi_step(run_id)
+    return await replace_step_draft(
         run_id=run_id,
-        user_id=user_id,
         step_key=step["step_key"],
-        docx_bytes=body,
-        revision=revision,
-        event_type="loi_draft_edited",
-        message=f"HR uploaded an edited LOIdraft (revision {revision}).",
-        metadata={"source": "docx_upload", "file_bytes": len(body)},
-        svc=svc,
+        file=file,
+        current_user=current_user,
     )
-    return {"status": "ok", "revision": revision, "preview_url": preview_url}
 
 
 @router.post(
@@ -1054,100 +768,13 @@ async def get_loi_signing_url(
     run_id: str,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
-    """Return HR's signing URL for the LOIenvelope.
+    """Legacy alias for HR's signing link on the LOI envelope."""
+    from app.routers.onboarding_steps import get_step_signing_url
 
-    apps/esign's signing_url is a stable /sign/{token} link minted once at
-    envelope-creation time — this is a pure DB read, no external API call
-    needed (unlike DocuSeal's embedded-session minting)."""
-    user_id, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
-
-    loi_key = (await _loi_step(run_id))["step_key"]
-    env = await asyncio.to_thread(
-        lambda: svc.table("onboarding_signing_envelopes")
-        .select("envelope_id, signers, status")
-        .eq("run_id", run_id)
-        .eq("org_id", org_id)
-        .contains("document_kinds", [loi_key])
-        .order("created_at", desc=True)
-        .limit(1)
-        .maybe_single()
-        .execute()
+    step = await _loi_step(run_id)
+    return await get_step_signing_url(
+        run_id=run_id, step_key=step["step_key"], current_user=current_user
     )
-    if not env or not env.data:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            "No LOIenvelope found for this run.",
-        )
-    if env.data.get("status") in ("completed", "voided", "declined", "expired"):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Envelope is {env.data['status']}; no signing URL available.",
-        )
-
-    hr_signer = next(
-        (
-            s for s in (env.data.get("signers") or [])
-            if isinstance(s, dict) and s.get("role") == "hr"
-        ),
-        None,
-    )
-    if not hr_signer:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "HR signer not found on this envelope.",
-        )
-    if (hr_signer.get("status") or "").lower() == "completed":
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "You've already signed this LOI.",
-        )
-
-    # Self-heal: if the Documenso webhook was missed, reconcile signer
-    # statuses before handing HR a potentially stale signing link.
-    from app.services.integrations.inhouse_sign import (
-        InhouseSignError,
-        reconcile_envelope,
-    )
-
-    try:
-        recon = await reconcile_envelope(env.data["envelope_id"])
-        if recon.get("changed"):
-            # Re-read envelope: reconciliation may have advanced the state.
-            env = await asyncio.to_thread(
-                lambda: svc.table("onboarding_signing_envelopes")
-                .select("envelope_id, signers, status")
-                .eq("envelope_id", env.data["envelope_id"])
-                .maybe_single()
-                .execute()
-            )
-            hr_signer = next(
-                (
-                    s for s in (env.data.get("signers") or [])
-                    if isinstance(s, dict) and s.get("role") == "hr"
-                ),
-                None,
-            )
-            if hr_signer and (hr_signer.get("status") or "").lower() == "completed":
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    "You've already signed this LOI. "
-                    "The page will refresh shortly.",
-                )
-    except InhouseSignError:
-        pass  # best-effort; fall through to return the URL
-
-    if not hr_signer or not hr_signer.get("public_token"):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "This envelope predates the in-house signer and has no link — void and resend.",
-        )
-
-    from app.config import get_settings
-
-    settings = get_settings()
-    signing_url = f"{settings.app_url.rstrip('/')}/sign/{hr_signer['public_token']}"
-    return {"status": "ok", "signing_url": signing_url}
 
 
 # ── HR override: enter references manually if the candidate ghosts ─────────
@@ -1815,27 +1442,10 @@ async def get_loi_docx_url(
     run_id: str,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
-    """Fresh signed URL to the LOI's current .docx (HR-edited if present,
-    else the agent's render). Used by the Download button in the LOIreview
-    panel so HR can pull the file, tweak it in Word, and re-upload."""
-    _user_id, org_id, _ = _require_user(current_user)
-    svc = get_service_client()
+    """Legacy alias for downloading the LOI's current .docx."""
+    from app.routers.onboarding_steps import get_step_docx_url
 
-    loi_key = (await _loi_step(run_id))["step_key"]
-    doc = await asyncio.to_thread(
-        lambda: svc.table("onboarding_documents")
-        .select("storage_path, hr_edited_storage_path")
-        .eq("run_id", run_id)
-        .eq("kind", loi_key)
-        .maybe_single()
-        .execute()
+    step = await _loi_step(run_id)
+    return await get_step_docx_url(
+        run_id=run_id, step_key=step["step_key"], current_user=current_user
     )
-    if not doc or not doc.data:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "LOIdocument not found.")
-    signed = await ob_storage.mint_signed_url(_loi_docx_path(doc.data))
-    if not signed:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "Couldn't mint a download URL. Try again.",
-        )
-    return {"status": "ok", "docx_url": signed}

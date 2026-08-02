@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
- * Edit the LOIdraft as text, in the page.
+ * Edit a generated draft as text, in the page.
  *
  * One textarea per paragraph of the rendered .docx. Saving posts back only the
  * lines that changed, and the backend splices them into the same file — so a
@@ -17,6 +17,9 @@ import { cn } from "@/lib/utils";
  *
  * `index` is the document's own paragraph numbering, not a position in this
  * list: blank paragraphs are omitted but the numbers are not renumbered.
+ *
+ * Addressed by step key, so it opens whichever document that step renders —
+ * the letter of intent, an offer letter, an NDA, anything an org added.
  */
 
 interface DraftParagraph {
@@ -57,7 +60,7 @@ function errorText(body: Record<string, unknown>, fallback: string): string {
   return fallback;
 }
 
-/** Grows to fit its content — LOIlines run from one word to a full clause. */
+/** Grows to fit its content — lines run from one word to a full clause. */
 function AutoTextarea({
   value,
   onChange,
@@ -88,12 +91,18 @@ function AutoTextarea({
   );
 }
 
-export function LOIDraftEditor({
+export function DraftTextEditor({
   runId,
+  stepKey,
+  label,
   onSaved,
   onClose,
 }: {
   runId: string;
+  /** Which step's document to open. */
+  stepKey: string;
+  /** What HR calls this document, for the prompts and the discard warning. */
+  label: string;
   /** Saved a new revision — the caller refreshes the run so the preview and
    *  the "edited (rev n)" badge pick up the new PDF. */
   onSaved: () => Promise<unknown> | void;
@@ -113,7 +122,9 @@ export function LOIDraftEditor({
     setError(null);
     setStale(false);
     try {
-      const res = await fetch(`/api/onboarding/runs/${runId}/loi/draft-text`);
+      const res = await fetch(
+        `/api/onboarding/runs/${runId}/steps/${encodeURIComponent(stepKey)}/draft-text`,
+      );
       const body = await readJson(res);
       if (!res.ok) {
         setError(errorText(body, "Couldn't open the draft for editing."));
@@ -126,7 +137,7 @@ export function LOIDraftEditor({
     } finally {
       setLoading(false);
     }
-  }, [runId]);
+  }, [runId, stepKey]);
 
   useEffect(() => {
     load();
@@ -142,18 +153,21 @@ export function LOIDraftEditor({
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/onboarding/runs/${runId}/loi/edit-text`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fingerprint: draft.fingerprint,
-          edits: changed.map((p) => ({
-            index: p.index,
-            kind: p.kind,
-            text: textOf(p),
-          })),
-        }),
-      });
+      const res = await fetch(
+        `/api/onboarding/runs/${runId}/steps/${encodeURIComponent(stepKey)}/edit-text`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fingerprint: draft.fingerprint,
+            edits: changed.map((p) => ({
+              index: p.index,
+              kind: p.kind,
+              text: textOf(p),
+            })),
+          }),
+        },
+      );
       const body = await readJson(res);
       if (!res.ok) {
         if (res.status === 409) setStale(true);
@@ -185,7 +199,7 @@ export function LOIDraftEditor({
       !confirm(
         `Discard ${changed.length} unsaved change${
           changed.length === 1 ? "" : "s"
-        } to the LOI?`,
+        } to the ${label}?`,
       )
     ) {
       return;

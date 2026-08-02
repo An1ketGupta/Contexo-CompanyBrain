@@ -171,7 +171,6 @@ export default function SignDocumentPage() {
     );
   }
 
-  const documentTitle = formatDocumentKinds(prefill.document_kinds);
   const firstName = prefill.signer_name.split(" ")[0];
 
   if (phase === "completed") {
@@ -180,10 +179,6 @@ export default function SignDocumentPage() {
         icon={<CheckCircle2 className="h-6 w-6 text-success-ink" />}
         title={`That's signed, ${firstName}.`}
       >
-        <p>
-          Your signature on the {documentTitle} has been recorded. A completed
-          copy will be emailed to you once every signer is done.
-        </p>
         <p className="text-xs">You can close this tab.</p>
       </Notice>
     );
@@ -206,47 +201,6 @@ export default function SignDocumentPage() {
 
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h1 className="truncate text-base font-semibold tracking-tight text-foreground">
-              {documentTitle}
-            </h1>
-            <Badge variant="outline" className="shrink-0">
-              {ROLE_LABEL[prefill.role] ?? prefill.role}
-            </Badge>
-          </div>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            Signing as{" "}
-            <span className="font-medium text-foreground">
-              {prefill.signer_name}
-            </span>
-          </p>
-        </div>
-      </div>
-
-      {/* Documenso's signer, embedded on our domain. `host` targets the
-          self-hosted instance; `token` is this recipient's signing token from
-          the esign adapter's prefill. Completion is finalised server-side via
-          the Documenso webhook — the callbacks below only advance this UI.
-
-          The embed forwards className straight to its <iframe> and sets no
-          dimensions of its own, so it collapses to the 300x150 browser default
-          without an explicit size. `h-full` against this flex-1 parent hands it
-          exactly the viewport left over from the header, which keeps the iframe
-          the only scroller on the page.
-
-          `darkModeDisabled` pins the signer to its light theme. Our app follows
-          next-themes while the embed follows the OS, so left alone the two
-          disagree and the document sits in dark chrome on a light page (or the
-          reverse). Pinned light, it reads as paper — which is what the PDF
-          inside it is in every theme. Its palette can't be matched to ours:
-          `cssVars`/`css` are only injected when Documenso's organisation claim
-          has embedSigningWhiteLabel set, so on this instance they are ignored.
-
-          The library registers its postMessage listener once, on first mount,
-          closing over that render's props — so these callbacks must never read
-          component state. Setters and constants only. */}
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-background shadow-sm">
         {embedError ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">

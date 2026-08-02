@@ -89,12 +89,8 @@ export default function SupportTicketsPage() {
         <div>
           <div className="flex items-center gap-2">
             <Inbox className="h-5 w-5 text-muted-foreground" />
-            <h1 className="text-2xl font-extrabold tracking-tight">Support</h1>
+            <h1 className="text-2xl font-extrabold tracking-tight">Support Agent</h1>
           </div>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            Customer emails triaged and drafted against your knowledge base.
-            Review before sending.
-          </p>
         </div>
         <Link
           href="/admin/support/settings"
