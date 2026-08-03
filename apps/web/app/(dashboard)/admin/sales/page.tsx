@@ -315,12 +315,8 @@ export default function SalesLeadsPage() {
         <div>
           <div className="flex items-center gap-2">
             <Target className="h-5 w-5 text-muted-foreground" />
-            <h1 className="text-2xl font-extrabold tracking-tight">Sales</h1>
+            <h1 className="text-2xl font-extrabold tracking-tight">Sales Agent</h1>
           </div>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            Outreach drafted against your knowledge base. Nothing is sent until
-            you approve it.
-          </p>
         </div>
         <Link
           href="/admin/sales/settings"

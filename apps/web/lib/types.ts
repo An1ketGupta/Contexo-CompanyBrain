@@ -459,7 +459,6 @@ export interface SalesSettings {
   org_id: string;
   enabled: boolean;
   mode: SalesTrustMode;
-  sender_user_id: string | null;
   tone: string | null;
   follow_up_delay_days: number;
   max_follow_ups: number;

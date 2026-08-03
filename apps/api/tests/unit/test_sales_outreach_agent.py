@@ -44,7 +44,7 @@ def _db(
     return FakeSupabase({
         "sales_settings": [{
             "org_id": ORG, "enabled": enabled, "mode": mode,
-            "sender_user_id": str(uuid.uuid4()), "tone": None,
+            "tone": None,
             "follow_up_delay_days": 3, "max_follow_ups": 3, "daily_send_cap": 20,
             "escalation_channel_id": None, "escalation_channel_name": None,
         }],
@@ -74,11 +74,7 @@ def harness(monkeypatch):
         sent.append(kwargs)
         return {"message_id": "m1", "thread_id": "t1"}
 
-    async def _fake_resolve_sender(*, org_id, settings):
-        return {"access_token": "tok", "email_address": "rep@us.test"}
-
     monkeypatch.setattr("app.services.agents.sales_outreach_agent.gmail.send_email", _fake_send_email)
-    monkeypatch.setattr(so, "resolve_sender", _fake_resolve_sender)
 
     def _run(kind: str, *, text: str, sources: list[dict], **db_kwargs):
         db = _db(**db_kwargs)

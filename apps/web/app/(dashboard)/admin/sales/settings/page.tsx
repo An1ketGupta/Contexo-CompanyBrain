@@ -12,11 +12,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { SalesSettings, SalesTrustMode } from "@/lib/types";
 
-interface Sender {
-  user_id: string;
-  email_address: string;
-}
-
 const MODES: { value: SalesTrustMode; label: string; description: string }[] = [
   {
     value: "shadow",
@@ -48,11 +43,6 @@ const fetcher = async (url: string) => {
 export default function SalesSettingsPage() {
   const { data, error, isLoading, mutate } = useSWR<SalesSettings>(
     "/api/admin/sales/settings",
-    fetcher,
-    { revalidateOnFocus: false },
-  );
-  const { data: sendersData } = useSWR<{ senders: Sender[] }>(
-    "/api/admin/sales/settings/senders",
     fetcher,
     { revalidateOnFocus: false },
   );
@@ -106,7 +96,6 @@ export default function SalesSettingsPage() {
     );
   }
 
-  const senders = sendersData?.senders ?? [];
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-5 p-6">
@@ -171,39 +160,6 @@ export default function SalesSettingsPage() {
           cold email to a lead, any draft that mentions price or contract terms,
           and any draft nothing in your knowledge base supported.
         </p>
-      </section>
-
-      <section className="rounded-2xl border border-border bg-card p-4">
-        <div className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
-          Sending mailbox
-        </div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Outbound mail goes from a teammate&apos;s own Gmail, so the prospect
-          sees a real person and replies land in that person&apos;s inbox. With
-          none set, drafts can still be reviewed and copied out manually.
-        </p>
-        {senders.length === 0 ? (
-          <p className="mt-2 rounded-xl border border-amber/30 bg-amber-tint px-3 py-2 text-xs text-amber-ink">
-            No mailbox with send permission connected.{" "}
-            <Link href="/settings/integrations" className="underline">
-              Connect Gmail
-            </Link>{" "}
-            and grant send access.
-          </p>
-        ) : (
-          <select
-            value={form.sender_user_id ?? ""}
-            onChange={(e) => save({ sender_user_id: e.target.value || null })}
-            className="mt-2 w-full rounded-md border border-input bg-card px-2.5 py-2 text-sm"
-          >
-            <option value="">None — draft only</option>
-            {senders.map((s) => (
-              <option key={s.user_id} value={s.user_id}>
-                {s.email_address}
-              </option>
-            ))}
-          </select>
-        )}
       </section>
 
       <section className="rounded-2xl border border-border bg-card p-4">

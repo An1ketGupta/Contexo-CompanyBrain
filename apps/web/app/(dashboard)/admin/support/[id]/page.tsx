@@ -38,7 +38,6 @@ interface SupportMessage {
   direction: "inbound" | "outbound";
   author_type: "customer" | "agent_draft" | "human" | "system";
   body: string;
-  sources: { document_id?: string; document_name?: string; excerpt?: string }[];
   confidence: number | null;
   status: string | null;
   sent_via: string | null;
@@ -209,21 +208,6 @@ export default function SupportTicketDetailPage({
           placeholder="No draft generated yet."
         />
 
-        {latestDraft?.sources && latestDraft.sources.length > 0 && (
-          <div className="mt-3">
-            <div className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
-              Based on
-            </div>
-            <ul className="mt-1.5 space-y-1">
-              {latestDraft.sources.slice(0, 6).map((s, i) => (
-                <li key={i} className="text-xs text-muted-foreground">
-                  · {s.document_name ?? "Untitled document"}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -301,15 +285,6 @@ export default function SupportTicketDetailPage({
             Reject
           </button>
         </div>
-
-        <p className="mt-2 text-[11px] text-muted-foreground">
-          Sending requires a connected Gmail mailbox with send permission. Set
-          one under{" "}
-          <Link href="/admin/support/settings" className="underline">
-            Support settings
-          </Link>
-          , or use Copy to send from your own client.
-        </p>
       </section>
 
       {messages.filter((m) => m.direction === "outbound" && m.status?.includes("sent"))

@@ -62,12 +62,17 @@ def agent(monkeypatch):
     """An agent whose HR notification is captured instead of queued."""
     a = OnboardingV2Agent(org_id=ORG, run_id=RUN)
     a.sent: list[dict] = []
+    a.notified: list[dict] = []
 
     async def fake_load_run():
         return dict(RUN_ROW)
 
     async def fake_send_email_event(**kwargs):
         a.sent.append(kwargs)
+
+    async def fake_create_notification(**kwargs):
+        a.notified.append(kwargs)
+        return kwargs
 
     async def fake_log_step(*args, **kwargs):
         return None
@@ -82,25 +87,29 @@ def agent(monkeypatch):
     monkeypatch.setattr(a, "_load_run", fake_load_run)
     monkeypatch.setattr(a, "log_step", fake_log_step)
     monkeypatch.setattr(agent_mod, "send_email_event", fake_send_email_event)
+    monkeypatch.setattr(agent_mod, "create_notification", fake_create_notification)
     monkeypatch.setattr(agent_mod, "get_service_client", lambda: _Client())
     monkeypatch.setattr(agent_mod, "get_settings", lambda: _Settings())
     return a
 
 
 # ── HR review notification ────────────────────────────────────────────────
+# In-app only (no email) — see `_notify_hr_documents_ready` docstring.
 
 
 @pytest.mark.asyncio
-async def test_seeded_loi_step_gets_the_loi_email(agent):
+async def test_seeded_loi_step_gets_the_loi_notification(agent):
     step = _step("loi", document_type_key="letter_of_intent", label="Letter of intent")
 
     await agent._notify_hr_documents_ready([step])
 
-    assert agent.sent[0]["event_type"] == "onboarding_loi_ready"
+    assert agent.sent == []
+    assert agent.notified[0]["type"] == "onboarding_loi_ready"
+    assert agent.notified[0]["user_id"] == HR_USER
 
 
 @pytest.mark.asyncio
-async def test_org_recreated_loi_step_still_gets_the_loi_email(agent):
+async def test_org_recreated_loi_step_still_gets_the_loi_notification(agent):
     """The reported bug: an org-created LOI step keyed `letter_of_intent`."""
     step = _step(
         "letter_of_intent",
@@ -110,11 +119,11 @@ async def test_org_recreated_loi_step_still_gets_the_loi_email(agent):
 
     await agent._notify_hr_documents_ready([step])
 
-    assert agent.sent[0]["event_type"] == "onboarding_loi_ready"
+    assert agent.notified[0]["type"] == "onboarding_loi_ready"
 
 
 @pytest.mark.asyncio
-async def test_seeded_appointment_bundle_gets_the_bundle_email(agent):
+async def test_seeded_appointment_bundle_gets_the_bundle_notification(agent):
     bundle = [
         _step(
             "appointment_letter",
@@ -134,11 +143,11 @@ async def test_seeded_appointment_bundle_gets_the_bundle_email(agent):
 
     await agent._notify_hr_documents_ready(bundle)
 
-    assert agent.sent[0]["event_type"] == "onboarding_offer_bundle_ready"
+    assert agent.notified[0]["type"] == "onboarding_offer_bundle_ready"
 
 
 @pytest.mark.asyncio
-async def test_org_composed_step_gets_the_generic_email_naming_its_documents(agent):
+async def test_org_composed_step_gets_the_generic_notification_naming_its_documents(agent):
     bundle = [
         _step(
             "joining_documents",
@@ -158,10 +167,10 @@ async def test_org_composed_step_gets_the_generic_email_naming_its_documents(age
 
     await agent._notify_hr_documents_ready(bundle)
 
-    sent = agent.sent[0]
-    assert sent["event_type"] == "onboarding_step_review_ready"
-    assert sent["data"]["step_label"] == "Joining Documents"
-    assert sent["data"]["document_labels"] == ["Joining kit", "Bank mandate"]
+    notified = agent.notified[0]
+    assert notified["type"] == "onboarding_step_review_ready"
+    assert notified["metadata"]["step_label"] == "Joining Documents"
+    assert notified["body"] == "Joining kit, Bank mandate"
 
 
 # ── Candidate delivery notification ───────────────────────────────────────

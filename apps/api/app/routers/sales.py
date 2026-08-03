@@ -4,7 +4,6 @@
   POST /admin/sales/import                     — bulk-import leads
   GET  /admin/sales/settings                   — org trust-mode config
   PUT  /admin/sales/settings                   — update org trust-mode config
-  GET  /admin/sales/settings/senders           — connectable Gmail mailboxes
   GET  /admin/sales/{lead_id}                  — lead + message thread
   POST /admin/sales/{lead_id}/send             — approve (possibly edited) draft
   POST /admin/sales/{lead_id}/reject           — reject a draft
@@ -104,7 +103,6 @@ class LogReplyRequest(BaseModel):
 class SalesSettingsUpdate(BaseModel):
     enabled: bool | None = None
     mode: Literal["shadow", "assisted", "autonomous"] | None = None
-    sender_user_id: str | None = None
     tone: str | None = Field(default=None, max_length=1000)
     follow_up_delay_days: int | None = Field(default=None, ge=1, le=60)
     max_follow_ups: int | None = Field(default=None, ge=0, le=10)
@@ -255,25 +253,6 @@ async def update_settings(
     return (result.data or [{}])[0]
 
 
-@router.get("/settings/senders")
-async def list_connectable_senders(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
-    """Org members with a Gmail connection that has send permission.
-
-    Outbound sales mail always comes from a named rep's own mailbox — there is
-    no shared sending identity — so this list is what makes sending possible
-    at all. An org with none of these is draft-only.
-    """
-    org_id, client = await _require_admin(current_user)
-    rows = await asyncio.to_thread(
-        lambda: client.table("gmail_integrations")
-        .select("user_id, email_address, scopes").eq("org_id", org_id).execute()
-    )
-    senders = [
-        {"user_id": r["user_id"], "email_address": r["email_address"]}
-        for r in (rows.data or [])
-        if gmail.has_send_scope(r.get("scopes"))
-    ]
-    return {"senders": senders}
 
 
 # ── Lead detail ──────────────────────────────────────────────────────────────
@@ -311,71 +290,14 @@ async def send_message(
 ) -> dict[str, Any]:
     """Approve and send a draft, with any edits the reviewer made.
 
-    This is the normal path for outbound mail. 409s rather than sending if the
-    org has no rep mailbox connected — we never fabricate a From address on a
-    domain we don't control.
+    Sending is currently disabled — no sending identity is configured.
+    Drafts can still be reviewed and copied out manually.
     """
-    org_id, client = await _require_admin(current_user)
-    lead = await _load_lead_or_404(client, org_id, lead_id)
-
-    settings = await so.load_settings(client, org_id)
-    creds = await so.resolve_sender(org_id=org_id, settings=settings)
-    if not creds:
-        raise HTTPException(
-            status_code=409,
-            detail="No sending mailbox connected. Pick a rep with Gmail connected "
-                   "under Sales settings, then try again.",
-        )
-
-    latest_draft = await asyncio.to_thread(
-        lambda: client.table("sales_messages")
-        .select("id, subject, body")
-        .eq("lead_id", lead_id).eq("author_type", "agent_draft").eq("status", "draft")
-        .order("created_at", desc=True).limit(1).execute()
+    raise HTTPException(
+        status_code=409,
+        detail="Sending is not currently available. Drafts can still be "
+               "reviewed and copied out manually.",
     )
-    draft = (latest_draft.data or [{}])[0] if latest_draft and latest_draft.data else {}
-    subject = payload.subject or draft.get("subject") or f"Quick question, {lead['company_name']}"
-
-    try:
-        sent = await gmail.send_email(
-            access_token=creds["access_token"], sender=creds["email_address"],
-            to=lead["contact_email"], subject=subject, body=payload.body,
-        )
-    except PermissionError as exc:
-        raise HTTPException(status_code=409, detail=f"Gmail send failed: {exc}") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Gmail send failed: {exc}") from exc
-
-    message_status = "sent" if draft.get("body") == payload.body else "edited_and_sent"
-
-    if draft.get("id"):
-        await asyncio.to_thread(
-            lambda: client.table("sales_messages").update({
-                "status": message_status, "sent_via": "gmail",
-                "subject": subject, "body": payload.body,
-                "provider_message_id": sent.get("message_id"),
-            }).eq("id", draft["id"]).execute()
-        )
-    else:
-        # Reviewer wrote from scratch with no pending draft — still a real
-        # outbound message that belongs on the thread.
-        await asyncio.to_thread(
-            lambda: client.table("sales_messages").insert({
-                "lead_id": lead_id, "org_id": org_id,
-                "direction": "outbound", "author_type": "human",
-                "subject": subject, "body": payload.body,
-                "status": "sent", "sent_via": "gmail",
-                "provider_message_id": sent.get("message_id"),
-            }).execute()
-        )
-
-    await asyncio.to_thread(
-        lambda: client.table("sales_leads").update({
-            "follow_up_count": int(lead.get("follow_up_count") or 0) + 1,
-        }).eq("id", lead_id).execute()
-    )
-    await so.mark_contacted(client, lead_id=lead_id, lead=lead, settings=settings)
-    return {"ok": True, "status": message_status}
 
 
 @router.post("/{lead_id}/reject")

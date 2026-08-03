@@ -29,9 +29,9 @@ Steps:
                       non-configurable overrides — cold first-touch, anything
                       mentioning price or contract terms, and ungrounded
                       drafts never send themselves, in any mode.
-  5. send             Only reached by an autonomous-eligible follow-up. Sends
-                      from the rep named in sales_settings.sender_user_id;
-                      orgs with no connected mailbox are draft-only.
+  5. send             Only reached by an autonomous-eligible follow-up.
+                       Currently draft-only — no sending identity is
+                       configured.
 """
 from __future__ import annotations
 
@@ -444,36 +444,7 @@ class SalesOutreachAgent(BaseAgent):
         self, svc: Any, *, lead: dict[str, Any], settings: dict[str, Any],
         draft_message_id: str, subject: str, body: str,
     ) -> bool:
-        creds = await so.resolve_sender(org_id=self.org_id, settings=settings)
-        if not creds:
-            return False
-        try:
-            sent = await gmail.send_email(
-                access_token=creds["access_token"],
-                sender=creds["email_address"],
-                to=lead["contact_email"],
-                subject=subject,
-                body=body,
-            )
-        except Exception as exc:
-            log.warning("sales_autonomous_send_failed org=%s err=%s", self.org_id, exc)
-            return False
+        # Sending is disabled — no sending identity is configured.
+        # Drafts are still created and can be reviewed manually.
+        return False
 
-        await asyncio.to_thread(
-            lambda: svc.table("sales_messages").update({
-                "status": "sent", "sent_via": "gmail",
-                "provider_message_id": sent.get("message_id"),
-            }).eq("id", draft_message_id).execute()
-        )
-        await asyncio.to_thread(
-            lambda: svc.table("sales_leads").update({
-                "follow_up_count": int(lead.get("follow_up_count") or 0) + 1,
-            }).eq("id", self.lead_id).execute()
-        )
-        await so.mark_contacted(svc, lead_id=self.lead_id, lead=lead, settings=settings)
-        log.info(
-            "sales_autonomous_send",
-            org_id=self.org_id, lead_id=self.lead_id, run_id=self.run_id,
-            sent_at=datetime.now(UTC).isoformat(),
-        )
-        return True

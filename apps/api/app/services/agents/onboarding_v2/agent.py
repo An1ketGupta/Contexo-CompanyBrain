@@ -60,6 +60,7 @@ from app.services.agents.onboarding_v2.pre_join import ensure_pre_join_user
 from app.services.documents import templates as doc_templates
 from app.services.documents.generation import service as doc_generation
 from app.services.email import send_email_event
+from app.services.notifications import create_notification
 
 log = get_logger(__name__)
 
@@ -1501,51 +1502,57 @@ class OnboardingV2Agent(BaseAgent):
         }
 
     async def _notify_hr_documents_ready(self, bundle: list[dict[str, Any]]) -> None:
-        """Tell the HR user who started the run that a draft needs approving."""
+        """Tell the HR user who started the run that a draft needs approving.
+
+        In-app only, not email: a draft is generated far too often per run
+        for an inbox notification to stay useful, and HR is expected to be
+        in the dashboard reviewing the run anyway. `_notify_hr_approval_needed`
+        (candidate acted, HR must check) is a separate, much rarer signal and
+        still goes out by email.
+        """
         lead = bundle[0]
         run = await self._load_run()
         triggered_by = run.get("triggered_by_user_id")
-        hr_email = await self._hr_email()
-        if not hr_email:
-            await self.log_step("notify_hr", "skipped", {"reason": "no_hr_email"})
+        if not triggered_by:
+            await self.log_step("notify_hr", "skipped", {"reason": "no_hr_user"})
             return
 
-        settings = get_settings()
+        step_label = lead.get("bundle_label") or lead.get("label") or lead["step_key"]
         # Bespoke copy is earned by what the step renders, not what it is
-        # called: an org that re-created the LOI step still gets the LOI email,
-        # which carries the CTC and start date and is what makes it reviewable
-        # at a glance. Everything an org composed itself gets the generic
-        # notice, which names their step and lists its documents — telling HR
-        # "the Appointment Letter and NDA are ready" about a step they named
-        # something else is worse than saying nothing.
-        event_type = "onboarding_step_review_ready"
+        # called: an org that re-created the LOI step still gets the LOI
+        # copy, which carries the CTC and start date and is what makes it
+        # reviewable at a glance. Everything an org composed itself gets the
+        # generic notice, which names their step and lists its documents —
+        # telling HR "the Appointment Letter and NDA are ready" about a step
+        # they named something else is worse than saying nothing.
         if self._step_type_key(lead) == ob_catalog.DOCUMENT_TYPE_LOI:
-            event_type = "onboarding_loi_ready"
+            notif_type = "onboarding_loi_ready"
+            title = f"LOI ready to sign — {run['candidate_name']}"
+            body = f"{run['role_title']}, CTC {_format_ctc(run)}, starts {run['start_date']}."
         elif lead.get("bundle_key") == ob_catalog.BUNDLE_APPOINTMENT:
-            event_type = "onboarding_offer_bundle_ready"
+            notif_type = "onboarding_offer_bundle_ready"
+            title = f"Appointment letter + NDA ready — {run['candidate_name']}"
+            body = f"{run['role_title']} — waiting for your approval."
+        else:
+            notif_type = "onboarding_step_review_ready"
+            title = f"{step_label} ready to review — {run['candidate_name']}"
+            document_labels = [m.get("label") or m["step_key"] for m in bundle]
+            body = ", ".join(document_labels) if document_labels else None
 
         try:
-            await send_email_event(
-                event_type=event_type,
-                to=hr_email,
-                user_id=triggered_by,
+            await create_notification(
                 org_id=self.org_id,
-                dedupe_key=f"review-{self.onboarding_run_id}-{lead['step_key']}",
-                data={
-                    "candidate_name": run["candidate_name"],
-                    "role_title": run["role_title"],
-                    "ctc": _format_ctc(run),
-                    "start_date": str(run["start_date"]),
-                    "loi_signed_url": None,
-                    "step_label": (
-                        lead.get("bundle_label") or lead.get("label") or lead["step_key"]
-                    ),
-                    "document_labels": [
-                        m.get("label") or m["step_key"] for m in bundle
-                    ],
-                    "app_url": settings.app_url.rstrip("/"),
+                user_id=triggered_by,
+                type=notif_type,
+                title=title,
+                body=body,
+                metadata={
                     "run_id": self.onboarding_run_id,
+                    "step_key": lead["step_key"],
+                    "step_label": step_label,
                 },
+                link_url=f"/onboarding/{self.onboarding_run_id}",
+                dedupe_key=f"review-{self.onboarding_run_id}-{lead['step_key']}",
             )
             await self.log_step("notify_hr", "completed")
         except Exception as exc:  # noqa: BLE001

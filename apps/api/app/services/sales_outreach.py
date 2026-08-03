@@ -22,7 +22,6 @@ log = get_logger(__name__)
 DEFAULT_SETTINGS: dict[str, Any] = {
     "enabled": False,
     "mode": "assisted",
-    "sender_user_id": None,
     "tone": None,
     "follow_up_delay_days": 3,
     "max_follow_ups": 3,
@@ -89,22 +88,6 @@ async def load_settings(client: Any, org_id: str) -> dict[str, Any]:
     return {"org_id": org_id, **DEFAULT_SETTINGS}
 
 
-async def resolve_sender(*, org_id: str, settings: dict[str, Any]) -> dict[str, Any] | None:
-    """Credentials for the From address, or None if the org can't send.
-
-    Unlike support — which can reply from a shared support mailbox — outbound
-    sales mail always comes from a named rep's own Gmail. There is no org-level
-    sending identity to fall back on, so an org with no `sender_user_id` (or
-    one whose Gmail grant lost send scope) is draft-only by design rather than
-    by failure.
-    """
-    sender_user_id = settings.get("sender_user_id")
-    if not sender_user_id:
-        return None
-    creds = await gmail.get_user_credentials(org_id=org_id, user_id=sender_user_id)
-    if creds and gmail.has_send_scope(creds.get("scopes")):
-        return creds
-    return None
 
 
 def next_follow_up_at(settings: dict[str, Any], *, now: datetime | None = None) -> str:

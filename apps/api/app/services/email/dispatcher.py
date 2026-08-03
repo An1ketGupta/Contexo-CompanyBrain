@@ -33,13 +33,10 @@ EventType = Literal[
     "weekly_briefing",
     "recruiting_published",
     # ── Onboarding v2 ─────────────────────────────────────────────────────
-    "onboarding_loi_ready",            # HR: LOIgenerated, please sign
     "onboarding_loi_to_candidate",     # Candidate: signed LOIfrom HR
     "onboarding_bgv_request",          # Reference: please verify candidate
     "onboarding_bgv_reminder",         # Reference: gentle nudge
     "onboarding_candidate_refs_reminder",  # Candidate: please submit refs
-    "onboarding_offer_bundle_ready",   # HR: AL + NDA ready for review
-    "onboarding_step_review_ready",    # HR: an org-composed step's docs need approving
     "onboarding_offer_to_candidate",   # Candidate: appointment letter + NDA
     "onboarding_policies_pending",     # Candidate: please acknowledge policies
     "onboarding_induction_ready",      # Candidate: your induction document

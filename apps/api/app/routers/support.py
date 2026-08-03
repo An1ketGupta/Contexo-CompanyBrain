@@ -7,7 +7,6 @@
   POST /admin/support/{ticket_id}/reject        — mark for manual handling
   GET  /admin/support/settings                  — org trust-mode config
   PUT  /admin/support/settings                  — update org trust-mode config
-  GET  /admin/support/settings/senders          — connectable Gmail mailboxes
 
 All reads/writes go through the user-scoped client (`get_user_client`), never
 `get_service_client`, so Postgres RLS — not this router — is what actually
@@ -71,7 +70,6 @@ class SupportSettingsUpdate(BaseModel):
     enabled: bool | None = None
     mode: Literal["shadow", "assisted", "autonomous"] | None = None
     autonomous_categories: list[str] | None = None
-    sender_user_id: str | None = None
     tone: str | None = None
     escalation_channel_id: str | None = None
     escalation_channel_name: str | None = None
@@ -128,7 +126,7 @@ async def get_settings(current_user: dict = Depends(verify_jwt)) -> dict[str, An
         return row.data
     return {
         "org_id": org_id, "enabled": False, "mode": "assisted",
-        "autonomous_categories": [], "sender_user_id": None, "tone": None,
+        "autonomous_categories": [], "tone": None,
         "escalation_channel_id": None, "escalation_channel_name": None,
     }
 
@@ -161,27 +159,6 @@ async def update_settings(
     return (result.data or [{}])[0]
 
 
-@router.get("/settings/senders")
-async def list_connectable_senders(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]:
-    """Org members with a Gmail connection that has send permission —
-    candidates for support_settings.sender_user_id.
-
-    This is the fallback sender, used only when the org hasn't connected a
-    support mailbox. Replies then come from a person's own address rather than
-    the address the customer wrote to.
-    """
-    org_id, client = await _require_admin(current_user)
-    rows = await asyncio.to_thread(
-        lambda: client.table("gmail_integrations")
-        .select("user_id, email_address, scopes").eq("org_id", org_id).execute()
-    )
-    senders = [
-        {"user_id": r["user_id"], "email_address": r["email_address"]}
-        for r in (rows.data or [])
-        if gmail.has_send_scope(r.get("scopes"))
-    ]
-    return {"senders": senders}
-
 
 # ── Ticket detail ────────────────────────────────────────────────────────────
 
@@ -201,7 +178,11 @@ async def get_ticket(
 
     messages = await asyncio.to_thread(
         lambda: client.table("support_messages")
-        .select("*").eq("ticket_id", ticket_id).order("created_at").execute()
+        .select(
+            "id, ticket_id, org_id, direction, author_type, body, confidence, "
+            "status, sent_via, provider_message_id, created_at",
+        )
+        .eq("ticket_id", ticket_id).order("created_at").execute()
     )
     return {"ticket": ticket.data, "messages": messages.data or []}
 
@@ -262,10 +243,9 @@ async def send_reply(
 ) -> dict[str, Any]:
     """Sends a (possibly rep-edited) reply.
 
-    Prefers the org's support mailbox so the reply comes from the address the
-    customer wrote to; falls back to support_settings.sender_user_id for orgs
-    using the forwarding address instead. With neither, this 409s rather than
-    silently spoofing a From header on a domain we don't control.
+    Sends from the org's support mailbox so the reply comes from the address the
+    customer wrote to. 409s if no mailbox is connected rather than silently
+    spoofing a From header on a domain we don't control.
     """
     org_id, client = await _require_admin(current_user)
 
@@ -286,28 +266,11 @@ async def send_reply(
         )
 
     if not creds:
-        settings = await asyncio.to_thread(
-            lambda: client.table("support_settings")
-            .select("sender_user_id").eq("org_id", org_id).maybe_single().execute()
+        raise HTTPException(
+            status_code=409,
+            detail="No support mailbox connected. Connect one under Support "
+                   "settings, then try again.",
         )
-        sender_user_id = (
-            (settings.data or {}).get("sender_user_id")
-            if settings and settings.data
-            else None
-        )
-        if not sender_user_id:
-            raise HTTPException(
-                status_code=409,
-                detail="No support mailbox connected. Connect one under Support "
-                       "settings, then try again.",
-            )
-        creds = await gmail.get_user_credentials(org_id=org_id, user_id=sender_user_id)
-        if not creds or not gmail.has_send_scope(creds.get("scopes")):
-            raise HTTPException(
-                status_code=409,
-                detail="The fallback sending mailbox no longer has send permission. "
-                       "Reconnect Gmail under Settings → Integrations.",
-            )
 
     t = ticket.data
     subject = payload.subject or (

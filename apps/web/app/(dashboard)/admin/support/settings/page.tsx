@@ -15,15 +15,9 @@ interface SupportSettings {
   enabled: boolean;
   mode: "shadow" | "assisted" | "autonomous";
   autonomous_categories: string[];
-  sender_user_id: string | null;
   tone: string | null;
   escalation_channel_id: string | null;
   escalation_channel_name: string | null;
-}
-
-interface Sender {
-  user_id: string;
-  email_address: string;
 }
 
 interface SupportMailbox {
@@ -83,11 +77,6 @@ const fetcher = async (url: string) => {
 export default function SupportSettingsPage() {
   const { data, error, isLoading, mutate } = useSWR<SupportSettings>(
     "/api/admin/support/settings",
-    fetcher,
-    { revalidateOnFocus: false },
-  );
-  const { data: sendersData } = useSWR<{ senders: Sender[] }>(
-    "/api/admin/support/settings/senders",
     fetcher,
     { revalidateOnFocus: false },
   );
@@ -164,7 +153,6 @@ export default function SupportSettingsPage() {
     );
   }
 
-  const senders = sendersData?.senders ?? [];
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-5 p-6">
@@ -178,19 +166,12 @@ export default function SupportSettingsPage() {
         <h1 className="mt-2 text-2xl font-extrabold tracking-tight">
           Support settings
         </h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Controls how much the support agent is allowed to do on its own.
-        </p>
       </div>
 
       <section className="rounded-2xl border border-border bg-card p-4">
         <label className="flex items-start justify-between gap-4">
           <div>
             <div className="text-sm font-bold">Enable the support agent</div>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              When off, the support inbox isn&apos;t polled and no tickets or
-              drafts are created.
-            </p>
           </div>
           <input
             type="checkbox"
@@ -263,7 +244,7 @@ export default function SupportSettingsPage() {
           Support inbox
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          Connect your support email (Eg: support@yourcompany.com). The agent reads every email that arrives and sends replies from the same address to keep conversations in one thread. Use a dedicated support inbox instead of a personal email.
+          Connect your support email (Eg: support@yourcompany.com).
         </p>
 
         {mailbox && !mailbox.available ? (
@@ -277,11 +258,6 @@ export default function SupportSettingsPage() {
               <div className="min-w-0">
                 <div className="truncate text-sm font-bold">
                   {mailbox.email_address}
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  {mailbox.last_polled_at
-                    ? `Last checked ${new Date(mailbox.last_polled_at).toLocaleString()}`
-                    : "Not polled yet"}
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -377,43 +353,10 @@ export default function SupportSettingsPage() {
 
       <section className="rounded-2xl border border-border bg-card p-4">
         <div className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
-          Fallback sender
-        </div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {mailbox?.connected
-            ? "Not in use — replies go out from the support inbox above. This only applies if that inbox is disconnected."
-            : "Without a support inbox, replies go out from a teammate's own Gmail. The customer sees their address, and follow-ups land in that person's inbox rather than the queue."}
-        </p>
-        {senders.length === 0 ? (
-          <p className="mt-2 rounded-xl border border-amber/30 bg-amber-tint px-3 py-2 text-xs text-amber-ink">
-            No mailbox with send permission connected.{" "}
-            <Link href="/settings/integrations" className="underline">
-              Connect Gmail
-            </Link>{" "}
-            and grant send access.
-          </p>
-        ) : (
-          <select
-            value={form.sender_user_id ?? ""}
-            onChange={(e) => save({ sender_user_id: e.target.value || null })}
-            className="mt-2 w-full rounded-md border border-input bg-card px-2.5 py-2 text-sm"
-          >
-            <option value="">None — draft only</option>
-            {senders.map((s) => (
-              <option key={s.user_id} value={s.user_id}>
-                {s.email_address}
-              </option>
-            ))}
-          </select>
-        )}
-      </section>
-
-      <section className="rounded-2xl border border-border bg-card p-4">
-        <div className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
           Tone
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          Optional. How replies should sound, plus any sign-off you want used.
+          How replies should sound.
         </p>
         <Textarea
           defaultValue={form.tone ?? ""}

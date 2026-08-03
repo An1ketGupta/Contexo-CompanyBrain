@@ -88,11 +88,6 @@ import {
   type RecruitingPublishedEmailProps,
 } from "@/emails/recruiting-published";
 import {
-  OnboardingLOIReadyEmail,
-  onboardingLOIReadySubject,
-  type OnboardingLOIReadyEmailProps,
-} from "@/emails/onboarding-loi-ready";
-import {
   OnboardingLOIToCandidateEmail,
   onboardingLOIToCandidateSubject,
   type OnboardingLOIToCandidateEmailProps,
@@ -137,16 +132,6 @@ import {
   onboardingDocumentsSentSubject,
   type OnboardingDocumentsSentEmailProps,
 } from "@/emails/onboarding-documents-sent";
-import {
-  OnboardingOfferBundleReadyEmail,
-  onboardingOfferBundleReadySubject,
-  type OnboardingOfferBundleReadyEmailProps,
-} from "@/emails/onboarding-offer-bundle-ready";
-import {
-  OnboardingStepReviewReadyEmail,
-  onboardingStepReviewReadySubject,
-  type OnboardingStepReviewReadyEmailProps,
-} from "@/emails/onboarding-step-review-ready";
 import {
   OnboardingOfferToCandidateEmail,
   onboardingOfferToCandidateSubject,
@@ -258,10 +243,6 @@ const TEMPLATES = {
     Component: RecruitingPublishedEmail,
     subject: recruitingPublishedSubject,
   } satisfies Template<RecruitingPublishedEmailProps>,
-  onboarding_loi_ready: {
-    Component: OnboardingLOIReadyEmail,
-    subject: onboardingLOIReadySubject,
-  } satisfies Template<OnboardingLOIReadyEmailProps>,
   onboarding_loi_to_candidate: {
     Component: OnboardingLOIToCandidateEmail,
     subject: onboardingLOIToCandidateSubject,
@@ -278,14 +259,6 @@ const TEMPLATES = {
     Component: OnboardingCandidateRefsReminderEmail,
     subject: onboardingCandidateRefsReminderSubject,
   } satisfies Template<OnboardingCandidateRefsReminderEmailProps>,
-  onboarding_offer_bundle_ready: {
-    Component: OnboardingOfferBundleReadyEmail,
-    subject: onboardingOfferBundleReadySubject,
-  } satisfies Template<OnboardingOfferBundleReadyEmailProps>,
-  onboarding_step_review_ready: {
-    Component: OnboardingStepReviewReadyEmail,
-    subject: onboardingStepReviewReadySubject,
-  } satisfies Template<OnboardingStepReviewReadyEmailProps>,
   onboarding_offer_to_candidate: {
     Component: OnboardingOfferToCandidateEmail,
     subject: onboardingOfferToCandidateSubject,

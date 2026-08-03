@@ -24,13 +24,10 @@ model. Steps:
                               negative sentiment and zero sources always
                               escalate to a human, regardless of mode.
   6. send                     Only reached for autonomous-eligible replies.
-                              Sends from the org's support mailbox when one is
-                              connected (so the reply comes from the address
-                              the customer wrote to), otherwise from
-                              support_settings.sender_user_id. Orgs with
-                              neither get a draft-only ticket — no other
-                              channel is used, to avoid spoofing a domain we
-                              don't control.
+                              Sends from the org's support mailbox (so the
+                              reply comes from the address the customer wrote
+                              to). Orgs with no connected mailbox get a
+                              draft-only ticket.
 """
 from __future__ import annotations
 
@@ -172,7 +169,7 @@ class CustomerSupportAgent(BaseAgent):
         draft_message_id = await self._insert_message(
             svc, ticket_id=ticket_id, direction="outbound",
             author_type="agent_draft", body=result.text,
-            sources=result.sources, confidence=confidence, status="draft",
+            confidence=confidence, status="draft",
         )
 
         # ── Step 5: route ─────────────────────────────────────────────────
@@ -247,8 +244,7 @@ class CustomerSupportAgent(BaseAgent):
 
     async def _insert_message(
         self, svc: Any, *, ticket_id: str, direction: str, author_type: str,
-        body: str, sources: list[dict] | None = None,
-        confidence: float | None = None, status: str | None = None,
+        body: str, confidence: float | None = None, status: str | None = None,
     ) -> str:
         row = {
             "ticket_id": ticket_id,
@@ -256,7 +252,6 @@ class CustomerSupportAgent(BaseAgent):
             "direction": direction,
             "author_type": author_type,
             "body": body,
-            "sources": sources or [],
         }
         if confidence is not None:
             row["confidence"] = confidence
@@ -361,22 +356,11 @@ class CustomerSupportAgent(BaseAgent):
     async def _resolve_sender(self, settings: dict[str, Any]) -> dict[str, Any] | None:
         """Credentials for the reply's From address.
 
-        The org's support mailbox wins: replying from the address the customer
-        wrote to keeps the thread intact and keeps their response coming back
-        into the polled inbox. `sender_user_id` is the fallback for orgs using
-        the forwarding address instead of a connected mailbox — replies then
-        come from a person, and follow-ups land in that person's inbox.
+        Sends from the org's support mailbox so the reply comes from the
+        address the customer wrote to, keeping the thread intact.
+        Returns None (draft-only) if no mailbox is connected.
         """
         creds = await support_mailbox.get_credentials(org_id=self.org_id)
-        if creds and gmail.has_send_scope(creds.get("scopes")):
-            return creds
-
-        sender_user_id = settings.get("sender_user_id")
-        if not sender_user_id:
-            return None
-        creds = await gmail.get_user_credentials(
-            org_id=self.org_id, user_id=sender_user_id
-        )
         if creds and gmail.has_send_scope(creds.get("scopes")):
             return creds
         return None
