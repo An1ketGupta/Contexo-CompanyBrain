@@ -35,8 +35,8 @@ interface Ticket {
 
 interface SupportMessage {
   id: string;
-  direction: "inbound" | "outbound";
-  author_type: "customer" | "agent_draft" | "human" | "system";
+  direction: "inbound" | "outbound" | "internal";
+  author_type: "customer" | "agent_draft" | "human" | "system" | "maintainer_note";
   body: string;
   confidence: number | null;
   status: string | null;
@@ -78,18 +78,28 @@ export default function SupportTicketDetailPage({
   const { data, error, isLoading, mutate } = useSWR<TicketDetail>(
     `/api/admin/support/${id}`,
     fetcher,
-    { revalidateOnFocus: false },
+    {
+      revalidateOnFocus: false,
+      // Drafting after an investigation submit happens async (Inngest), so
+      // poll while we're waiting on that to land rather than requiring a
+      // manual refresh.
+      refreshInterval: (latest) =>
+        latest?.ticket.status === "needs_investigation" ? 5000 : 0,
+    },
   );
 
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [investigationNote, setInvestigationNote] = useState("");
 
   const messages = data?.messages ?? [];
   const latestDraft = [...messages]
     .reverse()
     .find((m) => m.author_type === "agent_draft");
   const inbound = messages.find((m) => m.direction === "inbound");
+  const investigationNotes = messages.filter((m) => m.author_type === "maintainer_note");
+  const needsInvestigation = data?.ticket.status === "needs_investigation";
 
   // Seed the editor from the latest draft, but never clobber in-progress edits
   // once the rep has started typing.
@@ -181,6 +191,51 @@ export default function SupportTicketDetailPage({
         </p>
       </section>
 
+      {needsInvestigation && (
+        <section className="rounded-2xl border border-amber/30 bg-amber-tint p-4">
+          <div className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-amber-ink">
+            Needs investigation
+          </div>
+          <p className="mt-1 text-xs text-amber-ink">
+            This looks like it needs account-specific work before a reply can
+            be written — the agent didn&apos;t draft anything. Do the work,
+            then describe your findings below and it&apos;ll draft a reply
+            from them.
+          </p>
+          <Textarea
+            value={investigationNote}
+            onChange={(e) => setInvestigationNote(e.target.value)}
+            rows={6}
+            className="mt-3 text-sm"
+            placeholder="What did you find? e.g. 'Checked their account — they were double-charged on the March 3 invoice due to a failed retry. Refund the duplicate charge and apologize.'"
+          />
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              disabled={busy !== null || !investigationNote.trim()}
+              onClick={() =>
+                run("investigate", async () => {
+                  await postAction(`/api/admin/support/${id}/investigate`, {
+                    prompt: investigationNote,
+                  });
+                  setInvestigationNote("");
+                  toast.success("Drafting a reply from your notes…");
+                })
+              }
+              className="inline-flex items-center gap-1.5 rounded-full bg-brand px-3.5 py-1.5 text-xs font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {busy === "investigate" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Send className="h-3.5 w-3.5" />
+              )}
+              Submit findings &amp; draft reply
+            </button>
+          </div>
+        </section>
+      )}
+
+      {!needsInvestigation && (
       <section className="rounded-2xl border border-border bg-card p-4">
         <div className="flex items-center justify-between gap-3">
           <div className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
@@ -286,6 +341,25 @@ export default function SupportTicketDetailPage({
           </button>
         </div>
       </section>
+      )}
+
+      {investigationNotes.length > 0 && (
+        <section className="rounded-2xl border border-border bg-card p-4">
+          <div className="font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+            Investigation notes
+          </div>
+          <ul className="mt-2 space-y-3">
+            {investigationNotes.map((m) => (
+              <li key={m.id} className="border-t border-border pt-2 first:border-0 first:pt-0">
+                <div className="text-[11px] text-muted-foreground">
+                  {formatAbsolute(m.created_at)}
+                </div>
+                <p className="mt-1 whitespace-pre-wrap text-sm">{m.body}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {messages.filter((m) => m.direction === "outbound" && m.status?.includes("sent"))
         .length > 0 && (

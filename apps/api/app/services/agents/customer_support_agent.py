@@ -12,10 +12,21 @@ model. Steps:
                               writes back. Skips entirely (no ticket) if
                               the org hasn't enabled the feature.
   2. triage                  One structured LLM call -> sub_category,
-                              priority, sentiment.
-  3. draft_response           `execute_task_blocking` — same bounded,
+                              priority, sentiment, and whether answering
+                              requires a maintainer to actually go check
+                              something (account state, a bug, a charge)
+                              before any reply can be written.
+  3. draft_response           Only for tickets triage decided are
+                              answerable from the knowledge base alone.
+                              `execute_task_blocking` — same bounded,
                               multi-round hybrid-search tool loop chat
-                              uses. No bespoke retrieval code.
+                              uses. No bespoke retrieval code. Tickets
+                              needing investigation skip this step
+                              entirely (see needs_investigation below) —
+                              the KB can't answer what it was never told,
+                              and a fluent, sourced-looking draft for a
+                              question it can't actually answer is worse
+                              than no draft.
   4. score_confidence         Heuristic from the retrieved sources; zero
                               sources always forces human review.
   5. route                    Reads support_settings for the org's trust
@@ -28,6 +39,17 @@ model. Steps:
                               reply comes from the address the customer wrote
                               to). Orgs with no connected mailbox get a
                               draft-only ticket.
+
+needs_investigation is a parallel branch off step 2: instead of drafting,
+the ticket parks in `needs_investigation` and a Slack ping + a one-shot
+reminder timer (`support_investigation_functions.py`) go out. A maintainer
+does the actual work, then submits their findings as a prompt via
+POST /admin/support/{id}/investigate, which fires
+`support/investigation-submitted` and hands off to
+SupportInvestigationDraftAgent (bottom of this file) to draft the reply
+from the original email + the maintainer's notes. That path always lands
+in pending_review — never autonomous-send — because a human has already
+touched real account state, so a human also approves what goes out.
 """
 from __future__ import annotations
 
@@ -36,7 +58,10 @@ import hashlib
 import re
 from typing import Any
 
+import inngest
+
 from app.database import get_service_client
+from app.inngest.client import get_inngest_client
 from app.observability import get_logger
 from app.services.agents.base_agent import BaseAgent
 from app.services.integrations import gmail, support_mailbox
@@ -55,12 +80,22 @@ _SUBJECT_PREFIX_RE = re.compile(r"^\s*(re|fwd?|fw)\s*:\s*", re.IGNORECASE)
 _TRIAGE_PROMPT = """Classify this customer support email. Reply with ONLY a
 single line in this exact format:
 
-  subcategory=<short-lowercase-slug>;priority=<p0|p1|p2|p3>;sentiment=<negative|neutral|positive>
+  subcategory=<short-lowercase-slug>;priority=<p0|p1|p2|p3>;sentiment=<negative|neutral|positive>;investigate=<yes|no>
 
 subcategory: a short slug for the topic (e.g. billing, login, refund,
 how-to, bug, account, feature-request). priority: p0 = production-down /
 data-loss / security, p1 = blocking the customer's work, p2 = normal
 question, p3 = minor/cosmetic. sentiment: the customer's tone.
+
+investigate: "yes" if answering this email correctly requires a human to
+go check something specific to this customer first -- their account
+state, a charge, an error they hit, reproducing a bug -- something a
+general knowledge base article cannot answer. "no" if this is answerable
+purely from general product/policy knowledge (how-to questions, stated
+policies, generic troubleshooting steps) with no account-specific lookup
+needed. When genuinely unsure, answer "yes" -- an unnecessary human check
+costs a few minutes; a confidently wrong answer to an account-specific
+question costs more.
 
 Subject: {subject}
 From: {from_email}
@@ -69,7 +104,8 @@ Body:
 """
 
 _TRIAGE_LINE_RE = re.compile(
-    r"subcategory\s*=\s*([a-z0-9\-]+)\s*;\s*priority\s*=\s*(p[0-3])\s*;\s*sentiment\s*=\s*(negative|neutral|positive)",
+    r"subcategory\s*=\s*([a-z0-9\-]+)\s*;\s*priority\s*=\s*(p[0-3])\s*;\s*sentiment\s*=\s*(negative|neutral|positive)"
+    r"\s*;\s*investigate\s*=\s*(yes|no)",
     re.IGNORECASE,
 )
 
@@ -141,6 +177,19 @@ class CustomerSupportAgent(BaseAgent):
                 "current_agent_run_id": self.run_id,
             }).eq("id", ticket_id).execute()
         )
+
+        # ── needs_investigation branch ────────────────────────────────────
+        # Triage decided this needs a human to check something account-
+        # specific before any reply can be written. Skip drafting entirely
+        # rather than showing a confident-sounding draft grounded only in
+        # general KB content that can't actually answer this question.
+        if triage["requires_investigation"]:
+            await self.log_step(
+                "draft_response", "skipped", {"reason": "requires_investigation"},
+            )
+            await self._mark_needs_investigation(svc, ticket_id, settings)
+            await self.log_step("route", "completed", {"outcome": "needs_investigation"})
+            return {"ticket_id": ticket_id, "outcome": "needs_investigation"}
 
         # ── Step 3: grounded draft ───────────────────────────────────────
         await self.log_step("draft_response", "started")
@@ -280,12 +329,14 @@ class CustomerSupportAgent(BaseAgent):
                     "subcategory": m.group(1).lower(),
                     "priority": m.group(2).lower(),
                     "sentiment": m.group(3).lower(),
+                    "requires_investigation": m.group(4).lower() == "yes",
                 }
         except Exception as exc:
             log.warning("support_triage_failed org=%s err=%s", self.org_id, exc)
-        # Fail-safe default: unclassified, normal priority, neutral tone —
-        # never blocks the draft step on a triage hiccup.
-        return {"subcategory": "unclassified", "priority": "p2", "sentiment": "neutral"}
+        return {
+            "subcategory": "unclassified", "priority": "p2", "sentiment": "neutral",
+            "requires_investigation": True,
+        }
 
     async def _route(
         self, svc: Any, *, ticket_id: str, settings: dict[str, Any],
@@ -352,6 +403,51 @@ class CustomerSupportAgent(BaseAgent):
 
     async def _escalate(self, svc: Any, ticket_id: str, *, reason: str) -> None:
         await self._mark_pending_review(svc, ticket_id, notify=None, escalation_reason=reason)
+
+    async def _mark_needs_investigation(
+        self, svc: Any, ticket_id: str, settings: dict[str, Any] | None,
+    ) -> None:
+        """Parks the ticket for a maintainer instead of drafting. Fires the
+        one-shot reminder timer (support_investigation_functions.py) so a
+        ticket nobody picks up doesn't just sit there silently -- the whole
+        point of gating on investigation is customer-safety, and a stalled
+        gate that nobody notices is worse than the eager-draft behavior it
+        replaced."""
+        await asyncio.to_thread(
+            lambda: svc.table("support_tickets").update({
+                "status": "needs_investigation",
+            }).eq("id", ticket_id).execute()
+        )
+        if settings and settings.get("escalation_channel_id"):
+            try:
+                await slack_service.post_message(
+                    org_id=self.org_id,
+                    channel_id=settings["escalation_channel_id"],
+                    text=(
+                        f":mag: Support ticket needs investigation — "
+                        f"*{self.subject}* from {self.from_email}"
+                    ),
+                )
+            except Exception as exc:
+                log.warning("support_slack_notify_failed org=%s err=%s", self.org_id, exc)
+
+        try:
+            inngest_client = get_inngest_client()
+            await inngest_client.send(
+                inngest.Event(
+                    name="support/investigation-started",
+                    data={"org_id": self.org_id, "ticket_id": ticket_id},
+                    id=f"support-investigation-started-{ticket_id}-{self.run_id}",
+                )
+            )
+        except Exception as exc:
+            # Best-effort -- losing this event only costs the one-shot Slack
+            # reminder later; the ticket itself is already visible in the
+            # queue via the status update above.
+            log.warning(
+                "support_investigation_timer_fire_failed org=%s ticket=%s err=%s",
+                self.org_id, ticket_id, exc,
+            )
 
     async def _resolve_sender(self, settings: dict[str, Any]) -> dict[str, Any] | None:
         """Credentials for the reply's From address.
@@ -433,3 +529,158 @@ def _score_confidence(sources: list[dict]) -> float:
     top = max((s.get("similarity") or s.get("vector_similarity") or 0.0) for s in sources)
     breadth = min(len(sources) / 3, 1.0)
     return round(min(1.0, top * 0.7 + breadth * 0.3), 3)
+
+
+# ── Investigation-required follow-up ────────────────────────────────────────
+
+_INVESTIGATION_DRAFT_PROMPT = """You are drafting a customer support email \
+reply on behalf of this company. A support teammate has already looked into \
+this specific case and left findings below -- treat those as ground truth \
+about this customer's situation, since they reflect account-specific work \
+the knowledge base cannot know about. Use search_company_knowledge for any \
+general policy or product information you still need; never guess at \
+specifics like refund windows, prices, or account behavior that aren't \
+covered by the teammate's notes or the knowledge base.
+
+Customer email:
+Subject: {subject}
+From: {from_email}
+
+{body}
+
+Teammate's findings for this reply:
+{maintainer_notes}
+
+Write a complete, ready-to-send reply that incorporates the teammate's \
+findings. Be concise and professional.
+"""
+
+
+class SupportInvestigationDraftAgent(BaseAgent):
+    """Drafts the customer reply once a maintainer has done the account-
+    specific investigation a ticket needed (see the needs_investigation
+    branch in CustomerSupportAgent.run above). Triggered by
+    `support/investigation-submitted`, fired from
+    POST /admin/support/{id}/investigate once a maintainer submits their
+    findings as a free-text prompt.
+
+    Always lands the draft in `pending_review` -- this path never
+    autonomous-sends, regardless of support_settings.mode, because a human
+    has already touched real account state and should also approve what
+    goes out to the customer.
+    """
+
+    agent_type = "customer_support_investigation"
+
+    def __init__(
+        self, *, org_id: str, ticket_id: str, maintainer_prompt: str,
+        maintainer_user_id: str | None = None,
+    ) -> None:
+        super().__init__(
+            org_id=org_id,
+            input_data={"ticket_id": ticket_id, "maintainer_prompt": maintainer_prompt},
+            triggered_by="user",
+            triggered_by_user_id=maintainer_user_id,
+        )
+        self.ticket_id = ticket_id
+        self.maintainer_prompt = maintainer_prompt
+
+    async def run(self) -> dict[str, Any]:
+        svc = get_service_client()
+
+        await self.log_step("load_ticket", "started")
+        ticket = await asyncio.to_thread(
+            lambda: svc.table("support_tickets")
+            .select("subject, from_email, status")
+            .eq("id", self.ticket_id).eq("org_id", self.org_id).maybe_single().execute()
+        )
+        if not ticket or not ticket.data:
+            await self.log_step("load_ticket", "failed", error="ticket_not_found")
+            return {"ticket_id": self.ticket_id, "status": "failed", "reason": "ticket_not_found"}
+        t = ticket.data
+        if t.get("status") != "needs_investigation":
+            # Stale/duplicate submission (double-click, retry) -- the ticket
+            # already moved on, so drafting again would clobber whatever a
+            # human is now looking at instead of what they submitted this for.
+            await self.log_step(
+                "load_ticket", "skipped", {"reason": f"unexpected_status:{t.get('status')}"},
+            )
+            return {"ticket_id": self.ticket_id, "status": "skipped", "reason": "not_awaiting_investigation"}
+        await self.log_step("load_ticket", "completed")
+
+        inbound = await asyncio.to_thread(
+            lambda: svc.table("support_messages")
+            .select("body")
+            .eq("ticket_id", self.ticket_id).eq("direction", "inbound")
+            .order("created_at", desc=True).limit(1).execute()
+        )
+        customer_body = (inbound.data or [{}])[0].get("body", "") if inbound and inbound.data else ""
+
+        await self.log_step("record_investigation_note", "started")
+        await asyncio.to_thread(
+            lambda: svc.table("support_messages").insert({
+                "ticket_id": self.ticket_id, "org_id": self.org_id,
+                "direction": "internal", "author_type": "maintainer_note",
+                "body": self.maintainer_prompt,
+            }).execute()
+        )
+        await self.log_step("record_investigation_note", "completed")
+
+        await self.log_step("draft_response", "started")
+        try:
+            result = await execute_task_blocking(
+                user_message=_INVESTIGATION_DRAFT_PROMPT.format(
+                    subject=t["subject"], from_email=t["from_email"],
+                    body=customer_body, maintainer_notes=self.maintainer_prompt,
+                ),
+                org_id=self.org_id,
+                db_client=svc,
+            )
+        except Exception as exc:
+            await self.log_step("draft_response", "failed", error=str(exc))
+            raise
+        await self.log_step(
+            "draft_response", "completed",
+            {"sources": len(result.sources), "tool_calls": result.tool_calls_made},
+        )
+
+        confidence = _score_confidence(result.sources)
+        self.add_confidence(confidence)
+        await self.log_step("score_confidence", "completed", {"confidence": confidence})
+
+        await asyncio.to_thread(
+            lambda: svc.table("support_messages").insert({
+                "ticket_id": self.ticket_id, "org_id": self.org_id,
+                "direction": "outbound", "author_type": "agent_draft",
+                "body": result.text, "confidence": confidence, "status": "draft",
+            }).execute()
+        )
+
+        # Always human-reviewed, never autonomous-send -- see class docstring.
+        await asyncio.to_thread(
+            lambda: svc.table("support_tickets").update({
+                "status": "pending_review",
+            }).eq("id", self.ticket_id).execute()
+        )
+
+        settings = await asyncio.to_thread(
+            lambda: svc.table("support_settings")
+            .select("escalation_channel_id")
+            .eq("org_id", self.org_id).maybe_single().execute()
+        )
+        channel_id = (settings.data or {}).get("escalation_channel_id") if settings else None
+        if channel_id:
+            try:
+                await slack_service.post_message(
+                    org_id=self.org_id,
+                    channel_id=channel_id,
+                    text=(
+                        f":white_check_mark: Support ticket ready for review — "
+                        f"*{t['subject']}* from {t['from_email']}"
+                    ),
+                )
+            except Exception as exc:
+                log.warning("support_slack_notify_failed org=%s err=%s", self.org_id, exc)
+        await self.log_step("route", "completed", {"outcome": "pending_review"})
+
+        return {"ticket_id": self.ticket_id, "confidence": confidence, "outcome": "pending_review"}

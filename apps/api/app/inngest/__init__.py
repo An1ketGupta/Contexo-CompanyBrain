@@ -29,6 +29,7 @@ from .report_functions import FUNCTIONS as _REPORT_FUNCTIONS
 from .sales_functions import FUNCTIONS as _SALES_FUNCTIONS
 from .slack_functions import FUNCTIONS as _SLACK_FUNCTIONS
 from .slack_inbound_functions import FUNCTIONS as _SLACK_INBOUND_FUNCTIONS
+from .support_investigation_functions import FUNCTIONS as _SUPPORT_INVESTIGATION_FUNCTIONS
 from .email_classify_functions import FUNCTIONS as _EMAIL_CLASSIFY_FUNCTIONS
 from .version_diff_functions import FUNCTIONS as _VERSION_DIFF_FUNCTIONS
 from .webhook_functions import FUNCTIONS as _WEBHOOK_FUNCTIONS
@@ -50,6 +51,7 @@ FUNCTIONS = [
     *_COMPLIANCE_FUNCTIONS,
     *_EMAIL_CLASSIFY_FUNCTIONS,
     *_CUSTOMER_SUPPORT_FUNCTIONS,
+    *_SUPPORT_INVESTIGATION_FUNCTIONS,
     *_SALES_FUNCTIONS,
     *_MEETING_FUNCTIONS,
     *_API_TRIGGER_FUNCTIONS,

@@ -30,6 +30,7 @@ interface TicketsResponse {
 
 type StatusFilter =
   | "all"
+  | "needs_investigation"
   | "pending_review"
   | "escalated"
   | "open"
@@ -37,6 +38,7 @@ type StatusFilter =
   | "resolved";
 
 const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: "needs_investigation", label: "Needs investigation" },
   { value: "pending_review", label: "Needs review" },
   { value: "escalated", label: "Escalated" },
   { value: "open", label: "Open" },

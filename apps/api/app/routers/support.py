@@ -36,7 +36,7 @@ log = get_logger(__name__)
 router = APIRouter(prefix="/admin/support", tags=["admin-support"])
 
 _VALID_STATUSES = {
-    "open", "pending_review", "awaiting_customer",
+    "open", "needs_investigation", "pending_review", "awaiting_customer",
     "resolved", "escalated", "spam",
 }
 
@@ -64,6 +64,10 @@ class SendReplyRequest(BaseModel):
 
 class RejectRequest(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
+
+
+class InvestigateRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=5000)
 
 
 class SupportSettingsUpdate(BaseModel):
@@ -235,6 +239,48 @@ async def regenerate_draft(
         )
     )
     return {"ok": True, "status": "regenerating"}
+
+
+@router.post("/{ticket_id}/investigate")
+async def submit_investigation(
+    ticket_id: str, payload: InvestigateRequest, current_user: dict = Depends(verify_jwt),
+) -> dict[str, Any]:
+    """A maintainer has finished the account-specific work a ticket needed
+    (see needs_investigation in CustomerSupportAgent). Hands their findings
+    off to SupportInvestigationDraftAgent, which drafts the customer reply
+    from the original email + these notes and always parks it in
+    pending_review — never auto-sent, regardless of trust mode, since a
+    human already touched real account state here.
+    """
+    org_id, client = await _require_admin(current_user)
+
+    ticket = await asyncio.to_thread(
+        lambda: client.table("support_tickets")
+        .select("id, status").eq("id", ticket_id).eq("org_id", org_id).maybe_single().execute()
+    )
+    if not ticket or not ticket.data:
+        raise HTTPException(status_code=404, detail="Ticket not found.")
+    if ticket.data["status"] != "needs_investigation":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Ticket isn't waiting on investigation (status: {ticket.data['status']}).",
+        )
+
+    inngest_client = get_inngest_client()
+    sig = hashlib.sha256(f"investigate-{ticket_id}-{datetime.now(UTC).isoformat()}".encode()).hexdigest()[:24]
+    await inngest_client.send(
+        inngest.Event(
+            name="support/investigation-submitted",
+            data={
+                "org_id": org_id,
+                "ticket_id": ticket_id,
+                "maintainer_prompt": payload.prompt,
+                "maintainer_user_id": current_user["user_id"],
+            },
+            id=f"support-investigate-{sig}",
+        )
+    )
+    return {"ok": True, "status": "drafting"}
 
 
 @router.post("/{ticket_id}/send")

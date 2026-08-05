@@ -212,8 +212,7 @@ function ImportPanel({ onDone }: { onDone: () => void }) {
         Import leads
       </div>
       <p className="mt-1 text-xs text-muted-foreground">
-        Upload a CSV with a header row. Recognised columns: company, email,
-        name, title, website, notes. Only company and email are required —
+        Only company and email are required —
         anything in notes is passed to the agent as context when it writes.
       </p>
 
