@@ -47,10 +47,6 @@ def _channel_label(channel: str) -> str:
         "slack": "Post to Slack",
         "notion": "Create Notion page",
         "gdocs": "Create Google Doc",
-        # Day 14: API-triggered agent runs gated through the human-approval
-        # workflow. Surface a friendly label per agent_type so the approver
-        # email reads "Run onboarding" rather than "Run agent".
-        "agent": "Run agent",
     }.get(channel, channel.title())
 
 
@@ -63,17 +59,6 @@ def _destination_from_action(action: dict[str, Any]) -> str | None:
         return params.get("channel_name") or params.get("channel_id")
     if ch in {"notion", "gdocs"}:
         return params.get("title") or params.get("parent_page_title")
-    if ch == "agent":
-        agent_type = params.get("agent_type") or "agent"
-        agent_input = params.get("agent_input") or {}
-        # Surface the most identifying scalar from the input — usually an
-        # email (onboarding/support) or a document id (policy). Falls back
-        # to the agent type alone.
-        for key in ("email", "from_email", "document_id", "send_to_email"):
-            v = agent_input.get(key)
-            if isinstance(v, str) and v:
-                return f"{agent_type} · {v}"
-        return agent_type
     return None
 
 
@@ -85,15 +70,8 @@ async def _load_approval(approval_id: str) -> dict[str, Any] | None:
     return row.data if row and row.data else None
 
 
-async def _resolve_user(user_id: str | None) -> dict[str, Any]:
-    """Returns {email, display_name} for a users row. None values on failure.
-
-    Tolerates None — API-triggered approvals don't have a workspace user as
-    the requester, so we return a placeholder "API" identity instead of
-    blowing up the email-formatting step.
-    """
-    if not user_id:
-        return {"email": None, "display_name": "API"}
+async def _resolve_user(user_id: str) -> dict[str, Any]:
+    """Return the email and display name for a workspace user."""
     svc = get_service_client()
     profile = await asyncio.to_thread(
         lambda: svc.table("users")

@@ -32,12 +32,8 @@ from app.observability import get_logger
 log = get_logger(__name__)
 
 # Channels recognised by execution_action.channel. Adding a new outbound
-# channel: add the literal, add a branch in `dispatch_execution`.
-#
-# "agent" is the Day-14 channel for API-triggered agent runs. On approval
-# we fan out the appropriate `agent/<type>/triggered-api` Inngest event
-# instead of sending a side effect directly.
-ExecutionChannel = Literal["gmail", "slack", "notion", "gdocs", "agent"]
+# channel requires a matching branch in `dispatch_execution`.
+ExecutionChannel = Literal["gmail", "slack", "notion", "gdocs"]
 
 # Plaintext tokens are 32 url-safe bytes (~43 chars). Long enough to be
 # unguessable; short enough that the email URL stays readable.
@@ -80,15 +76,7 @@ def consteq(a: str, b: str) -> bool:
 # ── Execution fan-out ──────────────────────────────────────────────────────
 
 
-_ALLOWED_CHANNELS: set[str] = {"gmail", "slack", "notion", "gdocs", "agent"}
-
-# Agent types accepted on the public API + by the agent-channel approval.
-# Kept in sync with services/agent_registry.py:AGENT_REGISTRY.
-_AGENT_CHANNEL_TYPES: set[str] = {
-    "onboarding",
-    "policy_propagation",
-    "weekly_digest",
-}
+_ALLOWED_CHANNELS: set[str] = {"gmail", "slack", "notion", "gdocs"}
 
 
 def validate_execution_action(action: dict[str, Any] | None) -> dict[str, Any]:
@@ -128,15 +116,6 @@ def validate_execution_action(action: dict[str, Any] | None) -> dict[str, Any]:
         for key in ("title", "content"):
             if not params.get(key):
                 raise ValueError(f"gdocs.{key} is required")
-    elif channel == "agent":
-        agent_type = params.get("agent_type")
-        if agent_type not in _AGENT_CHANNEL_TYPES:
-            raise ValueError(
-                f"agent.agent_type must be one of {sorted(_AGENT_CHANNEL_TYPES)}"
-            )
-        if not isinstance(params.get("agent_input"), dict):
-            raise ValueError("agent.agent_input must be an object")
-
     return {"channel": channel, "params": params}
 
 
@@ -227,40 +206,6 @@ async def dispatch_execution(
                 },
                 id=f"approval-execute-{approval_id}",
             )
-        )
-    elif channel == "agent":
-        # Day 14: fan out to the API-trigger pipeline. The pipeline owns
-        # the agent_run lifecycle so we just pass through the validated
-        # payload + cross-link the approval id. We also flip the run row's
-        # status from pending_approval → running so the polling endpoint
-        # immediately reflects that execution started; BaseAgent's idempotent
-        # create on the worker side won't downgrade it.
-        from app.database import get_service_client as _svc
-        from app.services.agent_registry import dispatch_api_agent
-
-        run_id = params.get("run_id") or job_id
-        try:
-            import asyncio as _asyncio
-            client_db = _svc()
-            await _asyncio.to_thread(
-                lambda: client_db.table("agent_runs")
-                .update({"status": "running"})
-                .eq("id", run_id)
-                .eq("status", "pending_approval")
-                .execute()
-            )
-        except Exception as exc:
-            log.warning(
-                "agent_run_status_flip_failed run=%s err=%s", run_id, exc,
-            )
-
-        await dispatch_api_agent(
-            org_id=org_id,
-            agent_type=params["agent_type"],
-            agent_input=params["agent_input"],
-            output_channels=list(params.get("output_channels") or []),
-            approval_id=approval_id,
-            run_id=run_id,
         )
     else:
         raise ValueError(f"unsupported channel '{channel}'")

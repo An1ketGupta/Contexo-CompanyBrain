@@ -63,27 +63,20 @@ class PolicyPropagationAgent(BaseAgent):
         org_id: str,
         document_id: str,
         version_id: str | None = None,
-        api_context: dict[str, Any] | None = None,
     ) -> None:
         input_data: dict[str, Any] = {
             "document_id": document_id,
             "version_id": version_id,
         }
-        # Day 14: when fired through the public API we stash the trigger
-        # context so BaseAgent's lifecycle fan-out can POST the callback.
-        if api_context:
-            input_data["_api_context"] = api_context
         super().__init__(
             org_id=org_id,
             input_data=input_data,
-            triggered_by="api" if api_context else "document_ready",
+            triggered_by="document_ready",
         )
         self.document_id = document_id
         # Optional — when present, we operate strictly on that version row.
         # When absent, we resolve to the current is_current row at run time.
         self._explicit_version_id = version_id
-        if api_context and api_context.get("run_id"):
-            self.run_id = api_context["run_id"]
 
     # ── Main flow ──────────────────────────────────────────────────────
 

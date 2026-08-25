@@ -1099,15 +1099,6 @@ export default function RequisitionDetailPage() {
                 </span>
               </div>
               <div className="rounded-3xl border border-border/70 bg-gradient-to-br from-card via-card to-muted/25 p-4 shadow-sm">
-                <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                  <span className="rounded-full border border-border bg-background/80 px-2 py-0.5 font-medium text-foreground">
-                    Prebuilt queries
-                  </span>
-                  <span>
-                    Open the exact search in LinkedIn, then copy the URL when
-                    you need to reuse it.
-                  </span>
-                </div>
                 <TooltipProvider delayDuration={150}>
                   <ul className="grid gap-3 text-sm">
                     {data.linkedin_search_urls.map((s, i) => (

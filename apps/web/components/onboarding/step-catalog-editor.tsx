@@ -176,7 +176,7 @@ export function StepCatalogEditor({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {bundles.length === 0 ? (
         <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
           Your onboarding runs nothing yet. Add a first step below.
@@ -193,13 +193,13 @@ export function StepCatalogEditor({
           <div
             key={key}
             className={cn(
-              "rounded-xl border p-4 transition-colors",
+              "rounded-2xl border px-5 py-5 transition-colors sm:px-6",
               lead.enabled
                 ? "border-border bg-card"
                 : "border-dashed border-border bg-muted/30",
             )}
           >
-            <div className="flex items-start gap-3">
+            <div className="flex items-start gap-4">
               {lead.locked ? (
                 <span
                   aria-hidden
@@ -221,11 +221,13 @@ export function StepCatalogEditor({
 
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-sm font-semibold text-foreground">{label}</p>
+                  <p className="text-base font-semibold tracking-tight text-foreground sm:text-lg">
+                    {label}
+                  </p>
                   <StepBadge step={lead} members={group.length} />
                 </div>
 
-                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                <p className="mt-0.5 text-sm leading-relaxed text-muted-foreground sm:text-[15px]">
                   {describe(lead, group)}
                 </p>
 
@@ -278,12 +280,12 @@ export function StepCatalogEditor({
                 ) : null}
 
                 {canEdit && editing !== lead.step_key ? (
-                  <div className="mt-2 flex gap-3">
+                  <div className="mt-3 flex gap-4">
                     {lead.kind === "collect" ? (
                       <button
                         type="button"
                         onClick={() => setEditing(lead.step_key)}
-                        className="text-xs font-medium text-brand hover:underline"
+                        className="text-sm font-medium text-brand hover:underline"
                       >
                         Edit documents
                       </button>
@@ -295,7 +297,7 @@ export function StepCatalogEditor({
                         onClick={() =>
                           run(key, () => removeStep(lead.step_key), "Step removed.")
                         }
-                        className="text-xs font-medium text-destructive-ink hover:underline disabled:opacity-50"
+                        className="text-sm font-medium text-destructive-ink hover:underline disabled:opacity-50"
                       >
                         Remove
                       </button>
@@ -305,7 +307,7 @@ export function StepCatalogEditor({
               </div>
 
               {lead.locked ? (
-                <span className="text-xs text-muted-foreground">Always on</span>
+                <span className="text-sm text-muted-foreground">Always on</span>
               ) : (
                 <button
                   type="button"
@@ -321,7 +323,7 @@ export function StepCatalogEditor({
                     )
                   }
                   className={cn(
-                    "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors",
+                    "relative inline-flex h-7 w-13 shrink-0 items-center rounded-full border-2 border-transparent transition-colors",
                     "disabled:cursor-not-allowed disabled:opacity-50",
                     lead.enabled ? "bg-brand" : "bg-muted",
                   )}
@@ -329,8 +331,8 @@ export function StepCatalogEditor({
                   <span
                     aria-hidden
                     className={cn(
-                      "inline-block h-5 w-5 transform rounded-full bg-background shadow transition-transform",
-                      lead.enabled ? "translate-x-5" : "translate-x-0",
+                      "inline-block h-6 w-6 transform rounded-full bg-background shadow-sm ring-1 ring-black/10 transition-transform dark:ring-white/10",
+                      lead.enabled ? "translate-x-6" : "translate-x-0",
                     )}
                   />
                 </button>
@@ -371,17 +373,17 @@ function StepBadge({ step, members }: { step: CatalogStep; members: number }) {
   return (
     <>
       {step.kind === "collect" ? (
-        <span className="rounded-full bg-brand-tint px-2 py-0.5 text-[11px] font-medium text-brand">
+        <span className="rounded-full bg-brand-tint px-2.5 py-1 text-xs font-medium text-brand">
           Documents from candidate
         </span>
       ) : null}
       {step.kind === "system" ? (
-        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+        <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
           {step.system_action === "bgv" ? "Background check" : "Policy sign-off"}
         </span>
       ) : null}
       {members > 1 ? (
-        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+        <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
           Sent together
         </span>
       ) : null}
@@ -415,7 +417,7 @@ function Reorder({
   onMove: (dir: "up" | "down") => void;
 }) {
   return (
-    <div className="mt-0.5 flex flex-col">
+    <div className="mt-0.5 flex flex-col gap-0.5">
       <button
         type="button"
         aria-label="Move step earlier"
@@ -423,7 +425,7 @@ function Reorder({
         onClick={() => onMove("up")}
         className="text-muted-foreground transition-colors hover:text-brand disabled:opacity-25 disabled:hover:text-muted-foreground"
       >
-        <ChevronUp className="h-3.5 w-3.5" />
+        <ChevronUp className="h-4 w-4" />
       </button>
       <button
         type="button"
@@ -432,7 +434,7 @@ function Reorder({
         onClick={() => onMove("down")}
         className="text-muted-foreground transition-colors hover:text-brand disabled:opacity-25 disabled:hover:text-muted-foreground"
       >
-        <ChevronDown className="h-3.5 w-3.5" />
+        <ChevronDown className="h-4 w-4" />
       </button>
     </div>
   );
@@ -476,20 +478,20 @@ function ApprovalToggle({
       aria-pressed={on}
       onClick={() => onChange(!on)}
       className={cn(
-        "mt-2 flex items-start gap-2 rounded-lg border px-2 py-1.5 text-left text-[11px] transition-colors disabled:opacity-50",
+        "mt-3 flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-sm transition-colors disabled:opacity-50",
         on
-          ? "border-brand bg-brand-tint text-brand"
+          ? "border-transparent bg-brand-tint text-brand"
           : "border-border text-muted-foreground hover:border-brand hover:text-brand",
       )}
     >
       <span
         aria-hidden
         className={cn(
-          "mt-px flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[4px] border",
+          "flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border",
           on ? "border-brand bg-brand text-white" : "border-border",
         )}
       >
-        {on ? <Check className="h-2.5 w-2.5" /> : null}
+        {on ? <Check className="h-3 w-3" /> : null}
       </span>
       <span>
         {GATE_LABEL[step.kind]}
@@ -523,8 +525,8 @@ function SignerPicker({
     );
 
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-1.5">
-      <span className="text-[11px] text-muted-foreground">Signed by:</span>
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <span className="text-sm text-muted-foreground">Signed by:</span>
       {(Object.keys(SIGNER_LABELS) as SignerRole[]).map((role) => {
         const at = roles.indexOf(role);
         return (
@@ -534,7 +536,7 @@ function SignerPicker({
             disabled={disabled}
             onClick={() => toggle(role)}
             className={cn(
-              "rounded-full border px-2 py-0.5 text-[11px] transition-colors disabled:opacity-50",
+              "rounded-full border px-2.5 py-1 text-sm leading-none transition-colors disabled:opacity-50",
               at >= 0
                 ? "border-brand bg-brand-tint text-brand"
                 : "border-border text-muted-foreground hover:border-brand hover:text-brand",
@@ -546,7 +548,7 @@ function SignerPicker({
         );
       })}
       {roles.length === 0 ? (
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-sm text-muted-foreground">
           nobody — sent as-is
         </span>
       ) : null}

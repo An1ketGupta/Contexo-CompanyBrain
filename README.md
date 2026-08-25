@@ -92,9 +92,6 @@ The platform is multi-tenant (per-organization), enforces tenant isolation via P
 - 7 admin pages: analytics, health, knowledge health, moderation, confidence tuning, compliance status, agent runs
 - **Time-savings analytics** computed per use
 
-### Developer Surface
-- API keys with hash-based validation + revocation
-- `/v1` public API endpoints (key-authenticated)
 
 ---
 
@@ -380,7 +377,6 @@ shared_conversations       id, conversation_id, token, expires_at, is_public
 integrations               id, org_id, user_id, provider, access_token, refresh_token,
                            metadata JSONB, connected_at
 gmail_integrations         id, org_id, user_id, email_address, has_send_scope, …
-api_keys                   id, org_id, user_id, key_hash, name, last_used_at
 
 ─── Compliance & Approvals ───────────────────────────────────────
 compliance_policies        id, org_id, name, document_id, requires_ack, enforcement_date
@@ -466,8 +462,7 @@ All agents extend `BaseAgent` (`apps/api/app/services/agents/base_agent.py`) and
 | `VersionDiffAgent` | `agent/version-diff` | Human-readable diff between two doc versions |
 
 The full Inngest set also covers document ingestion, approvals, compliance,
-feedback processing, integration polling, knowledge-gap detection, and
-API-triggered workflows.
+feedback processing, integration polling, and knowledge-gap detection.
 
 ---
 

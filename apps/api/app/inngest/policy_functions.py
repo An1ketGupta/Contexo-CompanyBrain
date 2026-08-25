@@ -57,15 +57,10 @@ async def propagate_policy_change(ctx: inngest.Context) -> dict[str, Any]:
     if not qualifies:
         return {"status": "skipped", "reason": "no_longer_policy"}
 
-    # Day 14: API-triggered runs ride through this same event with an
-    # `_api_context` side-channel. Pass it through so BaseAgent's lifecycle
-    # fan-out can fire the per-request callback.
-    api_context = data.get("_api_context")
     agent = PolicyPropagationAgent(
         org_id=org_id,
         document_id=document_id,
         version_id=version_id,
-        api_context=api_context if isinstance(api_context, dict) else None,
     )
     try:
         result = await agent.run_safely()

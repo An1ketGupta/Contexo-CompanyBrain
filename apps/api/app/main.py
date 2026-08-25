@@ -9,41 +9,63 @@ from app.inngest import get_inngest_client
 from app.middleware.request_context import RequestContextMiddleware
 from app.observability import init_observability
 from app.routers import (
+    action_items as action_items_router,
+)
+from app.routers import (
     admin as admin_router,
-)
-from app.routers import (
-    approvals as approvals_router,
-)
-from app.routers import (
-    auth as auth_router,
 )
 from app.routers import (
     admin_intake as admin_intake_router,
 )
 from app.routers import (
-    internal_announcements as internal_announcements_router,
+    admin_quality as admin_quality_router,
+)
+from app.routers import (
+    admin_recruiting as admin_recruiting_router,
+)
+from app.routers import (
+    agent2_integrations as agent2_integrations_router,
+)
+from app.routers import (
+    approvals as approvals_router,
+)
+from app.routers import (
+    ats_integrations as ats_integrations_router,
+)
+from app.routers import (
+    auth as auth_router,
 )
 from app.routers import (
     billing as billing_router,
 )
 from app.routers import (
+    briefings as briefings_router,
+)
+from app.routers import (
+    calendar_meetings as calendar_meetings_router,
+)
+from app.routers import (
+    channels as channels_router,
+)
+from app.routers import (
     chat,
     documents,
     gmail_router,
+    google_workspace_router,
     health,
     invitations,
-    public_api,
     search,
     slack_router,
-)
-from app.routers import (
-    webhooks_stripe as webhooks_stripe_router,
+    support_mailbox_router,
 )
 from app.routers import (
     collections as collections_router,
 )
 from app.routers import (
     compliance as compliance_router,
+)
+from app.routers import (
+    document_templates as document_templates_router,
 )
 from app.routers import (
     document_versions as document_versions_router,
@@ -55,6 +77,9 @@ from app.routers import (
     internal as internal_router,
 )
 from app.routers import (
+    internal_announcements as internal_announcements_router,
+)
+from app.routers import (
     meeting_prep as meeting_prep_router,
 )
 from app.routers import (
@@ -64,31 +89,40 @@ from app.routers import (
     notifications as notifications_router,
 )
 from app.routers import (
+    onboarding_catalog as onboarding_catalog_router,
+)
+from app.routers import (
+    onboarding_public as onboarding_public_router,
+)
+from app.routers import (
+    onboarding_steps as onboarding_steps_router,
+)
+from app.routers import (
+    onboarding_v2 as onboarding_v2_router,
+)
+from app.routers import (
+    org_personas as org_personas_router,
+)
+from app.routers import (
     organizations as organizations_router,
+)
+from app.routers import (
+    recruiting as recruiting_router,
 )
 from app.routers import (
     sales as sales_router,
 )
 from app.routers import (
-    support as support_router,
-)
-from app.routers import (
-    support_mailbox_router,
-)
-from app.routers import (
     scheduled_reports as scheduled_reports_router,
-)
-from app.routers import (
-    briefings as briefings_router,
-)
-from app.routers import (
-    org_personas as org_personas_router,
 )
 from app.routers import (
     settings as settings_router,
 )
 from app.routers import (
     sharing as sharing_router,
+)
+from app.routers import (
+    support as support_router,
 )
 from app.routers import (
     team as team_router,
@@ -103,48 +137,8 @@ from app.routers import (
     usage as usage_router,
 )
 from app.routers import (
-    document_templates as document_templates_router,
+    webhooks_stripe as webhooks_stripe_router,
 )
-from app.routers import (
-    recruiting as recruiting_router,
-)
-from app.routers import (
-    ats_integrations as ats_integrations_router,
-)
-from app.routers import (
-    admin_recruiting as admin_recruiting_router,
-)
-from app.routers import (
-    calendar_meetings as calendar_meetings_router,
-)
-from app.routers import (
-    action_items as action_items_router,
-)
-from app.routers import (
-    admin_quality as admin_quality_router,
-)
-from app.routers import (
-    google_workspace_router,
-)
-from app.routers import (
-    agent2_integrations as agent2_integrations_router,
-)
-from app.routers import (
-    channels as channels_router,
-)
-from app.routers import (
-    onboarding_v2 as onboarding_v2_router,
-)
-from app.routers import (
-    onboarding_public as onboarding_public_router,
-)
-from app.routers import (
-    onboarding_catalog as onboarding_catalog_router,
-)
-from app.routers import (
-    onboarding_steps as onboarding_steps_router,
-)
-from app.mcp import router as mcp_router
 
 
 def create_app() -> FastAPI:
@@ -241,7 +235,6 @@ app.include_router(invitations.router)
 app.include_router(auth_router.router)
 app.include_router(usage_router.router)
 app.include_router(integrations_router.router)
-app.include_router(public_api.router)
 app.include_router(slack_router.router)
 app.include_router(gmail_router.router)
 app.include_router(organizations_router.router)
@@ -280,7 +273,6 @@ app.include_router(onboarding_v2_router.router)
 app.include_router(onboarding_public_router.router)
 app.include_router(onboarding_catalog_router.router)
 app.include_router(onboarding_steps_router.router)
-app.include_router(mcp_router)
 
 # Inngest serve endpoint — webhook the Inngest server hits to invoke our functions.
 # Mounts at /api/inngest by default.

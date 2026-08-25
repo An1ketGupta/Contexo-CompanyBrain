@@ -78,12 +78,6 @@ export const HELP_ARTICLES: readonly HelpArticleMeta[] = [
     tags: ["slack", "bot", "slash command", "integration", "dm", "channels"],
   },
   {
-    slug: "api-access",
-    title: "Using the developer API",
-    category: "Integrations",
-    tags: ["api", "keys", "developer", "http", "integration"],
-  },
-  {
     slug: "billing-and-plans",
     title: "Billing and plan limits",
     category: "Account",

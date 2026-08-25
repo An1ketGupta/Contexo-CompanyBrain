@@ -2,34 +2,33 @@
 transactional email delivery, and integrations sync."""
 from app.services.email.worker import FUNCTIONS as _EMAIL_FUNCTIONS
 
-from .api_trigger_functions import FUNCTIONS as _API_TRIGGER_FUNCTIONS
+from .announcement_functions import FUNCTIONS as _ANNOUNCEMENT_FUNCTIONS
 from .approval_functions import FUNCTIONS as _APPROVAL_FUNCTIONS
 from .archive_functions import FUNCTIONS as _ARCHIVE_FUNCTIONS
-from .customer_support_functions import FUNCTIONS as _CUSTOMER_SUPPORT_FUNCTIONS
-from .duplicate_detection_functions import FUNCTIONS as _DUPLICATE_DETECTION_FUNCTIONS
-from .announcement_functions import FUNCTIONS as _ANNOUNCEMENT_FUNCTIONS
+from .briefing_functions import FUNCTIONS as _BRIEFING_FUNCTIONS
 from .calendar_functions import FUNCTIONS as _CALENDAR_FUNCTIONS
-from .quality_functions import FUNCTIONS as _QUALITY_FUNCTIONS
 from .client import get_inngest_client
 from .compliance_functions import FUNCTIONS as _COMPLIANCE_FUNCTIONS
+from .customer_support_functions import FUNCTIONS as _CUSTOMER_SUPPORT_FUNCTIONS
+from .duplicate_detection_functions import FUNCTIONS as _DUPLICATE_DETECTION_FUNCTIONS
+from .email_classify_functions import FUNCTIONS as _EMAIL_CLASSIFY_FUNCTIONS
 from .feedback_functions import FUNCTIONS as _FEEDBACK_FUNCTIONS
 from .functions import FUNCTIONS as _DOC_FUNCTIONS
 from .functions import process_document
 from .gmail_functions import FUNCTIONS as _GMAIL_FUNCTIONS
 from .integration_functions import FUNCTIONS as _INTEGRATION_FUNCTIONS
 from .integration_write_functions import FUNCTIONS as _INTEGRATION_WRITE_FUNCTIONS
-from .briefing_functions import FUNCTIONS as _BRIEFING_FUNCTIONS
 from .meeting_functions import FUNCTIONS as _MEETING_FUNCTIONS
 from .onboarding_functions import FUNCTIONS as _ONBOARDING_FUNCTIONS
 from .onboarding_v2_functions import FUNCTIONS as _ONBOARDING_V2_FUNCTIONS
 from .policy_functions import FUNCTIONS as _POLICY_FUNCTIONS
+from .quality_functions import FUNCTIONS as _QUALITY_FUNCTIONS
 from .query_log_retention import FUNCTIONS as _QUERY_LOG_RETENTION_FUNCTIONS
 from .report_functions import FUNCTIONS as _REPORT_FUNCTIONS
 from .sales_functions import FUNCTIONS as _SALES_FUNCTIONS
 from .slack_functions import FUNCTIONS as _SLACK_FUNCTIONS
 from .slack_inbound_functions import FUNCTIONS as _SLACK_INBOUND_FUNCTIONS
 from .support_investigation_functions import FUNCTIONS as _SUPPORT_INVESTIGATION_FUNCTIONS
-from .email_classify_functions import FUNCTIONS as _EMAIL_CLASSIFY_FUNCTIONS
 from .version_diff_functions import FUNCTIONS as _VERSION_DIFF_FUNCTIONS
 
 FUNCTIONS = [
@@ -51,7 +50,6 @@ FUNCTIONS = [
     *_SUPPORT_INVESTIGATION_FUNCTIONS,
     *_SALES_FUNCTIONS,
     *_MEETING_FUNCTIONS,
-    *_API_TRIGGER_FUNCTIONS,
     *_FEEDBACK_FUNCTIONS,
     *_VERSION_DIFF_FUNCTIONS,
     *_ARCHIVE_FUNCTIONS,

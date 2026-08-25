@@ -14,7 +14,6 @@ import {
   Download,
   FolderOpen,
   Inbox,
-  KeyRound,
   Link2,
   Loader2,
   Mail,
@@ -153,12 +152,6 @@ export default function SettingsPage() {
               icon={<FolderOpen className="h-4 w-4" />}
               title="Collections"
               description="Named tag groups for scoping chat to a subset of documents"
-            />
-            <SettingsLink
-              href="/settings/api"
-              icon={<KeyRound className="h-4 w-4" />}
-              title="API keys"
-              description="Programmatic access to the Developer API"
             />
             <SettingsLink
               href="/settings/reports"
@@ -1826,17 +1819,24 @@ function SharingCard({ canEdit }: { canEdit: boolean }) {
 
 function OnboardingStepsCard({ canEdit }: { canEdit: boolean }) {
   return (
-    <Card
+    <section
       id="onboarding-steps"
-      title="Onboarding flow"
-      description={
-        canEdit
-          ? "The steps your onboarding runs, in order. Changes only affect runs that haven't reached the step yet."
-          : "The steps your onboarding runs. Only admins can change this."
-      }
+      className="overflow-hidden rounded-2xl border border-border bg-card"
     >
-      <StepCatalogEditor canEdit={canEdit} />
-    </Card>
+      <header className="border-b border-border px-6 py-5">
+        <h2 className="text-lg font-semibold tracking-tight text-foreground">
+          Onboarding flow
+        </h2>
+        <p className="mt-0.5 text-sm leading-relaxed text-muted-foreground sm:text-[15px]">
+          {canEdit
+            ? "The steps your onboarding runs, in order. Changes only affect runs that haven't reached the step yet."
+            : "The steps your onboarding runs. Only admins can change this."}
+        </p>
+      </header>
+      <div className="px-6 py-5">
+        <StepCatalogEditor canEdit={canEdit} />
+      </div>
+    </section>
   );
 }
 
