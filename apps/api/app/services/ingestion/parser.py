@@ -250,7 +250,7 @@ def _parse_text(text: str) -> Iterator[RawSegment]:
             yield RawSegment(content=para)
 
 
-# ── Meeting transcripts (Zoom VTT / Teams JSON) ───────────────────────────────
+# ── Meeting transcripts (WebVTT / Teams JSON) ─────────────────────────────────
 
 def _parse_meeting_transcript(text: str, *, file_type: str) -> Iterator[RawSegment]:
     """Project a transcript to `Speaker: text` paragraph segments.

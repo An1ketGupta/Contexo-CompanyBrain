@@ -23,7 +23,7 @@ interface ShareTranscriptDialogProps {
 }
 
 /**
- * Publish/unpublish control for private meeting transcripts (Zoom/Google
+ * Publish/unpublish control for private meeting transcripts (Google
  * Meet auto-sync, migrations 084/086). Private is the ingest default — this
  * is the only way an owner can make one visible to the rest of the org.
  */

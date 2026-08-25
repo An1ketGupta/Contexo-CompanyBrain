@@ -141,69 +141,7 @@ async def process_text_document(ctx: inngest.Context) -> dict[str, Any]:
     return result
 
 
-# ── OneDrive / SharePoint: poll every 10 minutes ────────────────────────────
-
-@_inngest_client.create_function(
-    fn_id="onedrive-poll-sync",
-    trigger=inngest.TriggerCron(cron="*/10 * * * *"),
-    concurrency=[inngest.Concurrency(limit=1)],
-)
-async def onedrive_poll_sync(ctx: inngest.Context) -> dict[str, Any]:
-    settings = get_settings()
-    if not (settings.microsoft_client_id and settings.microsoft_client_secret):
-        return {"status": "skipped", "reason": "microsoft_oauth_not_configured"}
-    from app.services.integrations.onedrive import poll_all_integrations
-    return await ctx.step.run("onedrive-sync-all", poll_all_integrations)
-
-
-# ── Confluence: poll every 15 minutes ───────────────────────────────────────
-
-@_inngest_client.create_function(
-    fn_id="confluence-poll-sync",
-    trigger=inngest.TriggerCron(cron="*/15 * * * *"),
-    concurrency=[inngest.Concurrency(limit=1)],
-)
-async def confluence_poll_sync(ctx: inngest.Context) -> dict[str, Any]:
-    settings = get_settings()
-    if not (settings.atlassian_client_id and settings.atlassian_client_secret):
-        return {"status": "skipped", "reason": "atlassian_oauth_not_configured"}
-    from app.services.integrations.confluence import poll_all_integrations
-    return await ctx.step.run("confluence-sync-all", poll_all_integrations)
-
-
-# ── GitHub: poll every 15 minutes ───────────────────────────────────────────
-
-@_inngest_client.create_function(
-    fn_id="github-poll-sync",
-    trigger=inngest.TriggerCron(cron="*/15 * * * *"),
-    concurrency=[inngest.Concurrency(limit=1)],
-)
-async def github_poll_sync(ctx: inngest.Context) -> dict[str, Any]:
-    settings = get_settings()
-    if not (settings.github_app_id and settings.github_app_private_key):
-        return {"status": "skipped", "reason": "github_app_not_configured"}
-    from app.services.integrations.github import poll_all_integrations
-    return await ctx.step.run("github-sync-all", poll_all_integrations)
-
-
-# ── Dropbox: poll every 10 minutes ──────────────────────────────────────────
-
-@_inngest_client.create_function(
-    fn_id="dropbox-poll-sync",
-    trigger=inngest.TriggerCron(cron="*/10 * * * *"),
-    concurrency=[inngest.Concurrency(limit=1)],
-)
-async def dropbox_poll_sync(ctx: inngest.Context) -> dict[str, Any]:
-    settings = get_settings()
-    if not (settings.dropbox_client_id and settings.dropbox_client_secret):
-        return {"status": "skipped", "reason": "dropbox_oauth_not_configured"}
-    from app.services.integrations.dropbox_svc import poll_all_integrations
-    return await ctx.step.run("dropbox-sync-all", poll_all_integrations)
-
-
-# ── Generic binary-document handler — used by OneDrive, SharePoint,
-#    Confluence (attachments), and Dropbox so each provider only has to
-#    queue the event and not duplicate the download+parse dance.
+# ── Generic external binary-document handler ───────────────────────────────
 
 @_inngest_client.create_function(
     fn_id="process-binary-external",
@@ -233,9 +171,5 @@ FUNCTIONS = [
     support_mailbox_poll_sync,
     notion_poll_sync,
     process_text_document,
-    onedrive_poll_sync,
-    confluence_poll_sync,
-    github_poll_sync,
-    dropbox_poll_sync,
     process_binary_external,
 ]

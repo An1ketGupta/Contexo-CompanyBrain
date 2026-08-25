@@ -174,67 +174,6 @@ class Settings(BaseSettings):
     # Distinct from internal_email_secret to limit blast radius if either leaks.
     oauth_state_secret: str = ""
 
-    # ── Post-Slack integrations wave (OneDrive/SharePoint, Confluence,
-    #    GitHub App, Dropbox). All four are org-scoped admin installs.
-    #    Empty values disable the corresponding UI card + skip the polling
-    #    cron — the deploy boots cleanly even if you haven't provisioned the
-    #    OAuth apps yet.
-
-    # Microsoft Graph (Azure AD app, "Microsoft 365 / personal" multi-tenant).
-    # Scopes requested: Files.Read.All, Sites.Read.All, offline_access.
-    # Use the v2 OAuth endpoint with the "common" tenant for multi-tenant
-    # consent; admin consent is required for Sites.Read.All on most tenants.
-    microsoft_client_id: str = ""
-    microsoft_client_secret: str = ""
-    microsoft_tenant: str = "common"
-    microsoft_oauth_redirect_uri: str = (
-        "http://localhost:8000/integrations/onedrive/callback"
-    )
-
-    # Atlassian (Confluence Cloud OAuth 3LO). Scopes: read:confluence-content.all,
-    # read:confluence-space.summary, read:confluence-content.summary, offline_access.
-    atlassian_client_id: str = ""
-    atlassian_client_secret: str = ""
-    atlassian_oauth_redirect_uri: str = (
-        "http://localhost:8000/integrations/confluence/callback"
-    )
-
-    # GitHub App. Unlike a classic OAuth app, the install flow gives us an
-    # installation_id; we mint short-lived installation access tokens server-
-    # side via a JWT signed with the app's private key.
-    github_app_id: str = ""
-    github_app_slug: str = ""
-    github_app_client_id: str = ""
-    github_app_client_secret: str = ""
-    # PEM-formatted private key. Multi-line; in .env set as a single line with
-    # \n escapes OR mount as a file and use a separate _path var (skipped here
-    # to keep config flat — the deploy decodes \n on read).
-    github_app_private_key: str = ""
-    github_app_webhook_secret: str = ""
-    github_oauth_redirect_uri: str = (
-        "http://localhost:8000/integrations/github/callback"
-    )
-
-    # Dropbox Business. Scopes: files.content.read, files.metadata.read,
-    # team_data.member, members.read. Team admin consent required.
-    dropbox_client_id: str = ""
-    dropbox_client_secret: str = ""
-    dropbox_oauth_redirect_uri: str = (
-        "http://localhost:8000/integrations/dropbox/callback"
-    )
-
-    # Zoom. Scopes: cloud_recording:read, user:read:user. OAuth app for the
-    # per-org connect flow; webhook_secret_token is a separate, app-level
-    # "Secret Token" from the Zoom Marketplace app's Event Subscription page
-    # (static across all installs — not the per-row webhook_secret the
-    # unified integrations table mints).
-    zoom_client_id: str = ""
-    zoom_client_secret: str = ""
-    zoom_oauth_redirect_uri: str = (
-        "http://localhost:8000/integrations/zoom/callback"
-    )
-    zoom_webhook_secret_token: str = ""
-
     # ── Stripe billing (Production Roadmap Day 6+) ──────────────────────────
     # `stripe_mode` decides which set of pricing_tiers rows we read at
     # runtime: 'test' for staging + local, 'live' for production. Keeping
@@ -323,9 +262,7 @@ class Settings(BaseSettings):
         "http://localhost:8000/integrations/linear/callback"
     )
 
-    # Jira Cloud — Atlassian OAuth 3LO. Separate from atlassian_* (which is
-    # the Confluence-scoped app) so each integration card can be enabled or
-    # disabled independently.
+    # Jira Cloud — Atlassian OAuth 3LO.
     jira_client_id: str = ""
     jira_client_secret: str = ""
     jira_oauth_redirect_uri: str = (

@@ -1,6 +1,6 @@
 """Asana adapter (per-user OAuth).
 
-Connect flow lives in `routers/integrations_v2.py` — this module is the
+Connect flow lives in `routers/agent2_integrations.py` — this module is the
 network adapter only.
 
 Surface:

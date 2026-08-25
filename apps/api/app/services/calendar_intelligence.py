@@ -428,7 +428,7 @@ async def find_previous_occurrence(meeting: dict[str, Any]) -> dict[str, Any] | 
 
 
 def _format_structured_recap(summary: dict[str, Any]) -> str:
-    """Render a Zoom/Teams `meeting_summaries` row into recap text."""
+    """Render a structured `meeting_summaries` row into recap text."""
     parts: list[str] = []
     if (summary.get("summary") or "").strip():
         parts.append(summary["summary"].strip())
@@ -533,7 +533,7 @@ async def resolve_prior_meeting_context(
 
     Resolves the meeting's transcript document (owned by the meeting owner,
     ingested within a window around the meeting), then either reuses its
-    structured Zoom/Teams `meeting_summaries` or recaps the raw Google Meet
+    structured `meeting_summaries` or recaps the raw Google Meet
     transcript.
 
     Confidence gate for a raw transcript: its name must match the meeting title
@@ -594,9 +594,8 @@ async def resolve_prior_meeting_context(
         )
         return res.data or []
 
-    # Own transcripts (host/auto-synced) plus transcripts shared via the Zoom
-    # attendee auto-share grant (migration 089) — an attendee's own brief should
-    # see the same prior-meeting context the host's brief does.
+    # Include both owned transcripts and transcripts explicitly shared with
+    # the user so their brief sees all prior-meeting context they can access.
     own_docs, shared_doc_ids = await asyncio.gather(
         asyncio.to_thread(_own_docs), asyncio.to_thread(_shared_doc_ids)
     )

@@ -591,7 +591,7 @@ async def _smart_route_doc(*, doc_id: str, org_id: str) -> dict[str, Any]:
         return {"status": "failed", "reason": str(exc)[:200]}
 
 
-# Extensions recognised as meeting transcripts. .vtt = Zoom WebVTT,
+# Extensions recognised as meeting transcripts. .vtt = WebVTT,
 # .json = Microsoft Teams transcript export (other JSON docs are excluded
 # by the agent's parser detection rather than this filter so a generic
 # JSON upload doesn't get routed here), .txt tagged 'transcript' = manually
@@ -606,7 +606,7 @@ async def _maybe_route_meeting_transcript(
     upload is a transcript. Routing is keyed by file_type so the regular
     doc pipeline doesn't try to interpret every JSON.
 
-    .vtt → Zoom WebVTT
+    .vtt → WebVTT
     .json with file_type='teams_transcript' → Teams transcript export
         (the documents router sets that file_type when an admin uploads
         via the dedicated meeting-transcript path)

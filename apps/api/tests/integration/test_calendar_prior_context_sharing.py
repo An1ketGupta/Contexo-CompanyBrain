@@ -1,7 +1,7 @@
 """Integration test for the calendar_intelligence.py extension that lets an
-attendee's own meeting-prep brief see prior-meeting context from a Zoom
-transcript they didn't host, as long as they hold a document_shares grant
-(migration 089's attendee auto-share). Previously this lookup only matched
+user's own meeting-prep brief see prior-meeting context from a private
+transcript they didn't create, as long as they hold a document_shares grant.
+Previously this lookup only matched
 documents the brief's own user created.
 
 Run with: pytest -m integration (excluded from the default run — see pytest.ini).
@@ -43,7 +43,7 @@ async def test_attendee_without_share_gets_no_prior_context(
                 "name": "Weekly Sync — transcript",
                 "file_path": "orgs/x/docs/x/t.vtt",
                 "file_type": "vtt",
-                "source": "zoom",
+                "source": "google_meet_transcript",
                 "created_by": host.id,
                 "created_at": _DOC_CREATED_AT,
             }
@@ -55,7 +55,7 @@ async def test_attendee_without_share_gets_no_prior_context(
         {
             "org_id": org["id"],
             "source_document_id": doc["id"],
-            "source_format": "zoom_vtt",
+            "source_format": "google_meet",
             "summary": "Decided to ship the search revamp in Q3.",
         }
     ).execute()
@@ -78,7 +78,7 @@ async def test_attendee_with_share_gets_prior_context_from_hosts_transcript(
                 "name": "Weekly Sync — transcript",
                 "file_path": "orgs/x/docs/x/t.vtt",
                 "file_type": "vtt",
-                "source": "zoom",
+                "source": "google_meet_transcript",
                 "created_by": host.id,
                 "created_at": _DOC_CREATED_AT,
             }
@@ -90,7 +90,7 @@ async def test_attendee_with_share_gets_prior_context_from_hosts_transcript(
         {
             "org_id": org["id"],
             "source_document_id": doc["id"],
-            "source_format": "zoom_vtt",
+            "source_format": "google_meet",
             "summary": "Decided to ship the search revamp in Q3.",
         }
     ).execute()
@@ -118,7 +118,7 @@ async def test_host_still_gets_own_transcript_as_prior_context(
                 "name": "Weekly Sync — transcript",
                 "file_path": "orgs/x/docs/x/t.vtt",
                 "file_type": "vtt",
-                "source": "zoom",
+                "source": "google_meet_transcript",
                 "created_by": host.id,
                 "created_at": _DOC_CREATED_AT,
             }
@@ -130,7 +130,7 @@ async def test_host_still_gets_own_transcript_as_prior_context(
         {
             "org_id": org["id"],
             "source_document_id": doc["id"],
-            "source_format": "zoom_vtt",
+            "source_format": "google_meet",
             "summary": "Decided to ship the search revamp in Q3.",
         }
     ).execute()
@@ -153,7 +153,7 @@ async def test_share_outside_time_window_is_ignored(service_client, org, make_us
                 "name": "Weekly Sync — transcript",
                 "file_path": "orgs/x/docs/x/t.vtt",
                 "file_type": "vtt",
-                "source": "zoom",
+                "source": "google_meet_transcript",
                 "created_by": host.id,
                 "created_at": far_created_at,
             }
@@ -165,7 +165,7 @@ async def test_share_outside_time_window_is_ignored(service_client, org, make_us
         {
             "org_id": org["id"],
             "source_document_id": doc["id"],
-            "source_format": "zoom_vtt",
+            "source_format": "google_meet",
             "summary": "Unrelated later meeting.",
         }
     ).execute()

@@ -47,9 +47,9 @@ DocumentStatus = Literal["pending", "processing", "ready", "failed"]
 DocumentFileType = Literal["pdf", "docx", "txt", "md", "xlsx", "pptx", "html", "csv"]
 DocumentKind = Literal["meeting_transcript"]
 
-# A document is a "meeting transcript" if it's a Zoom/Google Meet auto-sync
-# (services/integrations/zoom.py, google_meet_transcripts.py) or a manually
-# uploaded VTT/Teams-JSON file (both route into MeetingNotesAgent — see the
+# A document is a "meeting transcript" if it's a Google Meet auto-sync, a
+# legacy imported transcript, or a manually uploaded VTT/Teams-JSON file.
+# Manual transcript formats route into MeetingNotesAgent — see the
 # file_type comment near _resolve_file_type above). Checked directly rather
 # than via the 'meeting-notes' tag because that tag is only added once
 # MeetingNotesAgent finishes, so a just-uploaded transcript would briefly
@@ -88,7 +88,7 @@ _MIME_TO_TYPE: dict[str, str] = {
     "text/html": "html",
     "application/xhtml+xml": "html",
     "text/csv": "csv",
-    # Day 13 — meeting transcripts. Zoom serves VTT as text/vtt, some MTAs as
+    # Day 13 — meeting transcripts. WebVTT is served as text/vtt, some MTAs as
     # application/octet-stream so we still fall back to the extension below.
     "text/vtt": "vtt",
     # Day 13 — Microsoft Teams transcript exports. Teams writes JSON; we
@@ -140,7 +140,7 @@ def _resolve_file_type(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=(
             "Unsupported file type. Allowed: PDF, DOCX, XLSX, PPTX, TXT, MD, "
-            "HTML, CSV, VTT (Zoom transcript), JSON (Teams transcript)."
+            "HTML, CSV, VTT (meeting transcript), JSON (Teams transcript)."
         ),
     )
 
@@ -647,7 +647,7 @@ async def list_documents(
     tag: list[str] | None = Query(None, description="Repeat to AND-filter multiple tags."),
     search: str | None = Query(None, max_length=120, description="Case-insensitive substring match on name."),
     kind: DocumentKind | None = Query(
-        None, description="'meeting_transcript' restricts to Zoom/Meet/manual transcript uploads."
+        None, description="'meeting_transcript' restricts to supported meeting transcript uploads."
     ),
     sort_by: DocumentSortField = Query("created_at"),
     sort_dir: DocumentSortDir = Query("desc"),
@@ -1286,7 +1286,7 @@ async def update_document_visibility(
     body: VisibilityPatchBody,
     current_user: dict = Depends(verify_jwt),
 ) -> dict[str, Any]:
-    """Owner publishes a private document (auto-synced Zoom/Meet transcript,
+    """Owner publishes a private meeting transcript,
     or reverts a published one back to private).
 
     Ownership is checked here rather than left to RLS: `documents_update`

@@ -113,9 +113,9 @@ supabase/migrations/    001 → 058 SQL files
 
 ## Integrations
 
-Two storage shapes coexist: **legacy per-provider tables** (`drive_integrations`, `notion_integrations`, `slack_integrations`, `gmail_integrations`) and **unified `integrations` table** (migration 036, used by OneDrive/Confluence/GitHub/Dropbox/Jira). Shared helpers in `services/integrations/_unified.py`.
+Two storage shapes coexist: **legacy per-provider tables** (`drive_integrations`, `notion_integrations`, `slack_integrations`, `gmail_integrations`) and the **unified `integrations` table** used by newer integrations such as Jira. Shared helpers live in `services/integrations/_unified.py`.
 
-External binary ingest event: `doc/process-binary-external` — OneDrive, Confluence, Dropbox queue this; worker downloads bytes and runs the standard pipeline without a Supabase Storage round trip.
+External binary ingest event: `doc/process-binary-external` downloads third-party files and runs the standard pipeline without a Supabase Storage round trip.
 
 Gmail re-auth required if Drive was connected first (scopes don't overlap). Re-auth banner shown when `has_send_scope = false`.
 

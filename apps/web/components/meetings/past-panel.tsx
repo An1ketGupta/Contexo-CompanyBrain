@@ -75,7 +75,7 @@ const fetcher = async (url: string) => {
 };
 
 const FORMAT_LABEL: Record<string, string> = {
-  zoom_vtt: "Zoom",
+  zoom_vtt: "WebVTT",
   teams_json: "Teams",
   unknown: "Transcript",
 };
@@ -428,7 +428,7 @@ function EmptyState() {
       </div>
       <p className="mt-3 text-sm font-medium">No meeting summaries yet</p>
       <p className="mt-1 text-xs text-muted-foreground">
-        Upload a Zoom <code>.vtt</code>, Teams transcript JSON, or Google Meet{" "}
+        Upload a WebVTT <code>.vtt</code>, Teams transcript JSON, or Google Meet{" "}
         <code>.txt</code> transcript and Contexo will extract attendees,
         decisions, and action items automatically.
       </p>
@@ -462,7 +462,7 @@ function TranscriptUploadButton() {
           : `${added} transcripts uploading — summaries will appear once processing finishes.`,
       );
     } else if (rejected > 0) {
-      toast.error("Upload a Zoom .vtt, Teams .json, or Google Meet .txt transcript file.");
+      toast.error("Upload a WebVTT .vtt, Teams .json, or Google Meet .txt transcript file.");
     }
   };
 

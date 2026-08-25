@@ -1,10 +1,9 @@
 """Shared scaffolding for providers that use the unified `integrations` table.
 
-The earlier wave (Drive, Notion, Gmail, Slack) each got their own provider
-table. For the OneDrive/Confluence/GitHub/Dropbox wave we collapsed onto a
-single `integrations` row (see migration 036). This module hides the SQL
-shape of that row behind a tiny set of helpers so each provider service
-stays focused on its API quirks, not row plumbing.
+The earlier integrations (Drive, Notion, Gmail, Slack) each got their own
+provider table. Newer integrations share the `integrations` table introduced
+in migration 036. This module hides that row shape behind a small set of
+provider-agnostic helpers.
 
 Shape recap:
     integrations(
@@ -199,8 +198,7 @@ async def find_row_by_metadata(
     """Look up an integrations row by a metadata field.
 
     For inbound webhooks that arrive independent of any org-scoped request
-    (Zoom, and eventually Confluence/OneDrive once their stub webhooks get
-    wired up) and must self-resolve which org they belong to from an
+    and must self-resolve which org they belong to from an
     account/tenant id carried in the payload.
     """
     svc = get_service_client()
@@ -358,16 +356,15 @@ async def mark_error(
 
 # ── External binary ingestion (PDF/DOCX/XLSX/PPTX from a URL) ───────────────
 #
-# OneDrive, Dropbox, and Confluence-attachments all give us a download URL +
-# auth header for a binary file. Rather than each provider re-implementing the
-# "download bytes → run pipeline" dance, we expose a single Inngest event
-# (doc/process-binary-external) and a helper that queues it.
+# Providers can supply a download URL and auth header for a binary file. The
+# shared event keeps the "download bytes → run pipeline" work out of polling
+# and webhook requests.
 
 
 async def queue_binary_ingest(
     *,
     org_id: str,
-    source: str,            # 'onedrive' | 'sharepoint' | 'confluence' | 'dropbox'
+    source: str,
     external_id: str,
     name: str,
     file_type: str,         # 'pdf' | 'docx' | 'xlsx' | 'pptx' | 'txt' | 'md'
@@ -411,51 +408,6 @@ async def queue_binary_ingest(
             name="doc/process-binary-external",
             data=event_data,
             id=f"{source}-{doc_id}-{external_id[-12:]}",
-        )
-    )
-    return doc_id
-
-
-async def queue_text_ingest(
-    *,
-    org_id: str,
-    source: str,
-    external_id: str,
-    name: str,
-    file_type: str,
-    text: str,
-    user_id: str | None,
-    source_url: str | None = None,
-) -> str:
-    """Convenience: upsert doc + fire `doc/process-text` for already-extracted text.
-
-    Used by Confluence page bodies, GitHub markdown, and GitHub Issues +
-    Discussions where the integration has already done the text extraction.
-    """
-    doc_id = await upsert_external_document(
-        org_id=org_id,
-        source=source,
-        external_id=external_id,
-        name=name,
-        file_type=file_type,
-        user_id=user_id,
-    )
-    import inngest
-
-    from app.inngest.client import get_inngest_client
-
-    client = get_inngest_client()
-    await client.send(
-        inngest.Event(
-            name="doc/process-text",
-            data={
-                "doc_id": doc_id,
-                "org_id": org_id,
-                "text": text,
-                "title": name,
-                "source_url": source_url,
-            },
-            id=f"{source}-{doc_id}-text",
         )
     )
     return doc_id

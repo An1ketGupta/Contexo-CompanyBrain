@@ -1,10 +1,10 @@
 """MeetingNotesAgent — structured extraction from uploaded transcripts (Day 13).
 
 Triggered by `meeting/transcript-uploaded` after the regular doc pipeline
-has run on a `.vtt` (Zoom) or `teams_transcript` (.json) file. Steps:
+has run on a WebVTT or `teams_transcript` (.json) file. Steps:
 
   1. load_transcript     Download from Supabase Storage and run the
-                         appropriate parser (Zoom VTT vs Teams JSON).
+                         appropriate parser (WebVTT vs Teams JSON).
                          Idempotent: an existing meeting_summaries row
                          short-circuits the run.
   2. extract             One LLM call returns a strict JSON object:
@@ -254,7 +254,7 @@ class MeetingNotesAgent(BaseAgent):
         )
 
         # ── Step 5: best-effort Slack action-item ping ────────────────
-        # Not for private transcripts (auto-synced Zoom/Meet recordings) —
+        # Not for private transcripts —
         # posting their action items to a shared channel would broadcast the
         # very content the visibility gate keeps owner-only.
         if (doc.get("visibility") or "org") == "private":
@@ -354,10 +354,9 @@ class MeetingNotesAgent(BaseAgent):
             log.warning("meeting_derived_doc_insert_failed", error=str(exc))
             return None
 
-        # Mirror any document_shares (migration 089 — attendee auto-share)
-        # from the source transcript onto the derived summary doc, so an
-        # opted-in attendee who can read the transcript can also read its
-        # decisions/action-items summary.
+        # Mirror any document_shares from the source transcript onto the
+        # derived summary doc, so anyone who can read the transcript can also
+        # read its decisions/action-items summary.
         try:
             shares = await asyncio.to_thread(
                 lambda: svc.table("document_shares")

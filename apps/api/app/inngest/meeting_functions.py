@@ -19,7 +19,6 @@ from app.inngest.client import get_inngest_client
 from app.observability import get_logger
 from app.services.agents.meeting_notes_agent import MeetingNotesAgent
 from app.services.analytics import track_event
-from app.services.integrations import zoom as zoom_svc
 
 log = get_logger(__name__)
 
@@ -97,48 +96,7 @@ async def meeting_prep_created_fn(ctx: inngest.Context) -> dict[str, Any]:
     return {"status": "ok"}
 
 
-@_inngest_client.create_function(
-    fn_id="zoom-transcript-ready",
-    trigger=inngest.TriggerEvent(event="zoom/transcript-ready"),
-    retries=2,
-    concurrency=[
-        inngest.Concurrency(limit=1, key="event.data.meeting_uuid", scope="fn"),
-    ],
-)
-async def zoom_transcript_ready_fn(ctx: inngest.Context) -> dict[str, Any]:
-    """Fired by the Zoom webhook (routers/integrations_v2.py::zoom_webhook)
-    once a recording's transcript is ready. Downloads the .vtt, lands it in
-    Storage, and rides the same doc/uploaded + meeting/transcript-uploaded
-    pipeline a manual transcript upload uses."""
-    data = ctx.event.data
-    org_id = data.get("org_id")
-    download_url = data.get("download_url")
-    meeting_uuid = data.get("meeting_uuid")
-
-    if not org_id or not download_url or not meeting_uuid:
-        return {"status": "skipped", "reason": "missing_required_fields"}
-
-    try:
-        result = await zoom_svc.ingest_transcript_from_webhook(
-            org_id=org_id,
-            user_id=data.get("user_id"),
-            download_url=download_url,
-            download_token=data.get("download_token") or "",
-            meeting_topic=data.get("meeting_topic") or "",
-            meeting_uuid=meeting_uuid,
-            attendee_user_ids=data.get("attendee_user_ids") or [],
-        )
-    except Exception as exc:
-        log.warning(
-            "zoom_transcript_ingest_failed",
-            org_id=org_id, meeting_uuid=meeting_uuid, error=str(exc),
-        )
-        raise
-    return result
-
-
 FUNCTIONS = [
     process_meeting_transcript_fn,
     meeting_prep_created_fn,
-    zoom_transcript_ready_fn,
 ]

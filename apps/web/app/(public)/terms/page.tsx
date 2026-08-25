@@ -49,8 +49,7 @@ export default function TermsPage() {
             outputs grounded in that content. The service includes a web
             application, a FastAPI backend, background agents, a Chrome
             extension, and integrations with third-party providers (Google
-            Drive, Notion, Slack, Gmail, Microsoft Graph, Confluence, GitHub,
-            Dropbox, email forwarding).
+            Drive, Notion, Slack, Gmail, and email forwarding).
           </p>
         </Section>
 

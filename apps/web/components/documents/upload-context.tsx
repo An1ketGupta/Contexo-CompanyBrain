@@ -70,7 +70,7 @@ export const ACCEPTED_EXT = new Set([
   "pptx",
   "html",
   "csv",
-  // Meeting transcripts: .vtt (Zoom WebVTT) and .json (Teams export). The
+  // Meeting transcripts: .vtt (WebVTT) and .json (Teams export). The
   // backend sniffs the bytes and rejects non-transcript JSON with an
   // actionable error, so accepting them here is safe.
   "vtt",

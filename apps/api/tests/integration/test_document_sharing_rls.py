@@ -1,7 +1,7 @@
 """Integration tests against a real local Supabase instance for the
-attendee-sharing feature's security-critical surface (migration 089):
+document-sharing feature's security-critical surface (migration 089):
 
-  * migration 086's trigger forces new Zoom/Meet transcripts private
+  * the transcript trigger forces new Meet transcripts private
   * document_shares grants extend documents_select / meeting_summaries_select_org
   * document_shares grants extend fts_search's visibility predicate
 
@@ -14,7 +14,7 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-def _insert_zoom_document(service_client, org_id: str, created_by: str) -> dict:
+def _insert_private_transcript(service_client, org_id: str, created_by: str) -> dict:
     row = (
         service_client.table("documents")
         .insert(
@@ -23,7 +23,7 @@ def _insert_zoom_document(service_client, org_id: str, created_by: str) -> dict:
                 "name": "Q3 roadmap sync — transcript",
                 "file_path": "orgs/x/docs/x/transcript.vtt",
                 "file_type": "vtt",
-                "source": "zoom",
+                "source": "google_meet_transcript",
                 "created_by": created_by,
                 # visibility intentionally omitted — the migration 086 trigger
                 # must set it, not the column DEFAULT ('org').
@@ -34,9 +34,9 @@ def _insert_zoom_document(service_client, org_id: str, created_by: str) -> dict:
     return row.data[0]
 
 
-def test_zoom_document_defaults_to_private(service_client, org, make_user):
+def test_transcript_document_defaults_to_private(service_client, org, make_user):
     host = make_user()
-    doc = _insert_zoom_document(service_client, org["id"], host.id)
+    doc = _insert_private_transcript(service_client, org["id"], host.id)
     assert doc["visibility"] == "private"
 
 
@@ -47,7 +47,7 @@ def test_shared_user_can_see_private_document_outsider_cannot(
     shared = make_user()
     outsider = make_user()
 
-    doc = _insert_zoom_document(service_client, org["id"], host.id)
+    doc = _insert_private_transcript(service_client, org["id"], host.id)
     doc_id = doc["id"]
 
     service_client.table("document_shares").insert(
@@ -74,7 +74,7 @@ def test_shared_user_can_see_meeting_summary_of_shared_transcript(
     shared = make_user()
     outsider = make_user()
 
-    doc = _insert_zoom_document(service_client, org["id"], host.id)
+    doc = _insert_private_transcript(service_client, org["id"], host.id)
     doc_id = doc["id"]
 
     service_client.table("document_shares").insert(
@@ -87,7 +87,7 @@ def test_shared_user_can_see_meeting_summary_of_shared_transcript(
             {
                 "org_id": org["id"],
                 "source_document_id": doc_id,
-                "source_format": "zoom_vtt",
+                "source_format": "google_meet",
                 "summary": "Discussed Q3 roadmap priorities.",
             }
         )
@@ -124,7 +124,7 @@ def test_fts_search_respects_document_shares_grant(service_client, org, make_use
     shared = make_user()
     outsider = make_user()
 
-    doc = _insert_zoom_document(service_client, org["id"], host.id)
+    doc = _insert_private_transcript(service_client, org["id"], host.id)
     doc_id = doc["id"]
 
     service_client.table("chunks").insert(
@@ -165,7 +165,7 @@ def test_unshared_private_document_is_invisible_to_org_mate(
     host = make_user()
     other = make_user()
 
-    doc = _insert_zoom_document(service_client, org["id"], host.id)
+    doc = _insert_private_transcript(service_client, org["id"], host.id)
     doc_id = doc["id"]
 
     other_seen = (

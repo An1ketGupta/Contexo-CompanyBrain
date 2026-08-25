@@ -66,8 +66,8 @@ export default function PrivacyPolicyPage() {
             <li>
               <strong>Workspace content</strong> — documents you upload, files
               synced from connected integrations (Google Drive, Notion,
-              Slack, Gmail, OneDrive, Confluence, GitHub, Dropbox, email
-              forwarding), and any text you ask the assistant about.
+              Slack, Gmail, and email forwarding), and any text you ask the
+              assistant about.
             </li>
             <li>
               <strong>Usage data</strong> — chat messages, query logs, feedback
@@ -259,5 +259,5 @@ const SUBPROCESSORS: { name: string; purpose: string }[] = [
   { name: "Inngest", purpose: "Background job orchestration" },
   { name: "Sentry", purpose: "Error monitoring" },
   { name: "Langfuse", purpose: "LLM tracing and observability" },
-  { name: "Notion / Slack / Microsoft / Atlassian / GitHub / Dropbox", purpose: "Integration providers, per workspace opt-in" },
+  { name: "Notion / Slack", purpose: "Integration providers, per workspace opt-in" },
 ];

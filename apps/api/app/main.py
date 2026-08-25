@@ -52,9 +52,6 @@ from app.routers import (
     integrations as integrations_router,
 )
 from app.routers import (
-    integrations_v2 as integrations_v2_router,
-)
-from app.routers import (
     internal as internal_router,
 )
 from app.routers import (
@@ -248,7 +245,6 @@ app.include_router(auth_router.router)
 app.include_router(usage_router.router)
 app.include_router(webhooks_router.router)
 app.include_router(integrations_router.router)
-app.include_router(integrations_v2_router.router)
 app.include_router(public_api.router)
 app.include_router(slack_router.router)
 app.include_router(gmail_router.router)

@@ -61,7 +61,7 @@ const fetcher = async (url: string) => {
 };
 
 const FORMAT_LABEL: Record<string, string> = {
-  zoom_vtt: "Zoom",
+  zoom_vtt: "WebVTT",
   teams_json: "Teams",
   unknown: "Transcript",
 };

@@ -3,7 +3,7 @@
  * POST /integrations/{provider}/connect   (ATS only — body { api_key, ... })
  * GET  /integrations/{provider}/connect   (Asana, Linear — returns auth URL)
  *
- * Existing per-provider routes (gmail, drive, notion, slack, onedrive, etc.)
+ * Existing per-provider routes (gmail, drive, notion, slack, etc.)
  * sit higher in the routing tree and take precedence for those providers.
  */
 import { NextRequest } from "next/server";

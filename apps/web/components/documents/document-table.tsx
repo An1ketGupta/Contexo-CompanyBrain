@@ -67,7 +67,7 @@ function hasFailedChunks(metadata: unknown): boolean {
   return !!s && s.failed > 0;
 }
 
-// Zoom/Google Meet auto-sync (source) or a manually uploaded VTT/Teams-JSON/
+// Google Meet auto-sync, a legacy transcript source, or a manually uploaded VTT/Teams-JSON/
 // Google Meet .txt transcript (file_type) — both route into MeetingNotesAgent
 // server-side. Mirrors the backend predicate in routers/documents.py
 // (DocumentKind filter).

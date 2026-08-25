@@ -54,7 +54,7 @@ export interface Document {
   created_by: string | null;
   created_at: string;
   tags?: string[];
-  // Source integration ('zoom' | 'google_meet_transcript' | 'upload' | …)
+  // Source integration ('google_meet_transcript' | 'upload' | legacy values | …)
   // and the migration-084/086 privacy gate — private docs are owner-only.
   source?: string | null;
   visibility?: DocumentVisibility;
