@@ -122,7 +122,7 @@ def _mark_sent(report_id: str, next_send_at: datetime) -> None:
     fn_id="reports-dispatch-one",
     trigger=inngest.TriggerEvent(event="reports/dispatch-one"),
     retries=2,
-    concurrency=[inngest.Concurrency(limit=10)],
+    concurrency=[inngest.Concurrency(limit=5)],
 )
 async def dispatch_one_report(ctx: inngest.Context) -> dict[str, Any]:
     """Render + send one scheduled report. Idempotent: if the row has already
