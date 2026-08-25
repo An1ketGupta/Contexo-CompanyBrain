@@ -1,10 +1,8 @@
 # Mock ATS Server
 
-Stand-in for **Greenhouse Harvest**, **Lever Postings**, **Ashby Public**, and **Naukri HotVacancy** APIs.
+Stand-in for **Greenhouse Harvest**, **Lever Postings**, and **Ashby Public** APIs.
 
-All four providers are enterprise sales-only — there's no self-serve developer tier we can use to exercise the publish loop end-to-end in dev or CI. This server mimics all four accurately enough that our adapters' `test_connection()`, `list_*()`, and `publish_job()` paths succeed without modification.
-
-Naukri sits alongside the ATSes in this mock even though it's a job board (not an internal hiring system). The connect / publish wire shape is the same enough that one mock covers both kinds.
+All three providers are enterprise sales-only — there's no self-serve developer tier we can use to exercise the publish loop end-to-end in dev or CI. This server mimics all three accurately enough that our adapters' `test_connection()`, `list_*()`, and `publish_job()` paths succeed without modification.
 
 ## Run it (the easy way)
 
@@ -110,19 +108,6 @@ Basic auth, API key as the username, blank password — same as all three real p
 | POST | `/team.list` | Taxonomy |
 | POST | `/jobTemplate.list` | Taxonomy |
 
-### Naukri — `/naukri/v1/`
-
-Auth diverges from the ATSes: Naukri uses an **`Auth-Key`** header (NOT HTTP Basic).
-Multi-account contracts also send an `Account-Id` header.
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/ping` | Auth probe (cheap connectivity check) |
-| POST | `/jobposting` | Create / publish a HotVacancy job |
-| GET | `/taxonomy/functionalAreas` | Indian-market Functional Area master list |
-| GET | `/taxonomy/roleCategories` | Role Category master list |
-| GET | `/taxonomy/industries` | Industry Type master list |
-
 ### Operational
 
 | Method | Path | Purpose |
@@ -163,9 +148,6 @@ Every tenant boots with realistic data so the mapping resolver has something non
 - **5 teams** (Ashby) — deterministic UUIDs derived from department names
 - **4 job templates** (Ashby) — Engineering, Product Manager, Designer, Go-to-Market
 - **3 users** — Aisha Patel, Marcus Chen, Sofia Rodriguez
-- **10 functional areas** (Naukri) — IT-Software, Sales, HR, Marketing, Finance, Design, Operations, Engineering, Analytics, Product Management
-- **15 role categories** (Naukri) — Programming, QA, DevOps, Data Engineering, Data Science, Product Mgmt, Field Sales, Inside Sales, Recruitment, UX, Visual Design, Digital Marketing, Brand Marketing, Finance, Customer Success
-- **15 industries** (Naukri) — IT-Software, Internet/E-commerce, Banking, Insurance, BPO, Education, Healthcare, Pharma, Retail, Consulting, Media, Real Estate, Telecom, Automobile, FMCG
 
 State persists for the lifetime of the process. Hit `POST /__reset` between test runs for isolation.
 

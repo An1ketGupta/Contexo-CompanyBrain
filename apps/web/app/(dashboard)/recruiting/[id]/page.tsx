@@ -64,31 +64,11 @@ interface LinkedinSearch {
   description: string;
 }
 
-interface NaukriSearch {
-  label: string;
-  url: string;
-  description: string;
-  query_summary?: string | null;
-}
-
-interface NaukriTaxonomy {
-  functional_area_id: string | null;
-  functional_area_name: string | null;
-  role_category_id: string | null;
-  role_category_name: string | null;
-  industry_type_id: string | null;
-  industry_type_name: string | null;
-  experience_min_years: number | null;
-  experience_max_years: number | null;
-  key_skills: string[];
-}
-
-type AtsPlatform = "greenhouse" | "lever" | "ashby" | "naukri";
-type DestinationType = "ats" | "job_board";
+type AtsPlatform = "greenhouse" | "lever" | "ashby";
 
 interface AtsPosting {
   platform: AtsPlatform;
-  destination_type?: DestinationType | null;
+  destination_type?: "ats" | null;
   job_id: string | null;
   url: string | null;
   error: string | null;
@@ -120,8 +100,6 @@ interface Requisition {
   archived_at: string | null;
   sourcing_templates: SourcingTemplate[];
   linkedin_search_urls: LinkedinSearch[];
-  naukri_search_urls: NaukriSearch[];
-  naukri_taxonomy: NaukriTaxonomy | null;
   hiring_manager_email: string | null;
   slack_channel: string | null;
   slack_post_error: string | null;
@@ -129,17 +107,13 @@ interface Requisition {
   error_message: string | null;
 }
 
-// Grouped by kind so the publish form renders ATSes + Job Boards as two
-// labeled sections. The kind tag mirrors the backend's destination_type.
 const POSTING_DESTINATIONS: {
   value: AtsPlatform;
   label: string;
-  kind: DestinationType;
 }[] = [
-  { value: "greenhouse", label: "Greenhouse", kind: "ats" },
-  { value: "lever", label: "Lever", kind: "ats" },
-  { value: "ashby", label: "Ashby", kind: "ats" },
-  { value: "naukri", label: "Naukri.com", kind: "job_board" },
+  { value: "greenhouse", label: "Greenhouse" },
+  { value: "lever", label: "Lever" },
+  { value: "ashby", label: "Ashby" },
 ];
 
 // Back-compat alias — historical callers in this file used ATS_PLATFORMS.
@@ -204,14 +178,6 @@ export default function RequisitionDetailPage() {
   const [locationOverride, setLocationOverride] = useState("");
   const [departmentOverride, setDepartmentOverride] = useState("");
   const [deptSelections, setDeptSelections] = useState<Record<string, AtsDept>>({});
-  // Naukri-only taxonomy state. Lifted out of NaukriTaxonomyFields so the
-  // submit handler can serialise it without prop-drilling refs.
-  const [naukriFunctionalArea, setNaukriFunctionalArea] = useState<AtsDept | null>(null);
-  const [naukriRoleCategory, setNaukriRoleCategory] = useState<AtsDept | null>(null);
-  const [naukriIndustry, setNaukriIndustry] = useState<AtsDept | null>(null);
-  const [naukriExpMin, setNaukriExpMin] = useState<string>("");
-  const [naukriExpMax, setNaukriExpMax] = useState<string>("");
-  const [naukriKeySkills, setNaukriKeySkills] = useState<string>("");
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   // Inline JD editing — the Edit button swaps the rendered variant for a
@@ -290,58 +256,18 @@ export default function RequisitionDetailPage() {
     fetcher,
     { revalidateOnFocus: false },
   );
-  const { data: naukriRoleCategoriesList } = useSWR<AtsDept[]>(
-    selectedAts.has("naukri")
-      ? "/api/integrations/ats/naukri/taxonomy/role_categories"
-      : null,
-    fetcher,
-    { revalidateOnFocus: false },
-  );
-  const { data: naukriFunctionalAreas } = useSWR<AtsDept[]>(
-    selectedAts.has("naukri")
-      ? "/api/integrations/ats/naukri/taxonomy/functional_areas"
-      : null,
-    fetcher,
-    { revalidateOnFocus: false },
-  );
-  const { data: naukriIndustries } = useSWR<AtsDept[]>(
-    selectedAts.has("naukri")
-      ? "/api/integrations/ats/naukri/taxonomy/industries"
-      : null,
-    fetcher,
-    { revalidateOnFocus: false },
-  );
   // Connection status for every posting destination — surfaces whether the
   // recruiter has finished the Settings → Integrations connect step. Fetched
   // unconditionally (not gated on selection) so we can warn on a destination
   // the moment it's checked, before the recruiter ever hits Publish.
-  const { data: atsConnectionStatus, mutate: mutateAtsConnectionStatus } =
-    useSWR<
-      Record<AtsPlatform, { connected: boolean; mapping_cached_at: string | null }>
-    >("/api/integrations/ats/status", fetcher, { revalidateOnFocus: false });
-  const isAtsConnected = (p: AtsPlatform) =>
-    atsConnectionStatus?.[p]?.connected === true;
-  // Empty taxonomy dropdowns (the symptom the user just hit) almost always
-  // mean Naukri isn't connected yet.
-  const naukriConnected = isAtsConnected("naukri");
   // After all three taxonomy SWRs settle, check whether any returned data.
   // We treat "all loaded AND all empty" as the empty-state signal — partial
   // emptiness (e.g. industries [] but functional_areas non-empty) is still
   // a misconfiguration worth showing the recruiter.
-  const naukriTaxonomyLoaded =
-    naukriFunctionalAreas !== undefined &&
-    naukriIndustries !== undefined &&
-    naukriRoleCategoriesList !== undefined;
-  const naukriTaxonomyEmpty =
-    naukriTaxonomyLoaded &&
-    (naukriFunctionalAreas?.length ?? 0) === 0 &&
-    (naukriIndustries?.length ?? 0) === 0 &&
-    (naukriRoleCategoriesList?.length ?? 0) === 0;
   const deptsByPlatform: Record<AtsPlatform, AtsDept[]> = {
     greenhouse: greenhouseDepts ?? [],
     lever: leverDepts ?? [],
     ashby: ashbyDepts ?? [],
-    naukri: naukriRoleCategoriesList ?? [],
   };
 
   const handlePublish = async () => {
@@ -349,23 +275,6 @@ export default function RequisitionDetailPage() {
     if (selectedAtsList.length === 0) {
       setPublishError("Select at least one destination.");
       return;
-    }
-    // Naukri requires explicit taxonomy choices BEFORE we hit the network.
-    // Surfacing the validation here keeps the recruiter inside the form
-    // instead of bouncing on a 400 from the backend.
-    if (selectedAts.has("naukri")) {
-      if (!naukriFunctionalArea) {
-        setPublishError("Naukri: pick a Functional Area.");
-        return;
-      }
-      if (!naukriRoleCategory) {
-        setPublishError("Naukri: pick a Role Category.");
-        return;
-      }
-      if (!naukriIndustry) {
-        setPublishError("Naukri: pick an Industry Type.");
-        return;
-      }
     }
     setPublishError(null);
     setPublishing(true);
@@ -380,33 +289,6 @@ export default function RequisitionDetailPage() {
       for (const p of selectedAtsList) {
         const dept = deptSelections[p];
         if (dept) overridesPayload[p] = buildDeptOverride(p, dept);
-      }
-      // Build Naukri taxonomy payload only when Naukri is in the publish set.
-      // Backend rejects naukri_taxonomy=null when "naukri" is selected.
-      let naukriTaxonomyPayload: NaukriTaxonomy | null = null;
-      if (selectedAts.has("naukri")) {
-        const expMin = naukriExpMin.trim()
-          ? Math.max(0, Math.min(40, Number(naukriExpMin)))
-          : null;
-        const expMax = naukriExpMax.trim()
-          ? Math.max(0, Math.min(40, Number(naukriExpMax)))
-          : null;
-        const skills = naukriKeySkills
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
-          .slice(0, 12);
-        naukriTaxonomyPayload = {
-          functional_area_id: naukriFunctionalArea?.id ?? null,
-          functional_area_name: naukriFunctionalArea?.name ?? null,
-          role_category_id: naukriRoleCategory?.id ?? null,
-          role_category_name: naukriRoleCategory?.name ?? null,
-          industry_type_id: naukriIndustry?.id ?? null,
-          industry_type_name: naukriIndustry?.name ?? null,
-          experience_min_years: Number.isFinite(expMin as number) ? expMin : null,
-          experience_max_years: Number.isFinite(expMax as number) ? expMax : null,
-          key_skills: skills,
-        };
       }
       const res = await fetch(`/api/recruiting/requisitions/${id}/publish`, {
         method: "POST",
@@ -426,7 +308,6 @@ export default function RequisitionDetailPage() {
           department_override: departmentOverride || null,
           mapping_overrides:
             Object.keys(overridesPayload).length > 0 ? overridesPayload : null,
-          naukri_taxonomy: naukriTaxonomyPayload,
         }),
       });
       if (!res.ok) {
@@ -831,20 +712,12 @@ export default function RequisitionDetailPage() {
               <div className="space-y-1">
                 <Label>Posting destinations</Label>
               </div>
-              {/* Grouped by kind so the recruiter sees ATSes (internal
-                  hiring systems) and Job boards (external candidate reach)
-                  as visually distinct sets. Backed by the destination_type
-                  metadata from posting_registry on the server. */}
-              {(["ats", "job_board"] as const).map((kind) => {
-                const items = POSTING_DESTINATIONS.filter((p) => p.kind === kind);
-                if (items.length === 0) return null;
-                return (
-                  <div key={kind} className="space-y-2">
-                    <div className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                      {kind === "ats" ? "ATS platforms" : "Job boards"}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {items.map((p) => {
+              <div className="space-y-2">
+                <div className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                  ATS platforms
+                </div>
+                <div className="flex flex-wrap gap-2">
+                      {POSTING_DESTINATIONS.map((p) => {
                         const active = selectedAts.has(p.value);
                         return (
                           <label
@@ -873,10 +746,8 @@ export default function RequisitionDetailPage() {
                           </label>
                         );
                       })}
-                    </div>
-                  </div>
-                );
-              })}
+                </div>
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="location-pub">Location</Label>
@@ -957,35 +828,23 @@ export default function RequisitionDetailPage() {
             </div>
           </div>
 
-          {/* Department selection — one dropdown per selected ATS.
-              For Naukri this dropdown is the Role Category (Naukri's closest
-              analogue to "department"); the other two Naukri-required
-              taxonomy fields (Functional Area + Industry) live in the
-              dedicated section below. */}
+          {/* Department selection — one dropdown per selected ATS. */}
           {selectedAtsList.some((p) => deptsByPlatform[p].length > 0) && (
             <div className="mt-4 space-y-3">
               {selectedAtsList.map((p) => {
                 const depts = deptsByPlatform[p];
                 if (!depts.length) return null;
-                const label =
-                  p === "naukri" ? "Naukri — Role Category" : `${p} — Department`;
                 return (
                   <div key={p} className="space-y-1">
                     <Label className="text-xs text-muted-foreground capitalize">
-                      {label}
+                      {p} — Department
                     </Label>
                     <select
                       className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-                      value={
-                        p === "naukri"
-                          ? naukriRoleCategory?.id ?? ""
-                          : deptSelections[p]?.id ?? ""
-                      }
+                      value={deptSelections[p]?.id ?? ""}
                       onChange={(e) => {
                         const dept = depts.find((d) => d.id === e.target.value);
-                        if (p === "naukri") {
-                          setNaukriRoleCategory(dept ?? null);
-                        } else if (dept) {
+                        if (dept) {
                           setDeptSelections((prev) => ({ ...prev, [p]: dept }));
                         } else {
                           setDeptSelections((prev) => {
@@ -997,7 +856,7 @@ export default function RequisitionDetailPage() {
                       }}
                     >
                       <option value="">
-                        {p === "naukri" ? "Select Role Category" : "Select department (optional)"}
+                        Select department (optional)
                       </option>
                       {depts.map((d) => (
                         <option key={d.id} value={d.id}>{d.name}</option>
@@ -1006,173 +865,6 @@ export default function RequisitionDetailPage() {
                   </div>
                 );
               })}
-            </div>
-          )}
-
-          {/* Naukri-only taxonomy section — only visible when Naukri is in
-              the publish set. Three required dropdowns (Functional Area,
-              Role Category, Industry) plus optional experience band + key
-              skills. Backend rejects the publish if these aren't set. */}
-          {selectedAts.has("naukri") && (
-            <div className="mt-5 space-y-3 rounded-xl border border-dashed border-border bg-muted/40 p-4">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70">
-                  Naukri taxonomy
-                </Label>
-                <a
-                  href="https://www.naukri.com/recruiter/help/hotvacancy"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[11px] text-muted-foreground hover:underline"
-                >
-                  About these fields
-                </a>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Required by Naukri at post time. Pick the closest match — the
-                wrong selection routes the JD to the wrong candidate audience.
-              </p>
-
-              {/* Empty-state banner: dropdowns are empty because either the
-                  recruiter hasn't connected Naukri or the mapping cache
-                  wasn't warmed. Show actionable guidance instead of three
-                  silently-empty selects. */}
-              {naukriTaxonomyEmpty && !naukriConnected && (
-                <div className="rounded-xl border border-amber/30 bg-amber-tint px-3 py-2 text-sm">
-                  <p className="font-bold text-amber">
-                    Connect Naukri to load the taxonomy
-                  </p>
-                  <p className="mt-1 text-xs text-amber/90">
-                    The Functional Area, Role Category, and Industry lists
-                    come from Naukri at connect time. Until you add an API
-                    key in Settings → Integrations, these dropdowns will be
-                    empty and Naukri publishes will fail.
-                  </p>
-                  <a
-                    href="/settings/integrations"
-                    className="mt-2 inline-block text-xs font-bold text-amber underline hover:no-underline"
-                  >
-                    Open Settings → Integrations →
-                  </a>
-                </div>
-              )}
-              {naukriTaxonomyEmpty && naukriConnected && (
-                <div className="rounded-xl border border-amber/30 bg-amber-tint px-3 py-2 text-sm">
-                  <p className="font-bold text-amber">
-                    Naukri is connected, but the taxonomy cache is empty
-                  </p>
-                  <p className="mt-1 text-xs text-amber/90">
-                    The connect step warms the cache automatically — this
-                    usually means the Naukri taxonomy call failed (e.g.
-                    network blip or mock server wasn&apos;t running).
-                    Refresh below to retry without re-pasting your API key.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const res = await fetch(
-                        "/api/integrations/ats/naukri/refresh-mapping",
-                        { method: "POST" },
-                      );
-                      if (!res.ok) {
-                        toast.error("Refresh failed — check the mock server is running.");
-                        return;
-                      }
-                      toast.success("Naukri taxonomy refreshed");
-                      mutateNaukriStatus();
-                    }}
-                    className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-amber underline hover:no-underline"
-                  >
-                    Refresh mapping cache
-                  </button>
-                </div>
-              )}
-
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Functional Area</Label>
-                  <select
-                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-                    value={naukriFunctionalArea?.id ?? ""}
-                    onChange={(e) => {
-                      const opt = (naukriFunctionalAreas ?? []).find(
-                        (d) => d.id === e.target.value,
-                      );
-                      setNaukriFunctionalArea(opt ?? null);
-                    }}
-                  >
-                    <option value="">Select Functional Area</option>
-                    {(naukriFunctionalAreas ?? []).map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <Label className="text-xs">Industry Type</Label>
-                  <select
-                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-                    value={naukriIndustry?.id ?? ""}
-                    onChange={(e) => {
-                      const opt = (naukriIndustries ?? []).find(
-                        (d) => d.id === e.target.value,
-                      );
-                      setNaukriIndustry(opt ?? null);
-                    }}
-                  >
-                    <option value="">Select Industry</option>
-                    {(naukriIndustries ?? []).map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <Label htmlFor="naukri-exp-min" className="text-xs">
-                    Experience (min years)
-                  </Label>
-                  <Input
-                    id="naukri-exp-min"
-                    type="number"
-                    min={0}
-                    max={40}
-                    placeholder="e.g. 3"
-                    value={naukriExpMin}
-                    onChange={(e) => setNaukriExpMin(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <Label htmlFor="naukri-exp-max" className="text-xs">
-                    Experience (max years)
-                  </Label>
-                  <Input
-                    id="naukri-exp-max"
-                    type="number"
-                    min={0}
-                    max={40}
-                    placeholder="e.g. 6"
-                    value={naukriExpMax}
-                    onChange={(e) => setNaukriExpMax(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-1 md:col-span-2">
-                  <Label htmlFor="naukri-skills" className="text-xs">
-                    Key skills (comma-separated, max 12)
-                  </Label>
-                  <Input
-                    id="naukri-skills"
-                    placeholder="python, fastapi, postgres, kafka"
-                    value={naukriKeySkills}
-                    onChange={(e) => setNaukriKeySkills(e.target.value)}
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    Used both for the Naukri job ad and to seed the Resdex
-                    candidate-search shortcuts we generate on publish.
-                  </p>
-                </div>
-              </div>
             </div>
           )}
 
@@ -1427,34 +1119,6 @@ export default function RequisitionDetailPage() {
             </section>
           )}
 
-          {data.naukri_search_urls?.length > 0 && (
-            <section className="space-y-3">
-              <div className="flex items-center justify-between">
-                <SectionHeading icon={Search}>
-                  Naukri Resdex search shortcuts
-                </SectionHeading>
-                <span className="rounded-full bg-brand-tint px-2 py-0.5 text-[10px] font-bold text-brand">
-                  India · Resdex
-                </span>
-              </div>
-              <div className="rounded-2xl border border-border bg-card p-4">
-                <p className="mb-3 text-[11px] text-muted-foreground">
-                  Pre-filtered candidate-search URLs tuned for the Indian
-                  market. Click to land in Resdex with the filters applied —
-                  you&apos;ll need an active Resdex subscription to browse
-                  results.
-                </p>
-                <TooltipProvider delayDuration={150}>
-                  <ul className="space-y-1 text-sm">
-                    {data.naukri_search_urls.map((s, i) => (
-                      <NaukriSearchRow key={i} search={s} />
-                    ))}
-                  </ul>
-                </TooltipProvider>
-              </div>
-            </section>
-          )}
-
           {data.sourcing_templates?.length > 0 && (
             <section className="space-y-3">
               <SectionHeading icon={FileText}>
@@ -1548,66 +1212,6 @@ function LinkedinSearchRow({ search }: { search: LinkedinSearch }) {
   );
 }
 
-function NaukriSearchRow({ search }: { search: NaukriSearch }) {
-  // Same UX as LinkedinSearchRow — title + description + copy button. Extra
-  // line for query_summary (renders the active filter set inline so the
-  // recruiter doesn't have to parse the URL).
-  const [copied, setCopied] = useState(false);
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(search.url);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      toast.error("Couldn't copy URL");
-    }
-  };
-
-  return (
-    <li className="group flex items-start gap-2 rounded border border-transparent p-2 transition hover:border-border hover:bg-accent/30">
-      <div className="min-w-0 flex-1">
-        <a
-          href={search.url}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 font-semibold text-brand hover:underline"
-        >
-          {search.label}
-          <ExternalLink className="h-3 w-3" />
-        </a>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {search.description}
-        </p>
-        {search.query_summary && (
-          <p className="mt-0.5 text-[11px] text-muted-foreground/80">
-            <span className="font-medium">Filters:</span> {search.query_summary}
-          </p>
-        )}
-      </div>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 shrink-0 opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100"
-            onClick={copy}
-            aria-label="Copy Naukri search URL"
-          >
-            {copied ? (
-              <Check className="h-3.5 w-3.5 text-success" />
-            ) : (
-              <Copy className="h-3.5 w-3.5" />
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{copied ? "Copied" : "Copy URL"}</TooltipContent>
-      </Tooltip>
-    </li>
-  );
-}
-
 type PlatformKey = AtsPlatform | "notion";
 
 const PLATFORM_STYLE: Record<
@@ -1617,7 +1221,6 @@ const PLATFORM_STYLE: Record<
   greenhouse: { label: "Greenhouse", bg: "bg-success-tint", text: "text-success" },
   lever: { label: "Lever", bg: "bg-violet-tint", text: "text-violet" },
   ashby: { label: "Ashby", bg: "bg-amber-tint", text: "text-amber" },
-  naukri: { label: "Naukri", bg: "bg-brand-tint", text: "text-brand" },
   notion: { label: "Notion", bg: "bg-muted", text: "text-muted-foreground" },
 };
 
@@ -1779,9 +1382,7 @@ function StatTile({
 function buildDeptOverride(platform: AtsPlatform, dept: AtsDept): Record<string, unknown> {
   if (platform === "greenhouse") return { department_id: Number(dept.id) };
   if (platform === "ashby") return { departmentId: dept.id };
-  // Naukri doesn't ship a department concept — the Role Category mapping
-  // is layered separately via naukri_taxonomy. The "team" key remains the
-  // best signal for Lever which accepts free-text team strings.
+  // Lever accepts free-text team strings.
   return { team: dept.name };
 }
 

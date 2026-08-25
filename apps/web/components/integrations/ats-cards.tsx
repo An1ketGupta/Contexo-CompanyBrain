@@ -1,24 +1,19 @@
 "use client";
 
 /**
- * Settings-page cards for posting destinations: Greenhouse, Lever, Ashby
- * (ATSes) + Naukri (job board). Naukri lives under the same router because
- * the connect / disconnect flow is identical (API-key auth, taxonomy cache).
- * The `destination_type` from the backend distinguishes the two for the UI.
+ * Settings-page cards for Greenhouse, Lever, and Ashby.
  *
  * Auth model is API-key, not OAuth — the recruiter pastes their provider
  * API key into a modal, we POST it to the backend which calls
  * test_connection() before storing in the unified `integrations` table.
  *
- * On success the backend also warms the mapping cache (offices/depts/teams,
- * or functional areas/role categories/industries for Naukri) so the first
- * publish doesn't pay the taxonomy round-trip.
+ * On success the backend also warms the mapping cache (offices/depts/teams)
+ * so the first publish doesn't pay the taxonomy round-trip.
  */
 import { useState } from "react";
 import { toast } from "sonner";
 import {
   Briefcase,
-  Globe2,
   Loader2,
   RefreshCw,
   Unplug,
@@ -36,11 +31,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-type AtsProvider = "greenhouse" | "lever" | "ashby" | "naukri";
+type AtsProvider = "greenhouse" | "lever" | "ashby";
 
 export interface AtsStatusBlock {
   connected: boolean;
-  destination_type?: "ats" | "job_board" | null;
+  destination_type?: "ats" | null;
   connected_at?: string | null;
   last_error?: string | null;
   mapping_cached_at?: string | null;
@@ -51,12 +46,11 @@ export interface AtsStatusResponse {
   greenhouse: AtsStatusBlock;
   lever: AtsStatusBlock;
   ashby: AtsStatusBlock;
-  naukri: AtsStatusBlock;
 }
 
 const PROVIDER_COPY: Record<
   AtsProvider,
-  { name: string; description: string; kind: "ats" | "job_board" }
+  { name: string; description: string; kind: "ats" }
 > = {
   greenhouse: {
     name: "Greenhouse",
@@ -76,12 +70,6 @@ const PROVIDER_COPY: Record<
     description:
       "Publish to Ashby's Public API. Requires an API key with `apiKey:read` and `jobOpening:create`.",
   },
-  naukri: {
-    name: "Naukri.com",
-    kind: "job_board",
-    description:
-      "Broadcast openings to Naukri and get Resdex candidate-search shortcuts.",
-  },
 };
 
 function Card({
@@ -92,13 +80,10 @@ function Card({
 }: {
   title: string;
   description: string;
-  kind: "ats" | "job_board";
+  kind: "ats";
   children: React.ReactNode;
 }) {
-  // Briefcase for ATSes (internal hiring tools), Globe for job boards
-  // (external candidate reach). The visual distinction reinforces the
-  // grouping recruiter sees in the publish form.
-  const Icon = kind === "job_board" ? Globe2 : Briefcase;
+  const Icon = Briefcase;
   return (
     <section className="rounded-xl border border-border bg-card p-5">
       <div className="flex items-start gap-3">
@@ -227,7 +212,6 @@ function ConnectDialog({
   const [onBehalfOf, setOnBehalfOf] = useState("");
   const [postingOwner, setPostingOwner] = useState("");
   const [hiringTeamMember, setHiringTeamMember] = useState("");
-  const [naukriAccountId, setNaukriAccountId] = useState("");
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
@@ -246,8 +230,6 @@ function ConnectDialog({
       } else if (provider === "ashby") {
         if (hiringTeamMember.trim())
           body.hiring_team_member_id = hiringTeamMember.trim();
-      } else if (provider === "naukri") {
-        if (naukriAccountId.trim()) body.account_id = naukriAccountId.trim();
       }
 
       const res = await fetch(`/api/integrations/ats/${provider}/connect`, {
@@ -339,22 +321,6 @@ function ConnectDialog({
                 value={hiringTeamMember}
                 onChange={(e) => setHiringTeamMember(e.target.value)}
               />
-            </div>
-          )}
-          {provider === "naukri" && (
-            <div className="space-y-1.5">
-              <Label htmlFor="naukri-account">Account ID (multi-account contracts only)</Label>
-              <Input
-                id="naukri-account"
-                placeholder="e.g. NAUKRI-1234"
-                value={naukriAccountId}
-                onChange={(e) => setNaukriAccountId(e.target.value)}
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Leave blank if your contract has a single corporate account.
-                Required when one API key spans multiple accounts so postings
-                land in the right tenant.
-              </p>
             </div>
           )}
         </div>

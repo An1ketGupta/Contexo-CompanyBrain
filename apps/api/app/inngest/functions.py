@@ -33,7 +33,6 @@ from app.services.ingestion import (
 from app.services.summarization import summarize_conversation
 from app.services.toc_extractor import extract_toc
 from app.services.toc_extractor import to_json as toc_to_json
-from app.services.webhooks import trigger_event as trigger_webhook_event
 
 from .client import get_inngest_client
 
@@ -81,14 +80,6 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
 
     log.info("[inngest] process-document doc=%s org=%s path=%s version=%s", doc_id, org_id, file_path, version_id)
 
-    # V5 #106: bind org → embedder context so new uploads use the org's
-    # fine-tuned model if one is deployed. No-op when the org doesn't have
-    # one. Stays bound for the lifetime of this Inngest function — chunks
-    # get embedded with the correct model.
-    from app.services.ingestion.embedder import bind_org_for_embedding
-
-    bind_org_for_embedding(org_id)
-
     await step.run("mark-processing", lambda: mark_status(doc_id, "processing"))
 
     result = await step.run(
@@ -125,13 +116,6 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
                 "invalidate-doc-list-cache-on-failed",
                 lambda: _invalidate_doc_list(org_id=org_id),
             )
-            await step.run(
-                "webhook-document-failed",
-                lambda: _fire_doc_webhook(
-                    org_id=org_id, doc_id=doc_id, event="document.failed",
-                    error="All chunks failed to embed.",
-                ),
-            )
         else:
             stats = {"embedded": embedded, "failed": failed, "total": total} if failed else None
             await step.run(
@@ -152,13 +136,6 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
             #     "notify-document-ready",
             #     lambda: _notify_document_ready(doc_id=doc_id, chunk_count=embedded),
             # )
-            await step.run(
-                "webhook-document-processed",
-                lambda e=embedded, t=total: _fire_doc_webhook(
-                    org_id=org_id, doc_id=doc_id, event="document.processed",
-                    chunks_embedded=e, chunks_total=t,
-                ),
-            )
             # V5 #107 — structural TOC. Zero LLM cost, runs after `ready` so
             # users can already chat while it computes. Best-effort: errors are
             # swallowed inside _extract_doc_toc — never fail the function.
@@ -228,13 +205,6 @@ async def process_document(ctx: inngest.Context) -> dict[str, Any]:
         await step.run(
             "invalidate-doc-list-cache-on-pipeline-failed",
             lambda: _invalidate_doc_list(org_id=org_id),
-        )
-        await step.run(
-            "webhook-document-failed",
-            lambda r=result: _fire_doc_webhook(
-                org_id=org_id, doc_id=doc_id, event="document.failed",
-                error=r.get("error", "ingestion failed"),
-            ),
         )
 
     return result
@@ -337,59 +307,6 @@ async def _try_retry(*, doc_id: str, org_id: str) -> dict[str, Any]:
         }
     except PipelineError as exc:
         return {"status": "failed", "error": str(exc)}
-
-
-async def _fire_doc_webhook(
-    *,
-    org_id: str,
-    doc_id: str,
-    event: str,
-    chunks_embedded: int | None = None,
-    chunks_total: int | None = None,
-    error: str | None = None,
-) -> None:
-    """Best-effort document lifecycle webhook fan-out.
-
-    We resolve the doc name here so receivers don't have to make a follow-up
-    API call to get a human-readable identifier in their own dashboards.
-    """
-    import asyncio as _asyncio
-
-    from app.database import get_service_client
-
-    svc = get_service_client()
-    name: str | None = None
-    file_type: str | None = None
-    try:
-        doc = await _asyncio.to_thread(
-            lambda: svc.table("documents")
-            .select("name, file_type")
-            .eq("id", doc_id)
-            .maybe_single()
-            .execute()
-        )
-        if doc and doc.data:
-            name = doc.data.get("name")
-            file_type = doc.data.get("file_type")
-    except Exception:
-        pass
-
-    payload: dict[str, Any] = {
-        "document_id": doc_id,
-        "name": name,
-        "file_type": file_type,
-    }
-    if chunks_embedded is not None:
-        payload["chunks_embedded"] = chunks_embedded
-    if chunks_total is not None:
-        payload["chunks_total"] = chunks_total
-    if error:
-        payload["error"] = error
-
-    try:
-        await trigger_webhook_event(org_id=org_id, event=event, payload=payload)
-    except Exception as exc:
-        log.warning("[inngest] webhook fire failed: event=%s err=%s", event, exc)
 
 
 async def _notify_document_ready(*, doc_id: str, chunk_count: int) -> None:

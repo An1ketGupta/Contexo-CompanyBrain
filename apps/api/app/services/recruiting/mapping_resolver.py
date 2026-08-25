@@ -72,11 +72,6 @@ class ResolvedMapping:
     department: ResolvedField
     team: ResolvedField | None = None
     job_template: ResolvedField | None = None
-    # Naukri-specific resolved fields. Only populated when
-    # ats_platform == 'naukri'; None for ATSes that don't use this taxonomy.
-    functional_area: ResolvedField | None = None
-    role_category: ResolvedField | None = None
-    industry: ResolvedField | None = None
     cache_age_seconds: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -90,12 +85,6 @@ class ResolvedMapping:
             out["team"] = self.team.to_dict()
         if self.job_template is not None:
             out["job_template"] = self.job_template.to_dict()
-        if self.functional_area is not None:
-            out["functional_area"] = self.functional_area.to_dict()
-        if self.role_category is not None:
-            out["role_category"] = self.role_category.to_dict()
-        if self.industry is not None:
-            out["industry"] = self.industry.to_dict()
         return out
 
     def to_ats_metadata(self) -> dict[str, Any]:
@@ -117,21 +106,6 @@ class ResolvedMapping:
                 meta["teamId"] = self.team.matched_id
             if self.job_template and self.job_template.matched_id:
                 meta["jobTemplateId"] = self.job_template.matched_id
-        elif self.ats_platform == "naukri":
-            # Naukri requires LLM-resolved taxonomy IDs. We surface a
-            # "fuzzy-matched" suggestion here from the cached taxonomy. The
-            # publish flow then OVERLAYS the recruiter's explicit Naukri
-            # taxonomy selections (from the publish form) on top, so anything
-            # we match here is just the default the recruiter saw.
-            if self.functional_area and self.functional_area.matched_id:
-                meta["functional_area_id"] = self.functional_area.matched_id
-                meta["functional_area_name"] = self.functional_area.matched_name
-            if self.role_category and self.role_category.matched_id:
-                meta["role_category_id"] = self.role_category.matched_id
-                meta["role_category_name"] = self.role_category.matched_name
-            if self.industry and self.industry.matched_id:
-                meta["industry_type_id"] = self.industry.matched_id
-                meta["industry_type_name"] = self.industry.matched_name
         # Lever takes free-text — no IDs to inject. We let the adapter use
         # the raw strings the recruiter typed (or the canonical name if we
         # matched).
@@ -284,8 +258,6 @@ async def resolve_mapping(
         greenhouse — department_id resolved; office_ids skipped
         ashby      — departmentId + teamId + jobTemplateId resolved; locationIds skipped
         lever      — free-text for both; we canonicalise department spelling
-        naukri     — functional_area + role_category + industry suggested
-                     (recruiter confirms via publish-form dropdowns)
 
     Returns a ResolvedMapping. Empty inputs produce 'none' confidence fields.
     """
@@ -295,10 +267,6 @@ async def resolve_mapping(
     locations = cache.get("locations") or []  # noqa: F841 — kept for future use
     teams = cache.get("teams") or []
     job_templates = cache.get("job_templates") or []
-    # Naukri-specific taxonomy (only populated when provider == 'naukri').
-    functional_areas = cache.get("functional_areas") or []
-    role_categories = cache.get("role_categories") or []
-    industries = cache.get("industries") or []
 
     if ats_platform == "greenhouse":
         loc = ResolvedField(input=location_text or "")
@@ -331,42 +299,6 @@ async def resolve_mapping(
             department=dept,
             cache_age_seconds=age,
         )
-    if ats_platform == "naukri":
-        # Naukri doesn't have an "office" concept — location is sent free-text
-        # to its API (the candidate-facing city/region string). Department is
-        # only sent for display on the job ad; the structured taxonomy goes
-        # through functional_area + role_category + industry.
-        loc = ResolvedField(input=location_text or "")
-        dept = ResolvedField(input=department_text or "")
-        # Fuzzy-match against three Naukri taxonomies. The department text
-        # the recruiter typed is the most signal we have for both
-        # functional_area and role_category — they're related concepts in
-        # Naukri's hierarchy ("IT-Software" → "Programming & Design").
-        functional_area = (
-            _resolve_one(department_text, functional_areas)
-            if functional_areas
-            else None
-        )
-        role_category = (
-            _resolve_one(department_text, role_categories)
-            if role_categories
-            else None
-        )
-        # For industry the org's KB-stated industry would be a better signal
-        # than the role's department; pass through department_text for now
-        # and let the publish form override with an explicit choice.
-        industry = (
-            _resolve_one(department_text, industries) if industries else None
-        )
-        return ResolvedMapping(
-            ats_platform=ats_platform,
-            location=loc,
-            department=dept,
-            functional_area=functional_area,
-            role_category=role_category,
-            industry=industry,
-            cache_age_seconds=age,
-        )
     raise ValueError(f"unknown_ats_platform: {ats_platform}")
 
 
@@ -379,7 +311,6 @@ async def refresh_cache(*, org_id: str, ats_platform: str) -> dict[str, Any]:
     Returns the cache payload that was written.
     """
     from app.services.integrations.ats import ashby, greenhouse, lever
-    from app.services.integrations.job_boards import naukri
 
     # Pull the api_key from the integrations row directly so we don't depend
     # on the adapter's per-provider _get_credentials having the right shape.
@@ -425,19 +356,6 @@ async def refresh_cache(*, org_id: str, ats_platform: str) -> dict[str, Any]:
                 lever.list_teams(api_key=api_key),
             )
             cache = {"locations": locations, "teams": teams}
-        elif ats_platform == "naukri":
-            # Three independent taxonomy endpoints. Parallel-fetch to keep
-            # the connect flow fast.
-            functional_areas, role_categories, industries = await asyncio.gather(
-                naukri.list_functional_areas(api_key=api_key),
-                naukri.list_role_categories(api_key=api_key),
-                naukri.list_industries(api_key=api_key),
-            )
-            cache = {
-                "functional_areas": functional_areas,
-                "role_categories": role_categories,
-                "industries": industries,
-            }
         else:
             raise ValueError(f"unknown_ats_platform: {ats_platform}")
     except Exception as exc:

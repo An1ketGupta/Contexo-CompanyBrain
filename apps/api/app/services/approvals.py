@@ -259,8 +259,6 @@ async def dispatch_execution(
             agent_type=params["agent_type"],
             agent_input=params["agent_input"],
             output_channels=list(params.get("output_channels") or []),
-            webhook_url=params.get("webhook_url"),
-            api_key_id=params.get("api_key_id"),
             approval_id=approval_id,
             run_id=run_id,
         )

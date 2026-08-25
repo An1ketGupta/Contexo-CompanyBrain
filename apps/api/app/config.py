@@ -204,27 +204,10 @@ class Settings(BaseSettings):
     def founder_user_id_set(self) -> set[str]:
         return {u.strip() for u in self.founder_user_ids.split(",") if u.strip()}
 
-    # ── V5 Day 4 — Embedding fine-tuning backend (Modal.com serverless GPU) ──
-    # Modal hosts the sentence-transformers training + eval + serving stack.
-    # Empty values disable the admin fine-tune button + skip the Inngest cron.
-    # We POST to MODAL_FINETUNE_ENDPOINT with a JSONL of training pairs and a
-    # bearer token; the endpoint returns a job_id we poll on
-    # MODAL_FINETUNE_STATUS_ENDPOINT/{job_id}.
-    modal_finetune_endpoint: str = ""
-    modal_finetune_status_endpoint: str = ""
-    modal_finetune_token: str = ""
-    # Minimum training pairs before the UI even shows the fine-tune CTA.
-    embedding_finetune_min_pairs: int = 50
-    embedding_finetune_recommended_pairs: int = 200
-
     # ── Agent2 Day 5: ATS integrations (#20) ──────────────────────────────
     # All three ATS providers authenticate via an org-supplied API key, not
     # OAuth — there's no provider-side OAuth app to provision here. Persisted
     # to `integrations.access_token` and validated at connect time. These
-    # config keys are reserved for future webhook signing if/when needed.
-    greenhouse_webhook_secret: str = ""
-    lever_webhook_secret: str = ""
-    ashby_webhook_secret: str = ""
 
     # ATS API base URLs. Production defaults point at the real provider hosts.
     # For local dev set USE_MOCK_ATS=true and start tools/mock_ats_server.py —
@@ -238,16 +221,6 @@ class Settings(BaseSettings):
     greenhouse_api_url: str = "https://harvest.greenhouse.io/v1"
     lever_api_url: str = "https://api.lever.co/v1"
     ashby_api_url: str = "https://api.ashbyhq.com"
-
-    # Naukri (Info Edge) HotVacancy API. Naukri is a job board (not an ATS) —
-    # we group it under the same "posting destinations" model so the publish
-    # form is one checkbox group. Real Naukri requires a signed enterprise
-    # contract; no self-serve dev tier exists. USE_MOCK_ATS=true points every
-    # adapter at the mock; for granular Naukri-only mocking set NAUKRI_API_URL
-    # directly. Auth: HTTP "Auth-Key" header carrying the recruiter's account
-    # API key (not Basic — Naukri diverges from the ATS providers here).
-    naukri_api_url: str = "https://api.naukri.com/v1"
-    naukri_webhook_secret: str = ""
 
     # ── Agent2 Day 6: Asana + Linear OAuth (#44) ──────────────────────────
     asana_client_id: str = ""

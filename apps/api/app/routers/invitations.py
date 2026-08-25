@@ -862,31 +862,6 @@ async def _attach_user_to_org(
             "onboarding_agent_dispatch_failed", user_id=user_id, error=str(exc)
         )
 
-    # Public-surface event for webhooks. The org/member-joined Inngest event
-    # above is internal-only (drives the onboarding agent); this exposes the
-    # same lifecycle moment via the
-    # standard webhook taxonomy so customers can route "new hire joined"
-    # into Slack / Notion / their HRIS without touching internal events.
-    try:
-        from app.services.webhooks import trigger_event as _trigger_webhook
-
-        await _trigger_webhook(
-            org_id=invite["org_id"],
-            event="employee.joined",
-            payload={
-                "user_id": user_id,
-                "email": auth_email,
-                "display_name": cleaned_name,
-                "role": invite["role"],
-                "role_title": invite.get("role_title"),
-                "start_date": invite.get("start_date"),
-                "manager_user_id": invite.get("manager_user_id"),
-                "invited_by": invite.get("invited_by"),
-            },
-        )
-    except Exception as exc:
-        log.warning("employee_joined_emit_failed: %s", exc)
-
     try:
         await asyncio.to_thread(
             lambda: svc.auth.admin.update_user_by_id(

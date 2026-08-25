@@ -22,9 +22,6 @@
 --    "which Notion page maps to which ATS application" so re-syncs do a
 --    proper upsert rather than appending duplicates.
 --
--- Naukri is explicitly excluded — its public API doesn't expose applicants
--- (Resdex is the candidate database, and that's a separate paid product).
-
 ALTER TABLE job_requisitions
   ADD COLUMN IF NOT EXISTS notion_candidates_db_id TEXT,
   ADD COLUMN IF NOT EXISTS candidates_last_synced_at TIMESTAMPTZ,

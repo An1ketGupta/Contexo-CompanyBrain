@@ -236,7 +236,6 @@ async def _t_list_agents(_args: dict[str, Any], _ctx: ApiKeyContext) -> str:
 
 
 async def _t_run_agent(args: dict[str, Any], ctx: ApiKeyContext) -> str:
-    import asyncio
     import uuid
 
     from app.services.agent_registry import (
@@ -268,22 +267,13 @@ async def _t_run_agent(args: dict[str, Any], ctx: ApiKeyContext) -> str:
         agent_type=agent_type,
         triggered_by="mcp",
         triggered_by_user_id=None,
-        input_data={
-            **clean,
-            "_api_context": {
-                "run_id": run_id,
-                "webhook_url": None,
-                "api_key_id": ctx.id,
-            },
-        },
+        input_data=clean,
     )
     await dispatch_api_agent(
         org_id=ctx.org_id,
         agent_type=agent_type,
         agent_input=clean,
         output_channels=[],
-        webhook_url=None,
-        api_key_id=ctx.id,
         approval_id=None,
         run_id=run_id,
     )

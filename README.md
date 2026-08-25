@@ -95,7 +95,6 @@ The platform is multi-tenant (per-organization), enforces tenant isolation via P
 ### Developer Surface
 - API keys with hash-based validation + revocation
 - `/v1` public API endpoints (key-authenticated)
-- Outbound **webhooks** with event filters
 
 ---
 
@@ -397,7 +396,6 @@ meeting_transcripts        id, org_id, uploader_id, file_path, transcript_text, 
 ─── Observability ────────────────────────────────────────────────
 analytics_events           id, org_id, user_id, event_type, metadata JSONB
 activity_feed              id, org_id, user_id, activity_type, summary, is_private
-webhooks                   id, org_id, event_type, url, metadata JSONB
 ```
 
 > `chunks.content_tsv` is a **generated column** — never write to it. The trigger keeps it in sync with `content`.
@@ -467,7 +465,9 @@ All agents extend `BaseAgent` (`apps/api/app/services/agents/base_agent.py`) and
 | `PolicyPropagationAgent` | `agent/policy-propagation` | Cascades policy changes across documents |
 | `VersionDiffAgent` | `agent/version-diff` | Human-readable diff between two doc versions |
 
-The full Inngest set (17 files in `apps/api/app/inngest/`) also covers: document ingestion, approvals, compliance, feedback processing, integration polling, knowledge-gap detection, webhooks, and API-triggered workflows.
+The full Inngest set also covers document ingestion, approvals, compliance,
+feedback processing, integration polling, knowledge-gap detection, and
+API-triggered workflows.
 
 ---
 
@@ -617,7 +617,8 @@ Current phase: **pre-seed, free-tier infrastructure, solo engineer**. Codebase h
 - Multi-workspace / sub-orgs (Business-plan feature, future)
 - Real-time collaborative editing
 
-Already shipped (do not re-build): Slack, Notion, Drive, Gmail, inbound email, webhooks, rate limiting, document versioning, approvals, compliance.
+Already shipped (do not re-build): Slack, Notion, Drive, Gmail, inbound email,
+rate limiting, document versioning, approvals, and compliance.
 
 ---
 

@@ -3,12 +3,11 @@ Recruiting Agent can publish to.
 
 Why this exists
 ---------------
-Naukri is a job board, not an ATS. Greenhouse / Lever / Ashby are ATSes. The
-publish form, the audit log, and the requisition detail page all want to
+The publish form, audit log, and requisition detail page all want to
 group destinations by kind ("ATS Platforms" vs "Job Boards") and emit
 slightly different copy / icons / connect dialogs per kind. Without a
 registry the kind-tag would be re-derived inline at every call site by an
-`if platform == 'naukri'` ladder.
+a provider-specific ladder.
 
 Source of truth lives here. Add a new destination by appending a row.
 
@@ -71,16 +70,6 @@ _DESTINATIONS: tuple[PostingDestination, ...] = (
         blurb=(
             "Publish to Ashby's Public API. Requires apiKey:read + "
             "jobOpening:create scopes."
-        ),
-    ),
-    PostingDestination(
-        key="naukri",
-        name="Naukri.com",
-        kind="job_board",
-        blurb=(
-            "Broadcast openings to Naukri (India's largest job portal) and "
-            "auto-generate Resdex candidate-search shortcuts. Requires an "
-            "Info Edge HotVacancy API contract."
         ),
     ),
 )

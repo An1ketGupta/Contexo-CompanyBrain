@@ -197,7 +197,7 @@ export default function RoutingPage() {
                           </code>
                         </p>
                       </div>
-                      <Badge variant="secondary" className="text-xs">
+                      <Badge variant="default" className="text-xs">
                         {(r.similarity * 100).toFixed(0)}% match
                       </Badge>
                     </li>

@@ -1,5 +1,5 @@
 """Inngest integration — client + functions for async document processing,
-transactional email delivery, outbound webhooks, and integrations sync."""
+transactional email delivery, and integrations sync."""
 from app.services.email.worker import FUNCTIONS as _EMAIL_FUNCTIONS
 
 from .api_trigger_functions import FUNCTIONS as _API_TRIGGER_FUNCTIONS
@@ -12,7 +12,6 @@ from .calendar_functions import FUNCTIONS as _CALENDAR_FUNCTIONS
 from .quality_functions import FUNCTIONS as _QUALITY_FUNCTIONS
 from .client import get_inngest_client
 from .compliance_functions import FUNCTIONS as _COMPLIANCE_FUNCTIONS
-from .embedding_finetune_functions import FUNCTIONS as _EMBEDDING_FT_FUNCTIONS
 from .feedback_functions import FUNCTIONS as _FEEDBACK_FUNCTIONS
 from .functions import FUNCTIONS as _DOC_FUNCTIONS
 from .functions import process_document
@@ -32,12 +31,10 @@ from .slack_inbound_functions import FUNCTIONS as _SLACK_INBOUND_FUNCTIONS
 from .support_investigation_functions import FUNCTIONS as _SUPPORT_INVESTIGATION_FUNCTIONS
 from .email_classify_functions import FUNCTIONS as _EMAIL_CLASSIFY_FUNCTIONS
 from .version_diff_functions import FUNCTIONS as _VERSION_DIFF_FUNCTIONS
-from .webhook_functions import FUNCTIONS as _WEBHOOK_FUNCTIONS
 
 FUNCTIONS = [
     *_DOC_FUNCTIONS,
     *_EMAIL_FUNCTIONS,
-    *_WEBHOOK_FUNCTIONS,
     *_INTEGRATION_FUNCTIONS,
     *_GMAIL_FUNCTIONS,
     *_SLACK_FUNCTIONS,
@@ -60,7 +57,6 @@ FUNCTIONS = [
     *_ARCHIVE_FUNCTIONS,
     *_QUERY_LOG_RETENTION_FUNCTIONS,
     *_REPORT_FUNCTIONS,
-    *_EMBEDDING_FT_FUNCTIONS,
     *_DUPLICATE_DETECTION_FUNCTIONS,
     *_ANNOUNCEMENT_FUNCTIONS,
     *_CALENDAR_FUNCTIONS,

@@ -40,7 +40,6 @@ from app.services.approvals import (
     plan_can_request_approvals,
     validate_execution_action,
 )
-from app.services.webhooks import trigger_event as trigger_webhook_event
 
 log = get_logger(__name__)
 
@@ -189,32 +188,6 @@ async def _execute_and_finalize(
             error=str(exc),
         )
 
-    # Outbound webhook — fire-and-forget. We don't include the execution
-    # params (which can be a full email body) because receivers asking
-    # "did X get approved" only need the verdict, not the contents.
-    try:
-        await trigger_webhook_event(
-            org_id=approval["org_id"],
-            event="approval.decided",
-            payload={
-                "approval_id": approval["id"],
-                "message_id": approval["message_id"],
-                "requested_by": approval["requested_by"],
-                "approver_id": approval["approver_id"],
-                "action": action,
-                "channel": (approval.get("execution_action") or {}).get("channel"),
-                "note": note,
-                "resolved_via": resolved_via,
-                "resolved_at": now_iso,
-            },
-        )
-    except Exception as exc:
-        log.warning(
-            "approval_decided_webhook_failed",
-            approval_id=approval["id"],
-            error=str(exc),
-        )
-
 
 # ── Endpoints ───────────────────────────────────────────────────────────────
 
@@ -332,26 +305,6 @@ async def request_approval(
         )
     except Exception:
         pass
-
-    try:
-        await trigger_webhook_event(
-            org_id=org_id,
-            event="approval.requested",
-            payload={
-                "approval_id": approval_id,
-                "message_id": body.message_id,
-                "requested_by": user_id,
-                "approver_id": body.approver_id,
-                "channel": normalized_action["channel"],
-                "preview_text": body.preview_text,
-            },
-        )
-    except Exception as exc:
-        log.warning(
-            "approval_requested_webhook_failed",
-            approval_id=approval_id,
-            error=str(exc),
-        )
 
     return {"approval_id": approval_id}
 

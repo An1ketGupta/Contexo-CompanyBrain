@@ -28,18 +28,13 @@ from app.database import get_service_client, get_user_client
 from app.errors import NoOrganization
 from app.services.integrations import _unified as _v2
 from app.services.integrations.ats import ashby, greenhouse, lever
-from app.services.integrations.job_boards import naukri
 from app.services.recruiting import mapping_resolver
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/integrations/ats", tags=["ats"])
 
-# Includes 'naukri' which is technically a job board, not an ATS — they live
-# in the same router because the connect / disconnect / status flow is
-# identical (API-key auth, taxonomy cache warm). The destination_type field
-# on the response distinguishes them for the UI.
-AtsProvider = Literal["greenhouse", "lever", "ashby", "naukri"]
+AtsProvider = Literal["greenhouse", "lever", "ashby"]
 
 
 def _require_org(current_user: dict) -> tuple[str, str, str]:
@@ -78,11 +73,6 @@ class ConnectAtsRequest(BaseModel):
     posting_owner_user_id: str | None = Field(default=None, max_length=100)
     # Ashby — the hiring-team default recruiter. Optional.
     hiring_team_member_id: str | None = Field(default=None, max_length=100)
-    # Naukri — the recruiter's corporate Account-Id (sent in the Account-Id
-    # header on every Naukri call). Single account on the contract = optional;
-    # multi-account contracts MUST set this so postings don't land in the
-    # wrong tenant.
-    account_id: str | None = Field(default=None, max_length=100)
 
 
 class TaxonomyEntry(BaseModel):
@@ -107,7 +97,6 @@ class AtsStatusResponse(BaseModel):
     greenhouse: AtsStatusBlock
     lever: AtsStatusBlock
     ashby: AtsStatusBlock
-    naukri: AtsStatusBlock
 
 
 # ── Status ───────────────────────────────────────────────────────────────────
@@ -119,11 +108,10 @@ async def ats_status(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]
 
     from app.services.integrations import posting_registry
 
-    greenhouse_row, lever_row, ashby_row, naukri_row = await asyncio.gather(
+    greenhouse_row, lever_row, ashby_row = await asyncio.gather(
         _v2.get_row(org_id=org_id, provider="greenhouse"),
         _v2.get_row(org_id=org_id, provider="lever"),
         _v2.get_row(org_id=org_id, provider="ashby"),
-        _v2.get_row(org_id=org_id, provider="naukri"),
     )
 
     def _block(provider: str, row: dict[str, Any] | None) -> dict[str, Any]:
@@ -146,7 +134,6 @@ async def ats_status(current_user: dict = Depends(verify_jwt)) -> dict[str, Any]
         "greenhouse": _block("greenhouse", greenhouse_row),
         "lever": _block("lever", lever_row),
         "ashby": _block("ashby", ashby_row),
-        "naukri": _block("naukri", naukri_row),
     }
 
 
@@ -170,7 +157,6 @@ async def connect_ats(
         "greenhouse": greenhouse,
         "lever": lever,
         "ashby": ashby,
-        "naukri": naukri,
     }[provider]
     settings = get_settings()
     try:
@@ -231,9 +217,6 @@ async def connect_ats(
     elif provider == "ashby":
         if body.hiring_team_member_id:
             metadata["hiring_team_member_id"] = body.hiring_team_member_id.strip()
-    elif provider == "naukri":
-        if body.account_id:
-            metadata["account_id"] = body.account_id.strip()
 
     await _v2.upsert_row(
         org_id=org_id,
@@ -316,10 +299,6 @@ async def list_departments(
     """Return the cached department list for a provider so the publish form
     can show a plain dropdown instead of running fuzzy resolution.
 
-    For Naukri we return Role Categories — it's the closest analogue to
-    "department" in their Indian-market taxonomy and the field a recruiter
-    would otherwise have to free-type. Functional area + industry are
-    fetched via the dedicated `/taxonomy/{kind}` endpoint below.
     """
     org_id, _user_id, _token = _require_org(current_user)
     svc = get_service_client()
@@ -334,48 +313,11 @@ async def list_departments(
     )
     cache = ((row.data or {}).get("mapping_cache") or {}) if row else {}
     # Greenhouse → departments, Ashby → departments, Lever → teams,
-    # Naukri → role_categories (the closest analogue to "department").
     entries = (
         cache.get("departments")
         or cache.get("teams")
-        or cache.get("role_categories")
         or []
     )
-    return [
-        {"id": str(d["id"]), "name": str(d["name"])}
-        for d in entries
-        if d.get("id") is not None and d.get("name")
-    ]
-
-
-NaukriTaxonomyKind = Literal["functional_areas", "role_categories", "industries"]
-
-
-@router.get("/naukri/taxonomy/{kind}")
-async def list_naukri_taxonomy(
-    kind: NaukriTaxonomyKind,
-    current_user: dict = Depends(verify_jwt),
-) -> list[dict[str, str]]:
-    """Return one slice of Naukri's cached taxonomy.
-
-    The publish form needs three separate dropdowns (functional area, role
-    category, industry) that come from one connect-time refresh into
-    `mapping_cache`. A single endpoint keyed by `kind` is friendlier than
-    three near-identical ones — the UI just picks the kind it needs.
-    """
-    org_id, _user_id, _token = _require_org(current_user)
-    svc = get_service_client()
-    row = await asyncio.to_thread(
-        lambda: svc.table("integrations")
-        .select("mapping_cache")
-        .eq("org_id", org_id)
-        .eq("provider", "naukri")
-        .is_("scope_user_id", None)
-        .maybe_single()
-        .execute()
-    )
-    cache = ((row.data or {}).get("mapping_cache") or {}) if row else {}
-    entries = cache.get(kind) or []
     return [
         {"id": str(d["id"]), "name": str(d["name"])}
         for d in entries

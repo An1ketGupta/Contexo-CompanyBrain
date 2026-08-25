@@ -1,11 +1,6 @@
 """Pydantic models for the Recruiting Agent (#20, Agent2 Day 5).
 
-Posting destinations are split into two kinds:
-    * ATS              — internal hiring system (Greenhouse, Lever, Ashby)
-    * job_board        — external candidate destination (Naukri)
-
-The legacy `AtsPlatform` Literal stays as the union for back-compat; new code
-should branch on `destination_type` from posting_destinations.registry.
+The supported ATS providers are Greenhouse, Lever, and Ashby.
 """
 from __future__ import annotations
 
@@ -14,13 +9,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# Union of every posting destination we can publish to. The column name on
-# job_requisitions is still `ats_platform` for historical reasons — see
-# migration 068 — but the values include the job-board provider 'naukri'.
-AtsPlatform = Literal["greenhouse", "lever", "ashby", "naukri"]
+# Union of every ATS we can publish to.
+AtsPlatform = Literal["greenhouse", "lever", "ashby"]
 
-# Job-board vs ATS — exposed so the publish form can group destinations by
-# kind without hard-coding the split client-side.
+# Destination kind retained in the posting result contract for future providers.
 DestinationType = Literal["ats", "job_board"]
 
 SeniorityLevel = Literal["intern", "entry", "mid", "senior", "staff", "lead"]
@@ -51,49 +43,6 @@ class LinkedinSearch(BaseModel):
     label: str
     url: str
     description: str
-
-
-class NaukriSearch(BaseModel):
-    """One Resdex (Naukri's candidate database) deep-link variant.
-
-    `query_summary` is a single-line human-readable summary of the filter set
-    so the UI can show "Senior Python · 5-8y · Bangalore · Available now"
-    without parsing the URL. Resdex itself doesn't accept all filters via
-    query string — for those (e.g. notice-period band) we land the user on
-    the search page with the textual filters pre-applied and ask them to
-    confirm the advanced facet inside Resdex.
-    """
-
-    label: str
-    url: str
-    description: str
-    query_summary: str | None = None
-
-
-class NaukriTaxonomy(BaseModel):
-    """Naukri-required taxonomy fields the recruiter picks at publish time.
-
-    Naukri's HotVacancy create endpoint rejects payloads without these — the
-    Indian taxonomy is heavier than Greenhouse/Lever/Ashby. We expose them
-    explicitly in the UI rather than auto-deriving so the recruiter owns the
-    mapping (LLM mis-classification can route a Python engineering req into
-    "Banking/Finance" which is unrecoverable once posted).
-    """
-
-    functional_area_id: str | None = None
-    functional_area_name: str | None = None
-    role_category_id: str | None = None
-    role_category_name: str | None = None
-    industry_type_id: str | None = None
-    industry_type_name: str | None = None
-    # Required by Naukri. The publish form derives sensible defaults from
-    # seniority_level but the recruiter can override.
-    experience_min_years: int | None = Field(default=None, ge=0, le=40)
-    experience_max_years: int | None = Field(default=None, ge=0, le=40)
-    # Resdex search variants benefit from key skills being explicit (LLM
-    # extraction from JD text is unreliable for stack lists with version
-    # numbers like "Spring Boot 3.x"). Limit 12 to match Naukri's UI cap.
-    key_skills: list[str] = Field(default_factory=list, max_length=12)
 
 
 class GenerateRequisitionRequest(BaseModel):
@@ -143,10 +92,8 @@ class AtsPosting(BaseModel):
 
 class PublishRequisitionRequest(BaseModel):
     selected_variant_index: int = Field(..., ge=0, le=4)
-    # At least one platform required; deduped server-side to be safe. Cap
-    # bumped to 4 to accommodate the new 'naukri' destination alongside the
-    # three ATSes.
-    ats_platforms: list[AtsPlatform] = Field(..., min_length=1, max_length=4)
+    # At least one platform required; deduped server-side to be safe.
+    ats_platforms: list[AtsPlatform] = Field(..., min_length=1, max_length=3)
     hiring_manager_email: str | None = None
     slack_channel: str | None = None
     notion_parent_page_id: str | None = None
@@ -155,10 +102,6 @@ class PublishRequisitionRequest(BaseModel):
     # Per-platform mapping overrides keyed by platform name. Each value is the
     # same shape the single-platform flow used (office_ids, department_id …).
     mapping_overrides: dict[AtsPlatform, dict] | None = None
-    # Required when 'naukri' is in ats_platforms. The publish endpoint
-    # rejects the request with 400 if it's missing — we'd rather fail fast
-    # at the boundary than synthesise garbage downstream.
-    naukri_taxonomy: NaukriTaxonomy | None = None
 
 
 class JdVariantEdit(BaseModel):
@@ -263,9 +206,6 @@ class RequisitionRead(BaseModel):
     notion_tracker_url: str | None
     sourcing_templates: list[SourcingTemplate]
     linkedin_search_urls: list[LinkedinSearch]
-    # Populated only when Naukri was in the publish set. Empty otherwise.
-    naukri_search_urls: list[NaukriSearch] = Field(default_factory=list)
-    naukri_taxonomy: NaukriTaxonomy | None = None
     hiring_manager_email: str | None
     slack_channel: str | None
     # Non-null when publish ran but the Slack post failed (e.g. bot wasn't a

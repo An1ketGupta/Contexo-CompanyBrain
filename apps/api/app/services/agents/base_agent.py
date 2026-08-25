@@ -204,8 +204,7 @@ class BaseAgent:
 
     async def complete(self, output: dict[str, Any] | None = None) -> None:
         """Mark the run completed. Idempotent — repeated calls overwrite
-        completed_at, which is fine for retries. Also fires the Day-14
-        lifecycle fan-out (org webhooks + per-request callback)."""
+        completed_at, which is fine for retries."""
         svc = get_service_client()
         await asyncio.to_thread(
             lambda: svc.table("agent_runs")
@@ -223,7 +222,6 @@ class BaseAgent:
             .execute()
         )
         await self._scan_competitor_mentions(output)
-        await self._fire_lifecycle("completed", output=output, error=None)
 
     async def fail(self, error: str) -> None:
         """Mark the run failed and surface the error string. The steps
@@ -244,7 +242,6 @@ class BaseAgent:
             .eq("id", self.run_id)
             .execute()
         )
-        await self._fire_lifecycle("failed", output=None, error=error)
 
     async def _scan_competitor_mentions(
         self, output: dict[str, Any] | None
@@ -290,38 +287,6 @@ class BaseAgent:
         except Exception as exc:
             log.warning(
                 "competitor_scan_agent_failed run_id=%s err=%s",
-                self.run_id,
-                exc,
-            )
-
-    async def _fire_lifecycle(
-        self,
-        status: str,
-        *,
-        output: dict[str, Any] | None,
-        error: str | None,
-    ) -> None:
-        """Best-effort fan-out: org-configured webhooks + per-request
-        callback URL. Imported lazily to avoid an import cycle."""
-        try:
-            from app.services.agent_callbacks import fire_agent_lifecycle_events
-
-            api_context = None
-            if isinstance(self.input_data, dict):
-                api_context = self.input_data.get("_api_context")
-
-            await fire_agent_lifecycle_events(
-                run_id=self.run_id,
-                org_id=self.org_id,
-                agent_type=self.agent_type,
-                status=status,
-                output=output,
-                error=error,
-                api_context=api_context,
-            )
-        except Exception as exc:
-            log.warning(
-                "agent_lifecycle_fanout_failed run_id=%s err=%s",
                 self.run_id,
                 exc,
             )

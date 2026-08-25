@@ -22,8 +22,6 @@ Agent triggers (Day 14):
       approval row gated by an existing workspace member; the agent fires
       only after they approve via web/email/Slack. The approver MUST be a
       member of the same org; external approvals are out of scope.
-    * Accepts optional `webhook_url` — when set, the agent POSTs the result
-      back on completion with HMAC-SHA256 signature derived from the api_key.
 """
 from __future__ import annotations
 
@@ -33,7 +31,7 @@ import uuid as _uuid
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.database import get_service_client
@@ -56,7 +54,6 @@ from app.services.approvals import (
     validate_execution_action,
 )
 from app.services.llm.task_chain import execute_task_blocking
-from app.services.network_security import UnsafeURLError, validate_outbound_url
 from app.services.rate_limit import (
     _monthly_check_and_increment,
     _sliding_window_check,
@@ -271,13 +268,6 @@ class AgentTriggerRequest(BaseModel):
             "via the inbox/email/Slack. Must be an existing org member."
         ),
     )
-    webhook_url: HttpUrl | None = Field(
-        default=None,
-        description=(
-            "Optional callback URL. We POST agent.completed/agent.failed with "
-            "an HMAC-SHA256 signature header derived from your API key."
-        ),
-    )
 
 
 class AgentTriggerResponse(BaseModel):
@@ -363,23 +353,6 @@ async def trigger_agent(
     # portable across staging/prod.
     poll_url = f"/v1/agent-runs/{run_id}"
 
-    webhook_url_str = str(body.webhook_url) if body.webhook_url else None
-
-    # Reject SSRF at the API boundary too, not just on delivery. A caller
-    # who passes http://169.254.169.254 should get a 400 immediately
-    # rather than seeing the agent run succeed and the callback silently
-    # blocked 30 seconds later. The Inngest worker re-validates on delivery
-    # for defence-in-depth (DNS can rebind between request and worker).
-    if webhook_url_str:
-        try:
-            validate_outbound_url(webhook_url_str)
-        except UnsafeURLError as exc:
-            log.info("api_trigger_ssrf_rejected key=%s reason=%s", ctx.id, exc)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="webhook_url destination is not allowed.",
-            ) from exc
-
     # 3. Approval gate — if approver_email is set, route via the existing
     #    approvals workflow with channel='agent'. Existing magic-link / Slack
     #    / web resolve flows just work.
@@ -406,14 +379,7 @@ async def trigger_agent(
             agent_type=agent_type,
             triggered_by="api",
             triggered_by_user_id=None,
-            input_data={
-                **clean_input,
-                "_api_context": {
-                    "run_id": run_id,
-                    "webhook_url": webhook_url_str,
-                    "api_key_id": ctx.id,
-                },
-            },
+            input_data=clean_input,
         )
         await asyncio.to_thread(
             lambda: svc.table("agent_runs")
@@ -429,8 +395,6 @@ async def trigger_agent(
                     "agent_type": agent_type,
                     "agent_input": clean_input,
                     "output_channels": list(body.output_channels),
-                    "webhook_url": webhook_url_str,
-                    "api_key_id": ctx.id,
                     "run_id": run_id,
                 },
             }
@@ -533,14 +497,7 @@ async def trigger_agent(
         agent_type=agent_type,
         triggered_by="api",
         triggered_by_user_id=None,
-        input_data={
-            **clean_input,
-            "_api_context": {
-                "run_id": run_id,
-                "webhook_url": webhook_url_str,
-                "api_key_id": ctx.id,
-            },
-        },
+        input_data=clean_input,
     )
 
     try:
@@ -549,8 +506,6 @@ async def trigger_agent(
             agent_type=agent_type,
             agent_input=clean_input,
             output_channels=list(body.output_channels),
-            webhook_url=webhook_url_str,
-            api_key_id=ctx.id,
             approval_id=None,
             run_id=run_id,
         )
@@ -707,129 +662,6 @@ async def get_agent_run(
         duration_seconds=duration_seconds,
         llm_tokens_used=row.get("llm_tokens_used"),
         llm_cost_usd_cents=llm_cost_cents,
-    )
-
-
-# ── /v1/agent-runs/{run_id}/redeliver ───────────────────────────────────────
-
-
-class RedeliverRequest(BaseModel):
-    webhook_url: HttpUrl | None = Field(
-        default=None,
-        description=(
-            "Override the destination URL. Omit to redeliver to the URL "
-            "originally passed on the trigger request."
-        ),
-    )
-
-
-class RedeliverResponse(BaseModel):
-    status: str  # 'queued' | 'noop'
-    webhook_url: str | None
-    agent_run_id: str
-
-
-@router.post(
-    "/agent-runs/{run_id}/redeliver",
-    response_model=RedeliverResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-async def redeliver_agent_run(
-    run_id: str,
-    body: RedeliverRequest,
-    ctx: ApiKeyContext = Depends(get_api_context),
-) -> RedeliverResponse:
-    """Re-fire the agent.completed/agent.failed callback for a terminal run.
-
-    Common path: receiver was down when Inngest exhausted its retry budget,
-    customer's now ready, doesn't want to wait for the next trigger to
-    flow through. Only allowed once the agent_runs row is in a terminal
-    state — re-firing a still-running agent would race the natural callback.
-    """
-    await _enforce_api_quota(ctx)
-
-    row = await _get_agent_run_row(run_id=run_id, org_id=ctx.org_id)
-    if not row:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="agent_run_not_found",
-        )
-    if row["status"] not in ("completed", "failed"):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Run isn't in a terminal state yet "
-                f"(status={row['status']}). Wait for it to finish before "
-                "redelivering."
-            ),
-        )
-
-    # Recover the original API context (api_key_id, webhook_url) embedded in
-    # input by precreate_agent_run. The override on the request body takes
-    # precedence so callers can redirect to a different URL after fixing
-    # their receiver.
-    from app.services.agent_callbacks import load_api_context_from_run
-
-    original = await load_api_context_from_run(run_id) or {}
-    destination = str(body.webhook_url) if body.webhook_url else original.get("webhook_url")
-    if not destination:
-        return RedeliverResponse(
-            status="noop",
-            webhook_url=None,
-            agent_run_id=run_id,
-        )
-
-    try:
-        validate_outbound_url(destination)
-    except UnsafeURLError as exc:
-        log.info("api_redeliver_ssrf_rejected run=%s reason=%s", run_id, exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="webhook_url destination is not allowed.",
-        ) from exc
-
-    payload = {
-        "agent_run_id": run_id,
-        "agent_type": row["agent_type"],
-        "status": row["status"],
-        "output": row.get("output") or {},
-        "error": row.get("error"),
-        "completed_at": row.get("completed_at"),
-    }
-
-    try:
-        import inngest as _inngest_evt
-
-        from app.inngest.client import get_inngest_client
-
-        client = get_inngest_client()
-        # Append a nonce — the original callback used `agent-callback-{run_id}-{status}`,
-        # which Inngest would dedupe against. The redeliver path explicitly
-        # wants a fresh attempt so we mint a unique event id.
-        nonce = _uuid.uuid4().hex[:12]
-        await client.send(
-            _inngest_evt.Event(
-                name="agent/api-callback",
-                data={
-                    "run_id": run_id,
-                    "org_id": ctx.org_id,
-                    "api_key_id": original.get("api_key_id") or ctx.id,
-                    "webhook_url": destination,
-                    "payload": payload,
-                },
-                id=f"agent-callback-{run_id}-redeliver-{nonce}",
-            )
-        )
-    except Exception as exc:
-        log.exception("api_redeliver_enqueue_failed run=%s", run_id)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Couldn't queue redelivery. Try again.",
-        ) from exc
-
-    return RedeliverResponse(
-        status="queued",
-        webhook_url=destination,
-        agent_run_id=run_id,
     )
 
 

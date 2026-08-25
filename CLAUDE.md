@@ -73,7 +73,7 @@ apps/api/app/
 apps/web/app/(dashboard)/
   chat/                 main chat + [id] + meeting-prep
   documents/            upload, list, version history
-  settings/             profile, team, API keys, integrations, collections, webhooks, templates
+  settings/             profile, team, API keys, integrations, collections, templates
   compliance/           pending acks + quiz UI
   admin/                9 pages (analytics, health, knowledge health, moderation, etc.)
 

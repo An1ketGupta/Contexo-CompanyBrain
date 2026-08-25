@@ -1,6 +1,6 @@
 """Inngest functions for API-triggered agents (Agent Roadmap Day 14).
 
-Three workers live here:
+Two workers live here:
 
   1. onboarding-api-triggered    (event: agent/onboarding/triggered-api)
         Wraps OnboardingAgent.run_safely() for the public-API path. Distinct
@@ -9,54 +9,32 @@ Three workers live here:
 
   2. weekly-digest-api-triggered (event: agent/weekly-digest/triggered-api)
         Equivalent of the manual `email/weekly-digest-now` button but creates
-        an agent_runs row + fires the agent-lifecycle callback.
-
-  3. agent-api-callback          (event: agent/api-callback)
-        HMAC-signs and POSTs the one-shot webhook_url passed on the trigger
-        request. Mirrors the org-webhook deliver function but with a smaller
-        retry budget and per-key derived secret.
+        an agent_runs row.
 
 Why we introduce dedicated events for onboarding + weekly-digest rather
 than reusing `org/member-joined` / `email/weekly-digest-now`: the original
 events carry user/session semantics (invitation flow, manual Settings
 trigger). Mixing API-triggered context into those events would force every
-downstream handler to learn about API callbacks. Cleaner to keep the
+downstream handler to learn about API-specific context. Cleaner to keep the
 trigger path explicit.
 """
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
-import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 import inngest
 
 from app.config import get_settings
 from app.database import get_service_client
 from app.inngest.client import get_inngest_client
-from app.services.agent_callbacks import (
-    derive_callback_secret,
-    fire_agent_lifecycle_events,
-)
 from app.services.agents.onboarding_agent import OnboardingAgent
-from app.services.network_security import UnsafeURLError, validate_outbound_url
 
 log = logging.getLogger(__name__)
 
 _inngest_client = get_inngest_client()
-
-
-# Match the existing webhook deliver function so customers learn one shape.
-_HEADER_EVENT = "X-NirnayaIQ-Event"
-_HEADER_DELIVERY = "X-NirnayaIQ-Delivery"
-_HEADER_SIGNATURE = "X-NirnayaIQ-Signature"
-_HEADER_KEY_ID = "X-NirnayaIQ-Api-Key-Id"
-_CALLBACK_TIMEOUT_SECONDS = 10.0
 
 
 # ── 1. Onboarding via public API ───────────────────────────────────────────
@@ -101,14 +79,7 @@ async def onboarding_api_triggered(ctx: inngest.Context) -> dict[str, Any]:
 
     agent = OnboardingAgent(org_id=org_id, hire_data=hire_data)
     agent.run_id = run_id  # honour the API-supplied id for idempotency
-    # Stash the api_context inside input_data so post-run callbacks find it.
-    api_context = {
-        "webhook_url": data.get("webhook_url"),
-        "api_key_id": data.get("api_key_id"),
-        "approval_id": data.get("approval_id"),
-        "run_id": run_id,
-    }
-    agent.input_data = {**hire_data, "_api_context": api_context}
+    agent.input_data = hire_data
     agent.triggered_by = "api"
 
     try:
@@ -126,18 +97,8 @@ async def onboarding_api_triggered(ctx: inngest.Context) -> dict[str, Any]:
             error,
         )
 
-    await fire_agent_lifecycle_events(
-        run_id=run_id,
-        org_id=org_id,
-        agent_type="onboarding",
-        status=status,
-        output=result if isinstance(result, dict) else {},
-        error=error,
-        api_context=api_context,
-    )
-
     if status == "failed":
-        # Re-raise after firing callbacks so Inngest retries kick in.
+        # Re-raise so Inngest retries kick in.
         raise RuntimeError(error or "onboarding_failed")
     return {"status": "ok", "run_id": run_id, **(result or {})}
 
@@ -158,12 +119,6 @@ async def weekly_digest_api_triggered(ctx: inngest.Context) -> dict[str, Any]:
     org_id: str = data["org_id"]
     run_id: str = data["run_id"]
     send_to_email: str | None = data.get("send_to_email")
-    api_context = {
-        "webhook_url": data.get("webhook_url"),
-        "api_key_id": data.get("api_key_id"),
-        "approval_id": data.get("approval_id"),
-        "run_id": run_id,
-    }
 
     from app.services.email import send_email_event
     from app.services.email.worker import gather_weekly_stats
@@ -182,7 +137,7 @@ async def weekly_digest_api_triggered(ctx: inngest.Context) -> dict[str, Any]:
             agent_type="weekly_digest",
             triggered_by="api",
             triggered_by_user_id=None,
-            input_data={"send_to_email": send_to_email, "_api_context": api_context},
+            input_data={"send_to_email": send_to_email},
         )
     except Exception:
         pass
@@ -283,132 +238,12 @@ async def weekly_digest_api_triggered(ctx: inngest.Context) -> dict[str, Any]:
             error,
         )
 
-    await fire_agent_lifecycle_events(
-        run_id=run_id,
-        org_id=org_id,
-        agent_type="weekly_digest",
-        status=status,
-        output=result,
-        error=error,
-        api_context=api_context,
-    )
-
     if status == "failed":
         raise RuntimeError(error or "weekly_digest_failed")
     return {"status": "ok", "run_id": run_id, **(result or {})}
 
 
-# ── 3. Per-request agent callback delivery ─────────────────────────────────
-
-
-@_inngest_client.create_function(
-    fn_id="agent-api-callback",
-    trigger=inngest.TriggerEvent(event="agent/api-callback"),
-    retries=3,
-    concurrency=[
-        inngest.Concurrency(limit=4, key="event.data.org_id", scope="fn"),
-    ],
-)
-async def agent_api_callback(ctx: inngest.Context) -> dict[str, Any]:
-    """POST the agent result to the caller-supplied webhook_url.
-
-    Signature: HMAC-SHA256 over the raw JSON body using the per-key derived
-    secret (see agent_callbacks.derive_callback_secret). Receivers compute
-    the same value from the api_key_id we echo in the X-NirnayaIQ-Api-Key-Id
-    header + the internal_email_secret they share with us (configured at
-    integration setup).
-    """
-    data = ctx.event.data
-    run_id: str = data["run_id"]
-    webhook_url: str = data["webhook_url"]
-    api_key_id: str | None = data.get("api_key_id")
-    data["org_id"]
-    payload: dict[str, Any] = data.get("payload") or {}
-    attempt = (getattr(ctx, "attempt", 0) or 0) + 1
-
-    body = {
-        "event": "agent.completed" if payload.get("status") == "completed" else "agent.failed",
-        "data": payload,
-        "delivered_at": datetime.now(UTC).isoformat(),
-        "attempt": attempt,
-    }
-    raw = json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-    headers = {
-        "Content-Type": "application/json",
-        _HEADER_EVENT: body["event"],
-        _HEADER_DELIVERY: ctx.event.id or run_id,
-        "User-Agent": "NirnayaIQ-AgentCallbacks/1.0",
-    }
-    if api_key_id:
-        secret = derive_callback_secret(api_key_id)
-        sig = hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
-        headers[_HEADER_SIGNATURE] = f"sha256={sig}"
-        headers[_HEADER_KEY_ID] = api_key_id
-
-    # SSRF guard. Agent callbacks are a particularly attractive target
-    # because the API consumer hands us the destination URL on every
-    # trigger request — including, potentially, http://169.254.169.254
-    # to read EC2 IMDS. Reject permanently (no retry) and log the reason
-    # server-side; the agent_runs status reflects "callback_blocked".
-    try:
-        validate_outbound_url(webhook_url)
-    except UnsafeURLError as exc:
-        log.warning(
-            "agent_callback_ssrf_blocked run=%s reason=%s",
-            run_id,
-            exc,
-        )
-        return {
-            "status": "blocked",
-            "reason": "destination_not_allowed",
-            "attempt": attempt,
-        }
-
-    try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(_CALLBACK_TIMEOUT_SECONDS, connect=3.0)
-        ) as client:
-            resp = await client.post(webhook_url, content=raw, headers=headers)
-        log.info(
-            "agent_callback_delivered run=%s status=%s url=%s attempt=%s",
-            run_id,
-            resp.status_code,
-            webhook_url,
-            attempt,
-        )
-        # Treat 5xx + 429 as transient. 4xx is permanent (don't retry — the
-        # receiver's URL or signature config is broken; retrying won't fix it).
-        if resp.status_code >= 500 or resp.status_code == 429:
-            raise RuntimeError(f"callback HTTP {resp.status_code}")
-        return {
-            "status": "delivered",
-            "status_code": resp.status_code,
-            "attempt": attempt,
-        }
-    except (httpx.TimeoutException, httpx.RequestError) as exc:
-        log.warning(
-            "agent_callback_transient_failure run=%s url=%s err=%s attempt=%s",
-            run_id,
-            webhook_url,
-            exc,
-            attempt,
-        )
-        raise
-    except Exception as exc:
-        # Permanent (e.g. 4xx raised above). Don't bubble up to Inngest as a
-        # retryable — log + drop.
-        log.warning(
-            "agent_callback_permanent_failure run=%s url=%s err=%s",
-            run_id,
-            webhook_url,
-            exc,
-        )
-        return {"status": "failed_permanent", "attempt": attempt, "error": str(exc)[:200]}
-
-
 FUNCTIONS = [
     onboarding_api_triggered,
     weekly_digest_api_triggered,
-    agent_api_callback,
 ]

@@ -64,8 +64,6 @@ class AgentDispatchContext:
     org_id: str
     input: dict[str, Any]
     output_channels: list[str]
-    webhook_url: str | None
-    api_key_id: str | None
     approval_id: str | None
     triggered_by: str  # 'api' | 'approval'
 
@@ -83,8 +81,6 @@ async def _dispatch_onboarding(ctx: AgentDispatchContext) -> None:
                 "org_id": ctx.org_id,
                 "input": ctx.input,
                 "output_channels": ctx.output_channels,
-                "webhook_url": ctx.webhook_url,
-                "api_key_id": ctx.api_key_id,
                 "approval_id": ctx.approval_id,
                 "triggered_by": ctx.triggered_by,
             },
@@ -105,12 +101,10 @@ async def _dispatch_policy_propagation(ctx: AgentDispatchContext) -> None:
                 "document_id": ctx.input["document_id"],
                 "org_id": ctx.org_id,
                 "version_id": ctx.input.get("version_id"),
-                # Side-channel context so the agent can fire the API
-                # callback when it completes:
+                # Preserve the API-supplied run id through the native policy
+                # event so the pre-created audit row is updated in place.
                 "_api_context": {
                     "run_id": ctx.run_id,
-                    "webhook_url": ctx.webhook_url,
-                    "api_key_id": ctx.api_key_id,
                     "approval_id": ctx.approval_id,
                 },
             },
@@ -128,8 +122,6 @@ async def _dispatch_weekly_digest(ctx: AgentDispatchContext) -> None:
                 "run_id": ctx.run_id,
                 "org_id": ctx.org_id,
                 "send_to_email": ctx.input.get("send_to_email"),
-                "webhook_url": ctx.webhook_url,
-                "api_key_id": ctx.api_key_id,
                 "approval_id": ctx.approval_id,
                 "triggered_by": ctx.triggered_by,
             },
@@ -355,8 +347,6 @@ async def dispatch_api_agent(
     agent_type: str,
     agent_input: dict[str, Any],
     output_channels: list[str] | None = None,
-    webhook_url: str | None = None,
-    api_key_id: str | None = None,
     approval_id: str | None = None,
     run_id: str,
 ) -> None:
@@ -370,8 +360,6 @@ async def dispatch_api_agent(
         org_id=org_id,
         input=agent_input,
         output_channels=list(output_channels or []),
-        webhook_url=webhook_url,
-        api_key_id=api_key_id,
         approval_id=approval_id,
         triggered_by="approval" if approval_id else "api",
     )

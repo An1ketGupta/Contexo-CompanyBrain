@@ -1,0 +1,2 @@
+-- Reserved historical migration version. The retired integration's schema
+-- is removed by migration 116; fresh databases intentionally do nothing here.

@@ -920,27 +920,14 @@ async def _run_search(
     # wrapper handles fail-open semantics if Upstash is unreachable. Document-
     # scoped (single doc) searches still bypass the cache inside the wrapper
     # because per-conversation hit rates are too low to justify the bookkeeping.
-    #
-    # V5 #106: bind the org context so the embedder factory can swap in a
-    # fine-tuned model if this org has one deployed. Token-based unbind in
-    # finally so concurrent searches in another task don't see stale state.
-    from app.services.ingestion.embedder import (
-        bind_org_for_embedding,
-        reset_org_embedding,
+    return await hybrid_search_cached(
+        query,
+        org_id,
+        client,
+        k=k,
+        document_id=document_id,
+        document_ids=document_ids,
     )
-
-    token = bind_org_for_embedding(org_id)
-    try:
-        return await hybrid_search_cached(
-            query,
-            org_id,
-            client,
-            k=k,
-            document_id=document_id,
-            document_ids=document_ids,
-        )
-    finally:
-        reset_org_embedding(token)
 
 
 async def _resolve_tag_scope(

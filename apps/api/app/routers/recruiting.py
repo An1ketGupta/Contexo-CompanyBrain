@@ -34,8 +34,6 @@ from app.models.recruiting import (
     GenerateRequisitionResponse,
     JdVariant,
     LinkedinSearch,
-    NaukriSearch,
-    NaukriTaxonomy,
     PublishRequisitionRequest,
     RequisitionRead,
     SourcingTemplate,
@@ -94,33 +92,6 @@ def _coerce_linkedin_searches(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _coerce_naukri_searches(raw: Any) -> list[dict[str, Any]]:
-    """Naukri search URLs were introduced in migration 068; there are no
-    legacy rows to migrate. We still defensively handle missing keys so a
-    stale draft persisted before the migration doesn't 500 on read."""
-    if not raw:
-        return []
-    out: list[dict[str, Any]] = []
-    for item in raw:
-        if isinstance(item, dict) and item.get("url"):
-            out.append(NaukriSearch(**item).model_dump())
-    return out
-
-
-def _coerce_naukri_taxonomy(raw: Any) -> dict[str, Any] | None:
-    """Naukri taxonomy is nullable; return None when the requisition didn't
-    publish to Naukri so the API consumer can branch on its presence."""
-    if not raw or not isinstance(raw, dict):
-        return None
-    try:
-        return NaukriTaxonomy(**raw).model_dump()
-    except Exception:
-        # Schema drift between DB and Pydantic — return None rather than 500
-        # so the rest of the requisition still loads. The recruiter can
-        # re-publish to regenerate the taxonomy.
-        return None
-
-
 def _normalise_status(raw: str | None) -> str:
     # Status was originally stored as 'Published' (capital P) before
     # migration 072 folded the enum to lowercase. Coerce both casings on
@@ -164,8 +135,6 @@ def _to_read(row: dict[str, Any]) -> dict[str, Any]:
         "linkedin_search_urls": _coerce_linkedin_searches(
             row.get("linkedin_search_urls")
         ),
-        "naukri_search_urls": _coerce_naukri_searches(row.get("naukri_search_urls")),
-        "naukri_taxonomy": _coerce_naukri_taxonomy(row.get("naukri_taxonomy")),
         "hiring_manager_email": row.get("hiring_manager_email"),
         "slack_channel": row.get("slack_channel"),
         "slack_post_error": row.get("slack_post_error"),
@@ -295,7 +264,6 @@ async def publish_requisition(
             location_override=body.location_override,
             department_override=body.department_override,
             mapping_overrides=body.mapping_overrides,
-            naukri_taxonomy=body.naukri_taxonomy,
         )
     except PermissionError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

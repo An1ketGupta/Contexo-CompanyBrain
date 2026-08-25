@@ -2,7 +2,7 @@
 title: Using the developer API
 category: Integrations
 order: 7
-tags: [api, keys, developer, http, integration, webhook]
+tags: [api, keys, developer, http, integration]
 ---
 
 The Contexo API lets you query your knowledge base and ingest documents from any system that can speak HTTP. It's available on Team and Business plans.
@@ -50,16 +50,6 @@ curl -X POST https://api.companybrain.app/v1/documents \
 ```
 
 The response includes the document ID and an initial status. Document processing is asynchronous — poll `GET /v1/documents/{id}` until status is `ready` (typically under a minute).
-
-## Webhooks
-
-Configure outgoing webhooks at **Settings → Webhooks**. Events that fire:
-
-- `document.processed` — a document finished embedding.
-- `document.failed` — ingestion failed; the payload includes the reason.
-- `chat.completed` — an API or in-app chat finished. Useful for usage tracking.
-
-All webhook payloads are signed with HMAC-SHA256 using your webhook secret; verify the `X-Companybrain-Signature` header on receipt.
 
 ## Rate limits
 

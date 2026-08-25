@@ -103,9 +103,6 @@ from app.routers import (
     usage as usage_router,
 )
 from app.routers import (
-    webhooks as webhooks_router,
-)
-from app.routers import (
     document_templates as document_templates_router,
 )
 from app.routers import (
@@ -243,7 +240,6 @@ app.include_router(briefings_router.router)
 app.include_router(invitations.router)
 app.include_router(auth_router.router)
 app.include_router(usage_router.router)
-app.include_router(webhooks_router.router)
 app.include_router(integrations_router.router)
 app.include_router(public_api.router)
 app.include_router(slack_router.router)

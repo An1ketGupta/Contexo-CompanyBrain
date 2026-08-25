@@ -32,8 +32,6 @@ from app.models.recruiting import (
     AtsPlatform,
     JdVariant,
     LinkedinSearch,
-    NaukriSearch,
-    NaukriTaxonomy,
     SourcingTemplate,
 )
 from app.services.agents.kb_synthesis import (
@@ -45,7 +43,6 @@ from app.services.agents.kb_synthesis import (
 )
 from app.services.integrations import posting_registry
 from app.services.integrations.ats import ashby, greenhouse, lever
-from app.services.integrations.job_boards import naukri
 from app.services.recruiting import audit_log, mapping_resolver
 
 log = logging.getLogger(__name__)
@@ -617,7 +614,6 @@ _ATS_ADAPTERS = {
     "greenhouse": greenhouse,
     "lever": lever,
     "ashby": ashby,
-    "naukri": naukri,
 }
 
 
@@ -738,7 +734,6 @@ async def publish_requisition(
     location_override: str | None = None,
     department_override: str | None = None,
     mapping_overrides: dict[str, dict[str, Any]] | None = None,
-    naukri_taxonomy: NaukriTaxonomy | None = None,
 ) -> dict[str, Any]:
     """Publish the requisition to every selected ATS, then run best-effort
     side-effects in parallel.
@@ -800,48 +795,7 @@ async def publish_requisition(
     if not platforms:
         raise ValueError("no_ats_platforms")
 
-    # Naukri requires the recruiter's explicit taxonomy choices — the publish
-    # form collects functional_area, role_category, industry_type, experience
-    # band, and key_skills. Without them the HotVacancy API rejects the
-    # payload. Fail fast at the boundary so the recruiter gets a clear
-    # validation message instead of an opaque "Naukri 400" downstream.
-    if "naukri" in platforms:
-        if naukri_taxonomy is None:
-            raise ValueError("naukri_taxonomy_required")
-        if not naukri_taxonomy.functional_area_id:
-            raise ValueError("naukri_functional_area_required")
-        if not naukri_taxonomy.role_category_id:
-            raise ValueError("naukri_role_category_required")
-        if not naukri_taxonomy.industry_type_id:
-            raise ValueError("naukri_industry_type_required")
-
     overrides = dict(mapping_overrides or {})
-    # Layer the Naukri taxonomy onto its mapping_override. The adapter reads
-    # functional_area_id / role_category_id / industry_type_id / experience /
-    # key_skills from `metadata`; we collect them here so the rest of the
-    # parallel-publish flow doesn't need a Naukri-specific code path.
-    if naukri_taxonomy is not None and "naukri" in platforms:
-        existing = overrides.get("naukri") or {}
-        naukri_meta = {
-            "functional_area_id": naukri_taxonomy.functional_area_id,
-            "functional_area_name": naukri_taxonomy.functional_area_name,
-            "role_category_id": naukri_taxonomy.role_category_id,
-            "role_category_name": naukri_taxonomy.role_category_name,
-            "industry_type_id": naukri_taxonomy.industry_type_id,
-            "industry_type_name": naukri_taxonomy.industry_type_name,
-            "experience_min_years": naukri_taxonomy.experience_min_years,
-            "experience_max_years": naukri_taxonomy.experience_max_years,
-            "key_skills": naukri_taxonomy.key_skills or None,
-            # Pass disclosed_compensation through so Naukri's hideSalary flag
-            # flips to false when the recruiter chose to disclose comp.
-            "disclosed_compensation": row.get("disclosed_compensation"),
-        }
-        # Drop None values so the mapping_resolver-supplied defaults don't
-        # get overwritten by explicit nulls from a partially-filled form.
-        overrides["naukri"] = {
-            **existing,
-            **{k: v for k, v in naukri_meta.items() if v is not None},
-        }
 
     # Fan out across platforms in parallel — each ATS is an independent
     # network call. One failing doesn't abort the others.
@@ -937,18 +891,6 @@ async def publish_requisition(
     slack_post_error = await slack_task
     await email_task
 
-    # Naukri Resdex search variants — only generated when Naukri was in the
-    # publish set, since they're useless without a Naukri Resdex subscription
-    # for the recruiter to land in.
-    naukri_search_urls: list[NaukriSearch] = []
-    if "naukri" in platforms:
-        naukri_search_urls = _naukri_search_urls_for(
-            role_request=row["role_request"],
-            seniority_level=row.get("seniority_level"),
-            location=row.get("location"),
-            key_skills=(naukri_taxonomy.key_skills if naukri_taxonomy else None),
-        )
-
     # If some platforms failed but at least one succeeded, surface that as
     # a non-fatal error message — the UI shows it alongside the ats_postings
     # list so the recruiter can re-publish the failed ones from the ATS.
@@ -969,7 +911,6 @@ async def publish_requisition(
             "notion_candidates_db_id": notion_candidates_db_id,
             "sourcing_templates": [t.model_dump() for t in sourcing_drafts],
             "linkedin_search_urls": [s.model_dump() for s in linkedin_urls],
-            "naukri_search_urls": [s.model_dump() for s in naukri_search_urls],
             "hiring_manager_email": hiring_manager_email,
             "slack_channel": slack_channel,
             "slack_post_error": slack_post_error,
@@ -977,11 +918,6 @@ async def publish_requisition(
             "error_message": error_message,
             "published_at": datetime.now(UTC).isoformat(),
         }
-        # Persist the recruiter's explicit Naukri taxonomy choices so the
-        # detail page can render them back even after a refresh, and so the
-        # audit story for "what did we send to Naukri" is complete.
-        if naukri_taxonomy is not None and "naukri" in platforms:
-            update_payload["naukri_taxonomy"] = naukri_taxonomy.model_dump()
         res = (
             svc.table("job_requisitions")
             .update(update_payload)
@@ -1159,7 +1095,7 @@ def _linkedin_search_urls_for(
     searches.append(
         LinkedinSearch(
             label=f"{role} — warm intros",
-            url=f"{base}?{_qs({'titleFreeText': role, 'network': '[\"F\"]'})}",
+            url=base + "?" + _qs({"titleFreeText": role, "network": '["F"]'}),
             description="Title-only search across your 1st-degree connections. "
             "Best for asking for intros before cold outreach.",
         )
@@ -1169,7 +1105,7 @@ def _linkedin_search_urls_for(
     searches.append(
         LinkedinSearch(
             label=f"{role} — 2nd-degree network",
-            url=f"{base}?{_qs({'titleFreeText': role, 'network': '[\"S\"]'})}",
+            url=base + "?" + _qs({"titleFreeText": role, "network": '["S"]'}),
             description="Title-only search across 2nd-degree connections. "
             "Largest pool of candidates you can still reference-check.",
         )
@@ -1213,184 +1149,6 @@ def _linkedin_search_urls_for(
                 ),
             )
         )
-
-    return searches
-
-
-# ── Naukri Resdex search variants ───────────────────────────────────────────
-
-
-# Indian-market experience bands keyed off seniority. Naukri's Resdex search
-# expects a numeric `experience` band; these map our seniority enum to the
-# values an Indian recruiter would typically use. Tuned to be neither too
-# narrow (recall) nor too wide (precision).
-_NAUKRI_EXP_BANDS: dict[str, tuple[int, int]] = {
-    "intern": (0, 1),
-    "entry": (0, 2),
-    "mid": (3, 6),
-    "senior": (6, 10),
-    "staff": (8, 14),
-    "lead": (10, 20),
-}
-
-# Naukri location aliases — Indian cities have multiple common spellings.
-# Resdex accepts the canonical name; we don't try to fuzz match here, but we
-# strip "Remote" prefixes so the location filter doesn't return zero hits.
-def _normalise_naukri_location(loc: str | None) -> str | None:
-    if not loc:
-        return None
-    s = loc.strip()
-    if not s or s.lower() in {"remote", "anywhere"}:
-        return None
-    # Drop common "Remote — " / "Hybrid — " prefixes Indian recruiters write
-    # in the form but Resdex doesn't understand.
-    for prefix in ("Remote — ", "Remote - ", "Hybrid — ", "Hybrid - "):
-        if s.startswith(prefix):
-            s = s[len(prefix) :].strip()
-            break
-    return s or None
-
-
-def _naukri_search_urls_for(
-    *,
-    role_request: str,
-    seniority_level: str | None = None,
-    location: str | None = None,
-    key_skills: list[str] | None = None,
-) -> list[NaukriSearch]:
-    """Build a curated list of Naukri Resdex deep links.
-
-    Resdex (resdex.naukri.com) is Naukri's candidate database — the Indian
-    equivalent of LinkedIn Recruiter. Its filter set is broader than
-    LinkedIn's (notice-period, last-active, current-company, CTC band, etc.)
-    so we generate six variants tuned for Indian recruiting workflows:
-
-        1. Role + experience band (catch-all sourcing query)
-        2. Role + location (Indian-city filter; null when location is Remote)
-        3. Role + key skills Boolean (skill-stack precision)
-        4. Role + competitor poach exclude (current_company NOT pattern)
-        5. Active this week (last_active filter — surfaces fresh candidates)
-        6. Immediate joiners (notice_period<30d — fastest to hire)
-
-    Resdex doesn't accept all filters via URL — for those we land the user
-    on the search page with the textual filters pre-applied and ask them to
-    confirm the advanced facet inside Resdex. `query_summary` is a single-line
-    human-readable explanation of what filters are pre-set.
-    """
-    role = (role_request or "").strip()
-    if not role:
-        return []
-
-    level = (seniority_level or "").strip().lower()
-    exp_lo, exp_hi = _NAUKRI_EXP_BANDS.get(level, (0, 30))
-
-    # Naukri's Resdex search URL accepts the following query params:
-    #   qp     — keywords (role/title/skill)
-    #   qe     — experience band as "min-max"
-    #   ql     — location
-    #   qns    — notice period (1=15d, 2=30d, 3=60d, 4=90d)
-    #   qla    — last active (1=1day, 2=7day, 3=15day, 4=30day, 5=90day)
-    #   qexcl  — exclude companies (current_company NOT in list)
-    base = "https://resdex.naukri.com/"
-
-    def _qs(params: dict[str, str | None]) -> str:
-        return "&".join(
-            f"{k}={quote_plus(v)}" for k, v in params.items() if v not in (None, "")
-        )
-
-    searches: list[NaukriSearch] = []
-    norm_location = _normalise_naukri_location(location)
-    exp_band = f"{exp_lo}-{exp_hi}"
-
-    # 1. Role + experience band — broadest cast, best recall.
-    searches.append(
-        NaukriSearch(
-            label=f"{role} · {exp_band} yrs",
-            url=f"{base}?{_qs({'qp': role, 'qe': exp_band})}",
-            description=(
-                "Title + experience-band search across Resdex. "
-                "Use this first to gauge the size of the candidate pool."
-            ),
-            query_summary=f"role: {role} · experience: {exp_band} years",
-        )
-    )
-
-    # 2. Role + location (Indian city). Skipped for fully-remote roles.
-    if norm_location:
-        searches.append(
-            NaukriSearch(
-                label=f"{role} in {norm_location}",
-                url=f"{base}?{_qs({'qp': role, 'qe': exp_band, 'ql': norm_location})}",
-                description=(
-                    f"Same as above but filtered to candidates in {norm_location}. "
-                    "Indian recruiters often start here because relocation budgets are tight."
-                ),
-                query_summary=f"role: {role} · experience: {exp_band}y · location: {norm_location}",
-            )
-        )
-
-    # 3. Skill-stack Boolean — precision over recall. Naukri's Resdex
-    # supports OR within keywords; we list each skill so candidates with ANY
-    # of the listed skills surface. Recruiter narrows to AND inside Resdex.
-    skills = [s.strip() for s in (key_skills or []) if s and s.strip()]
-    if skills:
-        skills_query = " OR ".join(f'"{s}"' for s in skills[:6])
-        full_query = f"{role} AND ({skills_query})"
-        searches.append(
-            NaukriSearch(
-                label=f"{role} · skill match",
-                url=f"{base}?{_qs({'qp': full_query, 'qe': exp_band})}",
-                description=(
-                    "Boolean keyword search across role + key skills. "
-                    "Most precise variant — candidates need at least one listed skill."
-                ),
-                query_summary=f"role: {role} · skills (OR): {', '.join(skills[:6])}",
-            )
-        )
-
-    # 4. Competitor poach — exclude candidates currently at our own company
-    # name (placeholder — recruiter replaces inside Resdex with real
-    # competitor names). The URL just opens with role pre-filled.
-    searches.append(
-        NaukriSearch(
-            label=f"{role} · poach pool",
-            url=f"{base}?{_qs({'qp': role, 'qe': exp_band})}#exclude-current=true",
-            description=(
-                "Opens Resdex with role pre-filled. Add competitor company names to "
-                "the 'Exclude Current Companies' facet inside Resdex to target a "
-                "specific poach pool (faster than building the query from scratch)."
-            ),
-            query_summary="add competitor companies inside Resdex",
-        )
-    )
-
-    # 5. Active this week — last_active filter surfaces fresh candidates.
-    # Highest response-rate cohort: they're actively browsing job ads.
-    searches.append(
-        NaukriSearch(
-            label=f"{role} · active this week",
-            url=f"{base}?{_qs({'qp': role, 'qe': exp_band, 'qla': '2'})}",
-            description=(
-                "Candidates whose CV was active in the last 7 days. "
-                "Smaller pool, highest reply rate on cold outreach."
-            ),
-            query_summary=f"role: {role} · experience: {exp_band}y · active in last 7 days",
-        )
-    )
-
-    # 6. Immediate joiners — notice period < 30 days. Useful when the hire
-    # is urgent or the budget cycle is closing.
-    searches.append(
-        NaukriSearch(
-            label=f"{role} · immediate joiners",
-            url=f"{base}?{_qs({'qp': role, 'qe': exp_band, 'qns': '2'})}",
-            description=(
-                "Notice period ≤ 30 days. Best when the hire is urgent or "
-                "you're under a budget-cycle deadline. Compromises on pool size."
-            ),
-            query_summary=f"role: {role} · experience: {exp_band}y · notice ≤ 30 days",
-        )
-    )
 
     return searches
 

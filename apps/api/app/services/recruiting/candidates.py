@@ -5,10 +5,6 @@ database. This module fills that database: it pulls applications from every
 ATS the requisition was posted to, normalises them, and either creates a new
 Notion row or PATCHes the existing one keyed by external_id.
 
-Naukri is excluded because its public job-posting API doesn't expose
-applicants — candidate browsing is gated behind the Resdex paid product,
-which is a separate integration.
-
 The sync is intentionally on-demand (no background poller yet): the
 recruiter clicks "Sync Candidates" on the requisition detail page and we
 fan out in parallel. The local recruiting_candidates row stores the
@@ -30,7 +26,6 @@ from app.services.recruiting import audit_log
 log = logging.getLogger(__name__)
 
 
-# Naukri is not in this map — see module docstring.
 _CANDIDATE_FETCHERS = {
     "greenhouse": greenhouse.fetch_candidates,
     "lever": lever.fetch_candidates,
@@ -81,8 +76,7 @@ async def sync_candidates(
         # so we can set up the candidate tracker."
         raise RuntimeError("notion_candidates_db_missing")
 
-    # Only sync from successful ATS postings (URL set, no error). Skip Naukri
-    # silently — the public API doesn't expose applicants.
+    # Only sync from successful ATS postings (URL set, no error).
     postings: list[dict[str, Any]] = row.get("ats_postings") or []
     targets: list[tuple[str, str]] = []
     for p in postings:

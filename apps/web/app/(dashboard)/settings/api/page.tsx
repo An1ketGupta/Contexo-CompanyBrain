@@ -166,8 +166,8 @@ function AgentTriggerDocs() {
       <header>
         <p className="text-sm font-medium">Agent triggers</p>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Kick off an autonomous agent run from your own scripts, webhooks, or
-          HR systems. Each run lands in <code>/admin/agent-runs</code> with a
+          Kick off an autonomous agent run from your own scripts or HR systems.
+          Each run lands in <code>/admin/agent-runs</code> with a
           full audit trail.
         </p>
       </header>
@@ -182,7 +182,7 @@ function AgentTriggerDocs() {
       </div>
       <div className="space-y-2">
         <p className="text-xs font-medium text-muted-foreground">
-          Trigger an onboarding agent (e.g. from a BambooHR webhook)
+          Trigger an onboarding agent
         </p>
         <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">
 {`curl -X POST ${origin}/v1/agents/onboarding/run \\
@@ -197,8 +197,7 @@ function AgentTriggerDocs() {
       "start_date": "2026-07-01",
       "manager_email": "john@acme.com"
     },
-    "output_channels": ["email", "slack", "notion"],
-    "webhook_url": "https://your-app.com/hooks/cb-agent"
+    "output_channels": ["email", "slack", "notion"]
   }'`}
         </pre>
         <p className="text-xs text-muted-foreground">
@@ -231,21 +230,6 @@ function AgentTriggerDocs() {
         <p className="text-xs text-muted-foreground">
           Status values: <code>running</code>, <code>pending_approval</code>,{" "}
           <code>completed</code>, <code>failed</code>.
-        </p>
-      </div>
-      <div className="space-y-2">
-        <p className="text-xs font-medium text-muted-foreground">
-          Webhook signature (per-request callback)
-        </p>
-        <p className="text-xs text-muted-foreground">
-          When <code>webhook_url</code> is set, we POST{" "}
-          <code>{`{ event, data, delivered_at, attempt }`}</code> on
-          completion. The body is signed in the{" "}
-          <code>X-NirnayaIQ-Signature</code> header as{" "}
-          <code>sha256=&lt;hex&gt;</code>. The secret is{" "}
-          <code>HMAC(INTERNAL_EMAIL_SECRET, api_key_id)</code> — the{" "}
-          <code>X-NirnayaIQ-Api-Key-Id</code> header echoes the key id so your
-          receiver can derive the same value server-side.
         </p>
       </div>
     </section>
@@ -370,7 +354,6 @@ res = requests.post(
             "start_date": "2026-07-01",
         },
         "output_channels": ["email", "slack"],
-        "webhook_url": "https://your-app.com/hooks/cb-agent",
     },
     timeout=10,
 )
@@ -378,9 +361,7 @@ res.raise_for_status()
 run = res.json()
 print(run["agent_run_id"], run["status"])
 
-# 2) Poll until terminal. The webhook gives you the same result push-style,
-#    but polling is fine for one-off scripts where you don't have an
-#    inbound endpoint to receive callbacks.
+# 2) Poll until terminal.
 while True:
     detail = requests.get(
         f"{BASE}{run['poll_url']}",
@@ -391,35 +372,6 @@ while True:
         print(detail)
         break
     time.sleep(2)`;
-
-  const pythonVerify = `import hmac
-import hashlib
-import os
-
-# Receives the POST from /v1/agents/.../run callbacks.
-INTERNAL_SECRET = os.environ["INTERNAL_EMAIL_SECRET"]  # set during integration
-
-def verify_callback(body_bytes: bytes, headers: dict) -> bool:
-    """Returns True when the request was sent by Contexo.
-
-    The signature is HMAC-SHA256 over the raw body, with the secret derived
-    from your API key id (echoed in X-NirnayaIQ-Api-Key-Id) + your
-    INTERNAL_EMAIL_SECRET shared during integration.
-    """
-    sig_header = headers.get("X-NirnayaIQ-Signature") or ""
-    key_id = headers.get("X-NirnayaIQ-Api-Key-Id") or ""
-    if not sig_header.startswith("sha256=") or not key_id:
-        return False
-    received = sig_header.removeprefix("sha256=")
-    secret = hmac.new(
-        INTERNAL_SECRET.encode("utf-8"),
-        key_id.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-    expected = hmac.new(
-        secret.encode("utf-8"), body_bytes, hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(received, expected)`;
 
   const nodeTrigger = `import fetch from "node-fetch";
 
@@ -442,7 +394,6 @@ const triggerRes = await fetch(\`\${BASE}/v1/agents/onboarding/run\`, {
       start_date: "2026-07-01",
     },
     output_channels: ["email", "slack"],
-    webhook_url: "https://your-app.com/hooks/cb-agent",
   }),
 });
 if (!triggerRes.ok) throw new Error(\`Trigger failed: \${triggerRes.status}\`);
@@ -461,59 +412,14 @@ while (true) {
   await new Promise((res) => setTimeout(res, 2000));
 }`;
 
-  const nodeVerify = `import crypto from "node:crypto";
-
-const INTERNAL_SECRET = process.env.INTERNAL_EMAIL_SECRET!;
-
-/**
- * Verifies an inbound callback from Contexo.
- *
- * The signature is HMAC-SHA256 over the raw request body, with the secret
- * derived from your API key id (echoed in X-NirnayaIQ-Api-Key-Id) +
- * INTERNAL_EMAIL_SECRET shared with us during integration setup.
- *
- * IMPORTANT: pass the raw body bytes (not the parsed JSON) — Express's
- * express.raw({ type: "application/json" }) or fastify's pre-parser hook
- * give you the right buffer.
- */
-export function verifyCallback(
-  bodyBytes: Buffer,
-  headers: Record<string, string | undefined>,
-): boolean {
-  const sigHeader = headers["x-contexo-signature"] ?? "";
-  const keyId = headers["x-contexo-api-key-id"] ?? "";
-  if (!sigHeader.startsWith("sha256=") || !keyId) return false;
-
-  const received = sigHeader.slice("sha256=".length);
-  const secret = crypto
-    .createHmac("sha256", INTERNAL_SECRET)
-    .update(keyId)
-    .digest("hex");
-  const expected = crypto
-    .createHmac("sha256", secret)
-    .update(bodyBytes)
-    .digest("hex");
-
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(received, "hex"),
-      Buffer.from(expected, "hex"),
-    );
-  } catch {
-    return false;
-  }
-}`;
-
   const trigger = tab === "python" ? pythonTrigger : nodeTrigger;
-  const verify = tab === "python" ? pythonVerify : nodeVerify;
 
   return (
     <section className="space-y-3 rounded-lg border border-border bg-background p-4">
       <header>
         <p className="text-sm font-medium">SDK snippets</p>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Drop-in code for the two operations every integrator needs:
-          trigger + poll, and webhook signature verification.
+          Drop-in code for triggering an agent and polling its status.
         </p>
       </header>
       <div className="flex gap-1 border-b border-border">
@@ -549,19 +455,6 @@ export function verifyCallback(
         <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">
           {trigger}
         </pre>
-      </div>
-      <div className="space-y-2">
-        <p className="text-xs font-medium text-muted-foreground">
-          Verify the webhook signature
-        </p>
-        <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">
-          {verify}
-        </pre>
-        <p className="text-xs text-muted-foreground">
-          Always verify on every callback. An unsigned POST to your
-          webhook URL is either a misconfiguration or someone probing —
-          rejecting it costs nothing.
-        </p>
       </div>
     </section>
   );

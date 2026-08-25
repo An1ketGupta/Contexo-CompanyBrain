@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   BarChart3,
-  Brain,
   Briefcase,
   CalendarDays,
   Hash,
@@ -111,7 +110,6 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/admin/compliance", label: "Compliance", icon: ShieldCheck, adminOnly: true },
       { href: "/admin/competitor-mentions", label: "Competitors", icon: ShieldAlert, adminOnly: true },
       { href: "/admin/rate-limits", label: "Rate limits", icon: Gauge, adminOnly: true },
-      { href: "/admin/embeddings", label: "Embeddings", icon: Brain, adminOnly: true },
       { href: "/admin/personas", label: "Shared personas", icon: Users, adminOnly: true },
     ],
   },

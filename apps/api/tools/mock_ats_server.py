@@ -35,13 +35,6 @@ Ashby (`/ashby/`)
   POST /team.list           Taxonomy
   POST /jobTemplate.list    Taxonomy
 
-Naukri (`/naukri/v1/`)
-  GET  /ping                          Auth probe (Auth-Key header, NOT Basic)
-  POST /jobposting                    Create / publish a HotVacancy job
-  GET  /taxonomy/functionalAreas      Master list of Functional Areas (Indian taxonomy)
-  GET  /taxonomy/roleCategories       Master list of Role Categories
-  GET  /taxonomy/industries           Master list of Industry Types
-
 Operational
   GET  /__health           Liveness
   POST /__reset            Wipe all tenant state (CI use)
@@ -49,11 +42,10 @@ Operational
 
 Auth model
 ----------
-Greenhouse / Lever / Ashby use HTTP Basic, API key as the username. Naukri
-diverges and uses an `Auth-Key` header. Either way: any non-empty key is
-accepted — this is a *mock*, not a security boundary. Each distinct key gets
-its own isolated tenant store, so two parallel CI runs with different keys
-won't collide.
+Greenhouse / Lever / Ashby use HTTP Basic, API key as the username. Any
+non-empty key is accepted — this is a *mock*, not a security boundary. Each
+distinct key gets its own isolated tenant store, so two parallel CI runs with
+different keys won't collide.
 
 Error injection
 ---------------
@@ -122,17 +114,10 @@ class TenantState:
     # there while Greenhouse uses ints — mixing them breaks the wire shape.
     ashby_departments: list[dict[str, Any]] = field(default_factory=list)
     job_templates: list[dict[str, Any]] = field(default_factory=list)
-    # Naukri's taxonomy is Indian-market specific and lives separately from
-    # the ATS taxonomy — its values (e.g. "IT-Software / Software Services")
-    # don't overlap with Greenhouse's departments.
-    naukri_functional_areas: list[dict[str, Any]] = field(default_factory=list)
-    naukri_role_categories: list[dict[str, Any]] = field(default_factory=list)
-    naukri_industries: list[dict[str, Any]] = field(default_factory=list)
     # Per-provider job ledger.
     greenhouse_jobs: list[dict[str, Any]] = field(default_factory=list)
     lever_postings: list[dict[str, Any]] = field(default_factory=list)
     ashby_openings: list[dict[str, Any]] = field(default_factory=list)
-    naukri_postings: list[dict[str, Any]] = field(default_factory=list)
     # Per-job candidate buckets so each provider's candidate-fetch endpoint
     # returns a deterministic, non-empty pool right after job creation. The
     # key shape is (provider, job_id) → list[candidate dict in provider shape].
@@ -197,42 +182,6 @@ _DEFAULT_JOB_TEMPLATES: list[dict[str, Any]] = [
     {"id": "tmpl_gtm", "name": "Go-to-Market"},
 ]
 
-# ── Naukri Indian-market taxonomy ───────────────────────────────────────────
-# Values mirror the real Naukri taxonomy a recruiter sees in the HotVacancy
-# UI. IDs are stable string codes — Naukri uses opaque numeric codes in
-# practice, but stable strings make the mock easier to fixture against.
-
-_DEFAULT_NAUKRI_FUNCTIONAL_AREAS: list[dict[str, Any]] = [
-    {"id": "fa_it_software", "name": "IT-Software / Software Services"},
-    {"id": "fa_sales", "name": "Sales / Business Development"},
-    {"id": "fa_hr", "name": "HR / Recruitment / Administration"},
-    {"id": "fa_marketing", "name": "Marketing / Advertising / MR / PR"},
-    {"id": "fa_finance", "name": "Accounts / Finance / Tax / Audit"},
-    {"id": "fa_design", "name": "Design / Creative / User Experience"},
-    {"id": "fa_operations", "name": "Operations / Customer Service"},
-    {"id": "fa_engineering", "name": "Engineering Design / R&D"},
-    {"id": "fa_data_science", "name": "Analytics & Business Intelligence"},
-    {"id": "fa_product", "name": "Product Management / IT"},
-]
-
-_DEFAULT_NAUKRI_ROLE_CATEGORIES: list[dict[str, Any]] = [
-    {"id": "rc_programming_design", "name": "Programming & Design"},
-    {"id": "rc_qa_testing", "name": "Quality Assurance / Testing"},
-    {"id": "rc_devops", "name": "DevOps / Site Reliability Engineering"},
-    {"id": "rc_data_engineering", "name": "Data Engineering"},
-    {"id": "rc_data_science", "name": "Data Science / ML"},
-    {"id": "rc_product_mgmt", "name": "Product Management"},
-    {"id": "rc_field_sales", "name": "Enterprise & B2B Sales"},
-    {"id": "rc_inside_sales", "name": "Inside Sales / Telesales"},
-    {"id": "rc_recruitment", "name": "Recruitment / Talent Acquisition"},
-    {"id": "rc_ux_design", "name": "User Experience Design (UX)"},
-    {"id": "rc_visual_design", "name": "Graphic / Visual / Web Design"},
-    {"id": "rc_digital_marketing", "name": "Digital Marketing / SEM / SEO"},
-    {"id": "rc_brand_marketing", "name": "Brand Marketing"},
-    {"id": "rc_finance_controlling", "name": "Finance & Controllership"},
-    {"id": "rc_customer_success", "name": "Customer Success / Account Management"},
-]
-
 # ── Synthetic candidate pool ────────────────────────────────────────────────
 # Used to seed each tenant with a few candidates per created job so the
 # /candidates endpoints return something interesting on the first sync.
@@ -246,25 +195,6 @@ _CANDIDATE_POOL: list[dict[str, Any]] = [
     {"first": "Rahul", "last": "Iyer", "email": "rahul.iyer@example.in", "company": "Razorpay", "title": "Backend Lead", "phone": "+91-98111-22334", "stage": "Offer"},
     {"first": "Sofía", "last": "García", "email": "sofia.g@example.es", "company": "Glovo", "title": "Senior Engineer", "phone": "+34-91-1234567", "stage": "Application Review"},
     {"first": "Liam", "last": "O'Connor", "email": "liam@example.ie", "company": "Stripe Ireland", "title": "Engineering Manager", "phone": "+353-1-1234567", "stage": "Onsite"},
-]
-
-
-_DEFAULT_NAUKRI_INDUSTRIES: list[dict[str, Any]] = [
-    {"id": "ind_it_services", "name": "IT-Software / Software Services"},
-    {"id": "ind_internet", "name": "Internet / E-commerce"},
-    {"id": "ind_banking", "name": "Banking / Financial Services / Broking"},
-    {"id": "ind_insurance", "name": "Insurance"},
-    {"id": "ind_bpo", "name": "BPO / Call Centre / ITES"},
-    {"id": "ind_education", "name": "Education / Teaching / Training"},
-    {"id": "ind_healthcare", "name": "Medical / Healthcare / Hospitals"},
-    {"id": "ind_pharma", "name": "Pharma / Biotech / Clinical Research"},
-    {"id": "ind_retail", "name": "Retail / Wholesale"},
-    {"id": "ind_consulting", "name": "Consulting / Strategy / Operations"},
-    {"id": "ind_media", "name": "Media / Entertainment / Internet"},
-    {"id": "ind_real_estate", "name": "Real Estate / Property"},
-    {"id": "ind_telecom", "name": "Telecom / ISP"},
-    {"id": "ind_automobile", "name": "Automobile / Auto Anciliary / Auto Components"},
-    {"id": "ind_food", "name": "Food Processing / FMCG"},
 ]
 
 
@@ -347,9 +277,6 @@ def _seed_tenant(api_key: str) -> TenantState:
         teams=[dict(t) for t in _DEFAULT_TEAMS],
         ashby_departments=[dict(d) for d in _DEFAULT_ASHBY_DEPARTMENTS],
         job_templates=[dict(t) for t in _DEFAULT_JOB_TEMPLATES],
-        naukri_functional_areas=[dict(x) for x in _DEFAULT_NAUKRI_FUNCTIONAL_AREAS],
-        naukri_role_categories=[dict(x) for x in _DEFAULT_NAUKRI_ROLE_CATEGORIES],
-        naukri_industries=[dict(x) for x in _DEFAULT_NAUKRI_INDUSTRIES],
     )
 
 
@@ -467,9 +394,6 @@ def inspect(api_key: str) -> dict[str, Any]:
         "locations": len(t.locations),
         "teams": len(t.teams),
         "job_templates": len(t.job_templates),
-        "naukri_functional_areas": len(t.naukri_functional_areas),
-        "naukri_role_categories": len(t.naukri_role_categories),
-        "naukri_industries": len(t.naukri_industries),
         "greenhouse_jobs": [
             {"id": j["id"], "name": j.get("name")} for j in t.greenhouse_jobs
         ],
@@ -478,9 +402,6 @@ def inspect(api_key: str) -> dict[str, Any]:
         ],
         "ashby_openings": [
             {"id": o["id"], "title": o.get("title")} for o in t.ashby_openings
-        ],
-        "naukri_postings": [
-            {"id": p["id"], "title": p.get("jobTitle")} for p in t.naukri_postings
         ],
     }
 
@@ -801,152 +722,6 @@ def ashby_job_opening_create(
     tenant.ashby_openings.append(opening)
     _seed_candidates_for_job(tenant, "ashby", opening_id)
     return _ashby_envelope(opening)
-
-
-# ── Naukri HotVacancy API ───────────────────────────────────────────────────
-# Naukri uses Auth-Key (not Basic). Separate helper so we don't accidentally
-# accept Basic auth on a Naukri endpoint — which would mask a real-world
-# mismatch where our adapter sent the wrong header style.
-
-
-def _extract_naukri_key(auth_key: str | None) -> str:
-    """Naukri's Auth-Key header carries the raw API key (no scheme prefix)."""
-    if not auth_key or not auth_key.strip():
-        raise HTTPException(
-            status_code=401,
-            detail={"message": "Missing Auth-Key header"},
-        )
-    return auth_key.strip()
-
-
-class _NaukriJobBody(BaseModel):
-    """Mirror of the documented Naukri HotVacancy create payload.
-
-    Extra fields are accepted silently because Naukri's real API ignores
-    unknowns rather than 400-ing — easier for partners to ship without
-    waiting on the docs to catch up. We keep the same forgiveness here.
-    """
-
-    jobTitle: str = Field(max_length=255)
-    jobDescription: str | None = None
-    jobLocation: str = Field(max_length=255)
-    department: str | None = None
-    functionalAreaId: str | None = None
-    roleCategoryId: str | None = None
-    industryTypeId: str | None = None
-    minExperience: int | None = Field(default=None, ge=0, le=40)
-    maxExperience: int | None = Field(default=None, ge=0, le=40)
-    keySkills: list[str] | None = None
-    salary: str | None = None
-    hideSalary: bool | None = None
-
-    model_config = {"extra": "allow"}
-
-
-@app.get("/naukri/v1/ping")
-def naukri_ping(
-    auth_key: str | None = Header(default=None, alias="Auth-Key"),
-    x_mock_force_status: str | None = Header(default=None),
-) -> dict[str, Any]:
-    """Connectivity + auth probe used by `naukri.test_connection()`."""
-    _maybe_inject_error(x_mock_force_status)
-    _extract_naukri_key(auth_key)
-    return {"ok": True, "service": "naukri-mock", "version": "v1"}
-
-
-@app.get("/naukri/v1/taxonomy/functionalAreas")
-def naukri_functional_areas(
-    auth_key: str | None = Header(default=None, alias="Auth-Key"),
-    x_mock_force_status: str | None = Header(default=None),
-    page: int = 1,
-    pageSize: int = 200,
-) -> dict[str, Any]:
-    _maybe_inject_error(x_mock_force_status)
-    api_key = _extract_naukri_key(auth_key)
-    items = _tenant(api_key).naukri_functional_areas
-    start = max(0, (page - 1) * pageSize)
-    return {"data": items[start : start + pageSize], "totalCount": len(items)}
-
-
-@app.get("/naukri/v1/taxonomy/roleCategories")
-def naukri_role_categories(
-    auth_key: str | None = Header(default=None, alias="Auth-Key"),
-    x_mock_force_status: str | None = Header(default=None),
-    page: int = 1,
-    pageSize: int = 200,
-) -> dict[str, Any]:
-    _maybe_inject_error(x_mock_force_status)
-    api_key = _extract_naukri_key(auth_key)
-    items = _tenant(api_key).naukri_role_categories
-    start = max(0, (page - 1) * pageSize)
-    return {"data": items[start : start + pageSize], "totalCount": len(items)}
-
-
-@app.get("/naukri/v1/taxonomy/industries")
-def naukri_industries(
-    auth_key: str | None = Header(default=None, alias="Auth-Key"),
-    x_mock_force_status: str | None = Header(default=None),
-    page: int = 1,
-    pageSize: int = 200,
-) -> dict[str, Any]:
-    _maybe_inject_error(x_mock_force_status)
-    api_key = _extract_naukri_key(auth_key)
-    items = _tenant(api_key).naukri_industries
-    start = max(0, (page - 1) * pageSize)
-    return {"data": items[start : start + pageSize], "totalCount": len(items)}
-
-
-@app.post("/naukri/v1/jobposting")
-def naukri_create_posting(
-    body: _NaukriJobBody,
-    auth_key: str | None = Header(default=None, alias="Auth-Key"),
-    account_id: str | None = Header(default=None, alias="Account-Id"),
-    x_mock_force_status: str | None = Header(default=None),
-) -> dict[str, Any]:
-    """Mirror Naukri's create endpoint shape: returns `jobId` + `postingUrl`."""
-    _maybe_inject_error(x_mock_force_status)
-    api_key = _extract_naukri_key(auth_key)
-    tenant = _tenant(api_key)
-
-    # Naukri validates that minExperience <= maxExperience before creating.
-    # Mirror so our adapter's swap-then-send branch is exercised by the test.
-    if (
-        body.minExperience is not None
-        and body.maxExperience is not None
-        and body.maxExperience < body.minExperience
-    ):
-        return JSONResponse(
-            status_code=400,
-            content={
-                "errorCode": "invalid_experience_band",
-                "message": "maxExperience must be >= minExperience",
-            },
-        )
-
-    posting_id = 900_000 + len(tenant.naukri_postings) + 1
-    posting = {
-        "id": posting_id,
-        "jobId": str(posting_id),
-        "jobTitle": body.jobTitle,
-        "jobDescription": body.jobDescription,
-        "jobLocation": body.jobLocation,
-        "department": body.department,
-        "functionalAreaId": body.functionalAreaId,
-        "roleCategoryId": body.roleCategoryId,
-        "industryTypeId": body.industryTypeId,
-        "minExperience": body.minExperience,
-        "maxExperience": body.maxExperience,
-        "keySkills": body.keySkills or [],
-        "salary": body.salary,
-        "hideSalary": body.hideSalary,
-        "accountId": account_id,
-        "createdAt": datetime.now(UTC).isoformat(),
-        "postingUrl": f"https://employer.naukri.com/jobpostings/{posting_id}",
-        "candidateUrl": f"https://www.naukri.com/job-listings-{posting_id}",
-        "status": "ACTIVE",
-    }
-    tenant.naukri_postings.append(posting)
-    return posting
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────

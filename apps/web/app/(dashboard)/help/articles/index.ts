@@ -81,7 +81,7 @@ export const HELP_ARTICLES: readonly HelpArticleMeta[] = [
     slug: "api-access",
     title: "Using the developer API",
     category: "Integrations",
-    tags: ["api", "keys", "developer", "http", "integration", "webhook"],
+    tags: ["api", "keys", "developer", "http", "integration"],
   },
   {
     slug: "billing-and-plans",

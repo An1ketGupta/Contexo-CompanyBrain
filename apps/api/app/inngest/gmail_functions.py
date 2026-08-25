@@ -227,7 +227,7 @@ async def gmail_send_email(ctx: inngest.Context) -> dict[str, Any]:
         lambda: _bump_last_used(org_id=org_id, user_id=user_id),
     )
 
-    # Step 5: audit + webhook fan-out (best-effort, never affects retries).
+    # Step 5: audit the completed delivery (best-effort, never affects retries).
     await on_sent(
         run_id=job_id,
         channel="gmail",

@@ -49,7 +49,6 @@ from app.services.moderation import (
 from app.services.rate_limit import enforce_chat_quota
 from app.services.realtime_broadcast import BroadcastBatcher, conversation_topic
 from app.services.summarization import load_conversation_summary
-from app.services.webhooks import trigger_event as trigger_webhook_event
 from app.services import channels as channels_svc
 
 log = get_logger(__name__)
@@ -296,16 +295,6 @@ async def chat(
             user_id=user_id,
             matches=list(competitor_matches),
         )
-    # Day-13: notify subscribers that a turn completed. Fire-and-forget;
-    # webhook delivery happens off the chat hot path via Inngest.
-    await _fire_query_completed_webhook(
-        org_id=org_id,
-        conversation_id=conversation_id,
-        message_id=assistant_id,
-        user_id=user_id,
-        sources=final_sources,
-        output=final_text,
-    )
     await _emit_chat_analytics(
         org_id=org_id,
         user_id=user_id,
@@ -668,14 +657,6 @@ async def chat_stream(
                         user_id=user_id,
                         matches=list(competitor_matches),
                     )
-                await _fire_query_completed_webhook(
-                    org_id=org_id,
-                    conversation_id=conversation_id,
-                    message_id=assistant_id,
-                    user_id=user_id,
-                    sources=final_sources,
-                    output=final_text,
-                )
                 await _emit_chat_analytics(
                     org_id=org_id,
                     user_id=user_id,
@@ -1354,48 +1335,6 @@ async def update_message_feedback(
             metadata={"feedback": body.feedback},
         )
 
-    # Negative feedback fans into webhooks. Lets an org auto-route a thumbs-down
-    # into a review queue or escalation channel via a webhook subscriber.
-    # Fire-and-forget — the user's PATCH has already succeeded.
-    if body.feedback == "negative" and current_user.get("org_id"):
-        try:
-            from app.services.webhooks import trigger_event as _trigger_webhook
-
-            asyncio.create_task(
-                _trigger_webhook(
-                    org_id=current_user["org_id"],
-                    event="message.feedback.negative",
-                    payload={
-                        "message_id": message_id,
-                        "conversation_id": msg.data.get("conversation_id"),
-                        "user_id": current_user.get("user_id"),
-                    },
-                )
-            )
-        except Exception as exc:
-            log.warning("negative_feedback_emit_failed: %s", exc)
-
-    # V5 #106 Phase 1: positive feedback = high-quality training signal.
-    # Fire-and-forget so a slow training-pair insert never blocks the user's
-    # thumbs-up. Service uses upsert + idempotent on (org, chunk, query, signal).
-    if body.feedback == "positive" and current_user.get("org_id"):
-        try:
-            from app.services.embedding_training import (
-                collect_training_pairs_for_message,
-            )
-
-            asyncio.create_task(
-                collect_training_pairs_for_message(
-                    message_id=message_id,
-                    org_id=current_user["org_id"],
-                    signal_type="positive_feedback",
-                )
-            )
-        except Exception as exc:
-            log.warning(
-                "training_pair_schedule_failed", message_id=message_id, error=str(exc)
-            )
-
     # Agent Day 15: fire the output-improvement loop on negative feedback.
     # Idempotent on (message_id) — re-tapping thumbs-down won't re-analyse.
     if body.feedback == "negative" and current_user.get("org_id"):
@@ -1502,24 +1441,6 @@ async def record_message_copy(
                 )
         except Exception as exc:
             log.debug("langfuse_copy_score_failed", error=str(exc))
-
-    # V5 #106 Phase 1: copying is the strongest implicit positive signal.
-    # Collect on EVERY copy event — the unique index dedupes per
-    # (org, chunk, query, signal) so a multi-copy doesn't spam the table.
-    try:
-        from app.services.embedding_training import (
-            collect_training_pairs_for_message,
-        )
-
-        asyncio.create_task(
-            collect_training_pairs_for_message(
-                message_id=message_id,
-                org_id=org_id,
-                signal_type="copy",
-            )
-        )
-    except Exception as exc:
-        log.warning("training_pair_copy_schedule_failed", error=str(exc))
 
     # Analytics — Phase 1.15. Tracks which clipboard format users prefer so
     # we can prune low-use formats later. Best-effort; failure does not
@@ -2303,10 +2224,8 @@ def _log_query_history(
     `log_query_async` (which schedules the IO on an asyncio task) so the
     request handler returns immediately without awaiting the DB insert.
 
-    V5 #75 / #106 additions: also stamps token usage, cost (micros), and the
-    full retrieval set so the founder cost dashboard and the embedding
-    fine-tune training-pair collector have everything they need from a
-    single source-of-truth row per turn.
+    V5 #75 addition: also stamps token usage, cost (micros), and the full
+    retrieval set for the founder cost dashboard.
     """
     try:
         from app.services.query_logs import log_query_async
@@ -2453,40 +2372,6 @@ def _slugify(text: str) -> str:
 
 def _format_export_ts() -> str:
     return datetime.now(UTC).strftime("%B %d, %Y at %H:%M UTC")
-
-
-async def _fire_query_completed_webhook(
-    *,
-    org_id: str,
-    conversation_id: str,
-    message_id: str,
-    user_id: str,
-    sources: list[dict],
-    output: str,
-) -> None:
-    """Day 13 / #99 — best-effort `query.completed` webhook fan-out.
-
-    Trimmed payload: we don't ship the full message body to third parties by
-    default (it can contain confidential org context). Consumers that want
-    the body can fetch it via the API using the message_id.
-    """
-    try:
-        await trigger_webhook_event(
-            org_id=org_id,
-            event="query.completed",
-            payload={
-                "conversation_id": conversation_id,
-                "message_id": message_id,
-                "user_id": user_id,
-                "output_chars": len(output or ""),
-                "source_count": len(sources or []),
-                "source_documents": list(
-                    {s.get("document_id") for s in (sources or []) if s.get("document_id")}
-                ),
-            },
-        )
-    except Exception as exc:
-        log.warning("webhook_fire_failed", event="query.completed", error=str(exc))
 
 
 async def _fire_summarize_event(conversation_id: str, org_id: str) -> None:

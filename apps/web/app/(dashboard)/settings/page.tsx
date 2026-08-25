@@ -28,7 +28,6 @@ import {
   UserCheck,
   UserMinus,
   UserPlus,
-  Webhook,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -148,12 +147,6 @@ export default function SettingsPage() {
               icon={<Send className="h-4 w-4" />}
               title="Sales outreach"
               description="Trust mode, sending mailbox, follow-up cadence, escalation"
-            />
-            <SettingsLink
-              href="/settings/webhooks"
-              icon={<Webhook className="h-4 w-4" />}
-              title="Webhooks"
-              description="Notify external systems when documents or queries complete"
             />
             <SettingsLink
               href="/settings/collections"

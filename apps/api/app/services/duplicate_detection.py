@@ -15,8 +15,6 @@ Why doc-level summary embeddings and not chunk averages:
 What we do when a match is found:
     * Persist a notification for org admins ("'Q3 hiring plan' may already
       exist as 'Hiring plan — Q3'").
-    * Emit a webhook event so a Zapier flow can drop it into a #docs-review
-      Slack channel.
     * The actual decision (merge / replace / keep both) is admin UX, not
       part of this module.
 
@@ -88,9 +86,6 @@ async def scan_document_for_duplicates(
             )
             if row:
                 delivered += 1
-
-    # No dedicated webhook event — a new top-level event isn't warranted. The
-    # admin in-app notification is the primary signal. Keeping the surface tight.
 
     return {
         "status": "matched",

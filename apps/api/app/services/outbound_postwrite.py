@@ -1,7 +1,7 @@
 """Post-write side effects for outbound writes (Day 3-4 hardening).
 
 After the Inngest worker has POSTed to Slack/Gmail/Notion/Gdocs and
-updated `messages.delivery_status`, we want three additional things:
+updated `messages.delivery_status`, we want two additional things:
 
   1. Audit trail — flip the agent_runs row to completed / failed (the
      queueing router already inserted it as 'running').
@@ -9,12 +9,8 @@ updated `messages.delivery_status`, we want three additional things:
      can retry or reconnect the integration. Success notifications are
      deliberately omitted — the UI already shows a "sent" badge inline,
      and a bell flash on every successful Slack post would be noise.
-  3. Emit `output.delivered` / `output.failed` webhook events for any
-     webhooks the org has subscribed to. Lets customers route delivery
-     telemetry into their own observability stack.
-
 Every side effect here is best-effort: a failure to write an audit row
-or queue a webhook MUST NOT bubble up and trip an Inngest retry, because
+or notification MUST NOT bubble up and trip an Inngest retry, because
 the actual delivery already happened (or didn't) and we don't want to
 double-send. Each block catches broadly and logs.
 """
@@ -24,7 +20,6 @@ import logging
 from typing import Any, Literal
 
 from app.services.outbound_audit import record_failed, record_sent
-from app.services.webhooks import trigger_event
 
 log = logging.getLogger(__name__)
 
@@ -65,24 +60,6 @@ async def on_sent(
         await record_sent(run_id=run_id, output=output)
     except Exception as exc:
         log.warning("postwrite_audit_sent_failed run_id=%s err=%s", run_id, exc)
-
-    # 2. Webhook fan-out. Payload shape matches the rest of the webhook
-    #    taxonomy in webhooks.py — flat top-level fields, no nesting.
-    try:
-        await trigger_event(
-            org_id=org_id,
-            event="output.delivered",
-            payload={
-                "run_id": run_id,
-                "channel": channel,
-                "message_id": message_id,
-                "destination": destination,
-                "external_id": external_id,
-                "url": url,
-            },
-        )
-    except Exception as exc:
-        log.warning("postwrite_webhook_delivered_failed run_id=%s err=%s", run_id, exc)
 
 
 async def on_failed(
@@ -139,20 +116,3 @@ async def on_failed(
             )
         except Exception as exc:
             log.warning("postwrite_notify_failed run_id=%s err=%s", run_id, exc)
-
-    # 3. Webhook fan-out.
-    try:
-        await trigger_event(
-            org_id=org_id,
-            event="output.failed",
-            payload={
-                "run_id": run_id,
-                "channel": channel,
-                "message_id": message_id,
-                "destination": destination,
-                "reason": reason,
-                "permanent": permanent,
-            },
-        )
-    except Exception as exc:
-        log.warning("postwrite_webhook_failed_failed run_id=%s err=%s", run_id, exc)
